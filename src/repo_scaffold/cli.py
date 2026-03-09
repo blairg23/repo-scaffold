@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .backlog_ops import BacklogApplySummary, apply_backlog
+from .backlog_ops import BacklogApplySummary, apply_backlog, resolve_authenticated_login
 from .create_ops import CreateSummary, create_repository
 from .generator import (
     SUPPORTED_LICENSE,
@@ -125,6 +125,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--file",
         default="backlog/issues.json",
         help="Backlog JSON path (default: backlog/issues.json)",
+    )
+    apply_backlog_cmd.add_argument(
+        "--auth-check",
+        action="store_true",
+        help="Validate GitHub auth/token for this repo context and exit",
     )
 
     apply_rules = apply_sub.add_parser(
@@ -341,6 +346,14 @@ def main(argv: list[str] | None = None) -> int:
         if not repo_dir.exists() or not repo_dir.is_dir():
             print(f"Error: repo path does not exist or is not a directory: {repo_dir}", file=sys.stderr)
             return 2
+        if ns.auth_check:
+            try:
+                login = resolve_authenticated_login(repo_dir)
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            print(f"GitHub auth OK: {login}")
+            return 0
         backlog_file = Path(ns.file)
         if not backlog_file.is_absolute():
             backlog_file = repo_dir / backlog_file

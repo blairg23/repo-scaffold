@@ -483,7 +483,8 @@ Dependabot alerts + automated security updates (best-effort; warnings if unavail
 
 1. Install GitHub CLI (`gh`).
 2. Authenticate either with `gh auth login`, or copy `.env.example` to `.env` and set `GH_TOKEN=...`.
-3. Run `./scripts/create-issues.sh` (or pass `--repo OWNER/REPO`).
+3. Optional preflight: run `./scripts/create-issues.sh --auth-check`.
+4. Run `./scripts/create-issues.sh` (or pass `--repo OWNER/REPO`).
 
 Use `--dry-run` to preview milestone and issue creation before applying changes.
 The scripts auto-load `./.env` and also honor exported `GH_TOKEN` / `GITHUB_TOKEN`.
@@ -1113,7 +1114,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/create-issues.sh [--repo owner/repo] [--file backlog/issues.json] [--dry-run]
+Usage: ./scripts/create-issues.sh [--repo owner/repo] [--file backlog/issues.json] [--dry-run] [--auth-check]
 
 Bulk-create milestones and issues from backlog JSON.
 
@@ -1121,6 +1122,7 @@ Options:
   --repo owner/repo   Target repository (optional if set in .env)
   --file PATH         Backlog file path (default: backlog/issues.json)
   --dry-run           Print planned actions without creating resources
+  --auth-check        Validate GitHub auth/token and exit
   -h, --help          Show this help message
 EOF
 }
@@ -1128,6 +1130,7 @@ EOF
 REPO=""
 BACKLOG_FILE="backlog/issues.json"
 DRY_RUN=0
+AUTH_CHECK=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -1149,6 +1152,10 @@ while [ $# -gt 0 ]; do
       ;;
     --dry-run)
       DRY_RUN=1
+      shift
+      ;;
+    --auth-check)
+      AUTH_CHECK=1
       shift
       ;;
     -h|--help)
@@ -1268,9 +1275,28 @@ ensure_gh_auth() {
   exit 1
 }
 
+resolve_auth_user() {
+  local login
+  if ! login="$(gh api /user --jq .login 2>/dev/null)"; then
+    echo "GitHub auth check failed. Ensure GH_TOKEN/GITHUB_TOKEN is valid, or run gh auth login." >&2
+    exit 1
+  fi
+  if [ -z "$login" ] || [ "$login" = "null" ]; then
+    echo "GitHub auth check failed: could not resolve authenticated user login." >&2
+    exit 1
+  fi
+  printf '%s' "$login"
+}
+
 load_env_from_file "$ENV_FILE"
 resolve_repo_ref
 ensure_gh_auth
+AUTH_USER="$(resolve_auth_user)"
+
+if [ "$AUTH_CHECK" -eq 1 ]; then
+  echo "GitHub auth OK: $AUTH_USER"
+  exit 0
+fi
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {

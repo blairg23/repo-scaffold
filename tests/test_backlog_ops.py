@@ -47,6 +47,8 @@ def test_apply_backlog_creates_missing_labels(tmp_path: Path, monkeypatch: pytes
     created_labels: list[str] = []
 
     def _fake_run_gh(repo_dir: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args == ["api", "/user"]:
+            return _cp_ok('{"login":"octocat"}')
         if args[:2] == ["api", "--paginate"] and "milestones" in args[2]:
             return _cp_ok("[]")
         if args[:2] == ["api", "--paginate"] and "labels" in args[2]:
@@ -115,3 +117,12 @@ def test_ensure_missing_labels_dry_run_updates_cache(monkeypatch: pytest.MonkeyP
     assert failures == 0
     assert existing == {"epic", "ticket"}
     assert calls == []
+
+
+def test_resolve_authenticated_login_returns_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda _: None)
+    monkeypatch.setattr(backlog_ops, "_run_gh", lambda _repo_dir, _args: _cp_ok('{"login":"octocat"}'))
+
+    assert backlog_ops.resolve_authenticated_login(repo_dir) == "octocat"

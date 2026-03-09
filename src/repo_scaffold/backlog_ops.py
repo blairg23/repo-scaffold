@@ -20,6 +20,27 @@ class BacklogApplySummary:
     failures: int
 
 
+def resolve_authenticated_login(repo_dir: Path) -> str:
+    _ensure_gh_auth(repo_dir)
+
+    cp = _run_gh(repo_dir, ["api", "/user"])
+    if cp.returncode != 0:
+        raise RuntimeError(
+            cp.stderr.strip()
+            or "GitHub auth check failed. Ensure GH_TOKEN/GITHUB_TOKEN is valid, or run gh auth login."
+        )
+
+    try:
+        payload = json.loads(cp.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("GitHub auth check returned unexpected response.") from exc
+
+    login = payload.get("login")
+    if not isinstance(login, str) or not login.strip():
+        raise RuntimeError("GitHub auth check failed: could not resolve authenticated user login.")
+    return login.strip()
+
+
 def _load_token_from_env_file(env_file: Path) -> None:
     if not env_file.exists():
         return
@@ -254,7 +275,7 @@ def apply_backlog(
     err: Callable[[str], None] | None = None,
 ) -> BacklogApplySummary:
     emit_err = err if err is not None else (lambda line: print(line))
-    _ensure_gh_auth(repo_dir)
+    resolve_authenticated_login(repo_dir)
 
     if not backlog_file.exists():
         raise RuntimeError(f"Backlog file not found: {backlog_file}")

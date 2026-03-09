@@ -55,7 +55,7 @@ Subcommands:
 - `templates`: apply `.github` PR/issue templates, issue config, and `CODEOWNERS`
 - `ci --languages <list>`: apply `.github/workflows/ci.yml`
 - `dependabot [--low-noise]`: apply `.github/dependabot.yml`
-- `backlog --repo owner/repo [--file backlog/issues.json] [--dry-run]`: bulk-create milestones/issues using `gh`
+- `backlog --repo owner/repo [--file backlog/issues.json] [--dry-run] [--auth-check]`: bulk-create milestones/issues using `gh`
 - `rules --repo owner/repo [--apply]`: print or apply recommended `gh api` repo rules
 
 ## Overwrite policy
@@ -89,6 +89,7 @@ Per-file output labels:
 - supports `.env` loading (`GH_TOKEN`, `GITHUB_ORG`, `GITHUB_REPO`, `GH_REPO`; legacy lowercase aliases still work)
 - includes `.env.example` so you can run `cp .env.example .env` and fill credentials safely
 - falls back to `gh auth status` / `gh auth login`
+- supports `--auth-check` to validate token/session (`gh api /user`) before writing anything
 - ticket bodies include a `Parent epic: #<number>` link when the epic issue exists/was created
 
 ## GitHub token permissions

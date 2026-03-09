@@ -139,6 +139,20 @@ def test_apply_backlog_subcommand_delegates_to_backlog_ops(
     assert called["dry_run"] is True
 
 
+def test_apply_backlog_auth_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    monkeypatch.setattr("repo_scaffold.cli.resolve_authenticated_login", lambda _: "octocat")
+
+    rc = main(["apply", "backlog", "--path", str(repo_dir), "--repo", "acme/repo", "--auth-check"])
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "GitHub auth OK: octocat" in stdout
+
+
 def test_apply_rules_dry_run_does_not_execute(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

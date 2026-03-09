@@ -111,7 +111,9 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     create_issues_script = (out_dir / "scripts/create-issues.sh").read_text(encoding="utf-8")
     assert "--repo owner/repo" in create_issues_script
     assert "--dry-run" in create_issues_script
+    assert "--auth-check" in create_issues_script
     assert "gh auth status" in create_issues_script
+    assert "gh api /user" in create_issues_script
     assert "python3" in create_issues_script
     assert "--search" in create_issues_script
     assert "--body-file" in create_issues_script
