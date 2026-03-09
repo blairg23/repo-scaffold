@@ -55,7 +55,7 @@ Subcommands:
 - `templates`: apply `.github` PR/issue templates, issue config, and `CODEOWNERS`
 - `ci --languages <list>`: apply `.github/workflows/ci.yml`
 - `dependabot [--low-noise]`: apply `.github/dependabot.yml`
-- `backlog --repo owner/repo [--file backlog/issues.json] [--dry-run] [--auth-check]`: bulk-create milestones/issues using `gh`
+- `backlog --repo owner/repo [--file backlog/issues.json] [--dry-run] [--auth-check] [--project-number N | --project-title T] [--project-owner O]`: bulk-create milestones/issues using `gh`
 - `rules --repo owner/repo [--apply]`: print or apply recommended `gh api` repo rules
 
 ## Overwrite policy
@@ -91,7 +91,10 @@ Per-file output labels:
 - falls back to `gh auth status` / `gh auth login`
 - supports `--auth-check` to validate token/session (`gh api /user`) before writing anything
 - ticket bodies include a `Parent epic: #<number>` link when the epic issue exists/was created
-- creates milestones/issues only; it does not create a GitHub Project
+- optionally adds issues to GitHub Projects (`--project-number` or `--project-title`)
+- with `--project-title`, creates the project if it does not exist
+- attempts to link the project to the repository
+- project operations require token/session access to GitHub Projects (`project` scope for classic PATs)
 
 ## Bulk GitHub Backlog Upload
 
@@ -99,6 +102,12 @@ Validate auth first:
 
 ```bash
 poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --auth-check
+```
+
+Validate auth + project access preflight:
+
+```bash
+poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --project-title "Roadmap" --project-owner OWNER --auth-check
 ```
 
 Preview writes:
@@ -113,12 +122,25 @@ Apply:
 poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO
 ```
 
+Use an existing project board:
+
+```bash
+poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --project-number 1 --project-owner OWNER
+```
+
+Use or create a project by title:
+
+```bash
+poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --project-title "Roadmap" --project-owner OWNER
+```
+
 Equivalent generated-repo script:
 
 ```bash
 ./scripts/create-issues.sh --repo OWNER/REPO --auth-check
 ./scripts/create-issues.sh --repo OWNER/REPO --dry-run
 ./scripts/create-issues.sh --repo OWNER/REPO
+./scripts/create-issues.sh --repo OWNER/REPO --project-title "Roadmap" --project-owner OWNER
 ```
 
 ## GitHub token permissions

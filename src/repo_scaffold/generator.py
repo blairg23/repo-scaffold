@@ -486,12 +486,19 @@ Dependabot alerts + automated security updates (best-effort; warnings if unavail
 3. Optional preflight: run `./scripts/create-issues.sh --auth-check`.
 4. Run `./scripts/create-issues.sh` (or pass `--repo OWNER/REPO`).
 
+Optional project integration (Kanban board via GitHub Projects):
+
+- Use an existing project: `./scripts/create-issues.sh --repo OWNER/REPO --project-number 1`
+- Use or create by title: `./scripts/create-issues.sh --repo OWNER/REPO --project-title "Roadmap"`
+- Set explicit project owner: add `--project-owner OWNER`
+- Project operations require GitHub Projects access (`project` scope for classic PATs)
+
 Use `--dry-run` to preview milestone and issue creation before applying changes.
 The scripts auto-load `./.env` and also honor exported `GH_TOKEN` / `GITHUB_TOKEN`.
 Keep `.env` uncommitted (it is ignored by the generated `.gitignore`).
 If executable bits are lost (for example after a zip download), run:
 `chmod +x scripts/create-issues.sh`.
-Backlog bootstrap creates milestones/issues only; it does not create a GitHub Project.
+Backlog bootstrap creates milestones/issues and can optionally add items to GitHub Projects.
 
 ## GitHub token permissions
 
@@ -1120,7 +1127,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/create-issues.sh [--repo owner/repo] [--file backlog/issues.json] [--dry-run] [--auth-check]
+Usage: ./scripts/create-issues.sh [--repo owner/repo] [--file backlog/issues.json] [--dry-run] [--auth-check] [--project-number N | --project-title TITLE] [--project-owner OWNER]
 
 Bulk-create milestones and issues from backlog JSON.
 
@@ -1129,6 +1136,9 @@ Options:
   --file PATH         Backlog file path (default: backlog/issues.json)
   --dry-run           Print planned actions without creating resources
   --auth-check        Validate GitHub auth/token and exit
+  --project-number N  Add issues to an existing GitHub Project number
+  --project-title T   Add issues to a GitHub Project title (creates if missing)
+  --project-owner O   Owner login/org for the project (default: repo owner)
   -h, --help          Show this help message
 EOF
 }
@@ -1137,6 +1147,9 @@ REPO=""
 BACKLOG_FILE="backlog/issues.json"
 DRY_RUN=0
 AUTH_CHECK=0
+PROJECT_NUMBER=""
+PROJECT_TITLE=""
+PROJECT_OWNER=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -1164,6 +1177,30 @@ while [ $# -gt 0 ]; do
       AUTH_CHECK=1
       shift
       ;;
+    --project-number)
+      PROJECT_NUMBER="${2:-}"
+      if [ -z "$PROJECT_NUMBER" ]; then
+        echo "Error: --project-number requires a value." >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --project-title)
+      PROJECT_TITLE="${2:-}"
+      if [ -z "$PROJECT_TITLE" ]; then
+        echo "Error: --project-title requires a value." >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --project-owner)
+      PROJECT_OWNER="${2:-}"
+      if [ -z "$PROJECT_OWNER" ]; then
+        echo "Error: --project-owner requires a value." >&2
+        exit 1
+      fi
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -1175,6 +1212,11 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -n "$PROJECT_NUMBER" ] && [ -n "$PROJECT_TITLE" ]; then
+  echo "Error: use only one of --project-number or --project-title." >&2
+  exit 1
+fi
 
 if [ ! -f "$BACKLOG_FILE" ]; then
   echo "Error: backlog file not found: $BACKLOG_FILE" >&2
@@ -1263,6 +1305,20 @@ resolve_repo_ref() {
   fi
 }
 
+resolve_project_config() {
+  REPO_OWNER="${REPO%%/*}"
+
+  if [ -n "$PROJECT_NUMBER" ] || [ -n "$PROJECT_TITLE" ]; then
+    PROJECT_ENABLED=1
+    if [ -z "$PROJECT_OWNER" ]; then
+      PROJECT_OWNER="$REPO_OWNER"
+    fi
+  else
+    PROJECT_ENABLED=0
+    PROJECT_OWNER="${PROJECT_OWNER:-$REPO_OWNER}"
+  fi
+}
+
 ensure_gh_auth() {
   if [ -z "${GH_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
     export GH_TOKEN="$GITHUB_TOKEN"
@@ -1296,11 +1352,20 @@ resolve_auth_user() {
 
 load_env_from_file "$ENV_FILE"
 resolve_repo_ref
+resolve_project_config
 ensure_gh_auth
 AUTH_USER="$(resolve_auth_user)"
 
 if [ "$AUTH_CHECK" -eq 1 ]; then
   echo "GitHub auth OK: $AUTH_USER"
+  if [ "$PROJECT_ENABLED" -eq 1 ]; then
+    if gh project list --owner "$PROJECT_OWNER" --limit 1 >/dev/null 2>&1; then
+      echo "GitHub project access OK: owner $PROJECT_OWNER"
+    else
+      echo "GitHub project access failed for owner $PROJECT_OWNER. Ensure project scope is granted." >&2
+      exit 1
+    fi
+  fi
   exit 0
 fi
 
@@ -1313,11 +1378,183 @@ trap cleanup EXIT
 MILESTONE_TITLES_FILE="$TMP_DIR/milestones.txt"
 KNOWN_ISSUE_TITLES_FILE="$TMP_DIR/known_issue_titles.txt"
 LABEL_NAMES_FILE="$TMP_DIR/labels.txt"
+PROJECT_CREATED=0
+PROJECT_ITEMS_ADDED=0
+PROJECT_ITEMS_SKIPPED=0
+RESOLVED_PROJECT_NUMBER=""
+RESOLVED_PROJECT_TITLE=""
 
 line_exists() {
   local needle="$1"
   local file="$2"
   [ -f "$file" ] && grep -Fxq -- "$needle" "$file"
+}
+
+resolve_project_target() {
+  local projects_json="$TMP_DIR/projects.json"
+  local project_create_json="$TMP_DIR/project_create.json"
+
+  [ "$PROJECT_ENABLED" -eq 1 ] || return 0
+
+  if [ -n "$PROJECT_NUMBER" ]; then
+    if ! gh project view "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json > "$TMP_DIR/project_view.json" 2>"$TMP_DIR/project_view.err"; then
+      cat "$TMP_DIR/project_view.err" >&2
+      echo "Hint: GitHub Projects requires project scope; run: gh auth refresh -h github.com -s project" >&2
+      exit 1
+    fi
+    RESOLVED_PROJECT_NUMBER="$PROJECT_NUMBER"
+    RESOLVED_PROJECT_TITLE="$(python3 - "$TMP_DIR/project_view.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8") or "{}")
+title = payload.get("title")
+print(title.strip() if isinstance(title, str) and title.strip() else "")
+PY
+)"
+    [ -z "$RESOLVED_PROJECT_TITLE" ] && RESOLVED_PROJECT_TITLE="Project #$PROJECT_NUMBER"
+    echo "Using project: $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER ($RESOLVED_PROJECT_TITLE)"
+    return 0
+  fi
+
+  if ! gh project list --owner "$PROJECT_OWNER" --limit 100 --format json > "$projects_json" 2>"$TMP_DIR/project_list.err"; then
+    cat "$TMP_DIR/project_list.err" >&2
+    echo "Hint: GitHub Projects requires project scope; run: gh auth refresh -h github.com -s project" >&2
+    exit 1
+  fi
+
+  RESOLVED_PROJECT_NUMBER="$(python3 - "$projects_json" "$PROJECT_TITLE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8") or "[]")
+target = sys.argv[2]
+
+if isinstance(data, list):
+    for item in data:
+        if isinstance(item, dict) and item.get("title") == target and isinstance(item.get("number"), int):
+            print(item["number"])
+            raise SystemExit(0)
+PY
+)"
+
+  if [ -n "$RESOLVED_PROJECT_NUMBER" ]; then
+    RESOLVED_PROJECT_TITLE="$PROJECT_TITLE"
+    echo "Using project: $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER ($RESOLVED_PROJECT_TITLE)"
+    return 0
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] create project: $PROJECT_TITLE (owner: $PROJECT_OWNER)"
+    RESOLVED_PROJECT_TITLE="$PROJECT_TITLE"
+    return 0
+  fi
+
+  if ! gh project create --owner "$PROJECT_OWNER" --title "$PROJECT_TITLE" --format json > "$project_create_json" 2>"$TMP_DIR/project_create.err"; then
+    cat "$TMP_DIR/project_create.err" >&2
+    echo "Hint: GitHub Projects requires project scope; run: gh auth refresh -h github.com -s project" >&2
+    exit 1
+  fi
+
+  RESOLVED_PROJECT_NUMBER="$(python3 - "$project_create_json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8") or "{}")
+number = payload.get("number")
+print(number if isinstance(number, int) else "")
+PY
+)"
+
+  if [ -z "$RESOLVED_PROJECT_NUMBER" ]; then
+    echo "Failed to resolve project number after project creation." >&2
+    exit 1
+  fi
+
+  RESOLVED_PROJECT_TITLE="$PROJECT_TITLE"
+  PROJECT_CREATED=1
+  echo "Created project: $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER ($RESOLVED_PROJECT_TITLE)"
+}
+
+link_project_to_repo() {
+  local link_err="$TMP_DIR/project_link.err"
+  [ "$PROJECT_ENABLED" -eq 1 ] || return 0
+
+  if [ -z "$RESOLVED_PROJECT_NUMBER" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "[dry-run] link project to repo: ${RESOLVED_PROJECT_TITLE:-$PROJECT_TITLE} -> $REPO"
+    fi
+    return 0
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] link project to repo: $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER -> $REPO"
+    return 0
+  fi
+
+  if gh project link "$RESOLVED_PROJECT_NUMBER" --owner "$PROJECT_OWNER" --repo "$REPO" >/dev/null 2>"$link_err"; then
+    echo "Linked project to repo: $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER -> $REPO"
+    return 0
+  fi
+
+  if grep -qiE 'already.*link' "$link_err"; then
+    echo "Project already linked to repo: $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER"
+    return 0
+  fi
+
+  cat "$link_err" >&2
+  failures=$((failures + 1))
+}
+
+add_issue_to_project() {
+  local issue_title="$1"
+  local issue_number="${2:-}"
+  local issue_url
+  local add_err="$TMP_DIR/project_add.err"
+
+  [ "$PROJECT_ENABLED" -eq 1 ] || return 0
+
+  if [ -z "$RESOLVED_PROJECT_NUMBER" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "[dry-run] add issue to project: $issue_title -> ${RESOLVED_PROJECT_TITLE:-$PROJECT_TITLE}"
+      PROJECT_ITEMS_ADDED=$((PROJECT_ITEMS_ADDED + 1))
+      return 0
+    fi
+    echo "Failed to add issue to project (missing project number): $issue_title" >&2
+    failures=$((failures + 1))
+    return 0
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] add issue to project: $issue_title -> $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER"
+    PROJECT_ITEMS_ADDED=$((PROJECT_ITEMS_ADDED + 1))
+    return 0
+  fi
+
+  if [ -z "$issue_number" ]; then
+    echo "Failed to add issue to project (missing issue number): $issue_title" >&2
+    failures=$((failures + 1))
+    return 0
+  fi
+
+  issue_url="https://github.com/$REPO/issues/$issue_number"
+  if gh project item-add "$RESOLVED_PROJECT_NUMBER" --owner "$PROJECT_OWNER" --url "$issue_url" >/dev/null 2>"$add_err"; then
+    echo "Added issue to project: $issue_title"
+    PROJECT_ITEMS_ADDED=$((PROJECT_ITEMS_ADDED + 1))
+    return 0
+  fi
+
+  if grep -qiE 'already.*(exists|added)' "$add_err"; then
+    echo "Skip project item (exists): $issue_title"
+    PROJECT_ITEMS_SKIPPED=$((PROJECT_ITEMS_SKIPPED + 1))
+    return 0
+  fi
+
+  cat "$add_err" >&2
+  failures=$((failures + 1))
 }
 
 gh api --paginate "/repos/$REPO/milestones?state=all&per_page=100" > "$TMP_DIR/milestones.json"
@@ -1514,6 +1751,9 @@ issues_created=0
 skipped=0
 failures=0
 
+resolve_project_target
+link_project_to_repo
+
 while IFS= read -r -d '' kind \
   && IFS= read -r -d '' title \
   && IFS= read -r -d '' milestone \
@@ -1549,6 +1789,9 @@ while IFS= read -r -d '' kind \
     if issue_exists_exact "$title"; then
       echo "Skip issue (exists): $title"
       skipped=$((skipped + 1))
+      if existing_issue_number="$(issue_number_exact "$title")"; then
+        add_issue_to_project "$title" "$existing_issue_number"
+      fi
       continue
     else
       exists_rc=$?
@@ -1593,15 +1836,29 @@ while IFS= read -r -d '' kind \
       echo "[dry-run] create issue: $title"
       issues_created=$((issues_created + 1))
       printf '%s\\n' "$title" >> "$KNOWN_ISSUE_TITLES_FILE"
+      add_issue_to_project "$title"
       continue
     fi
 
-    if "${cmd[@]}" >/dev/null; then
+    issue_create_output=""
+    if issue_create_output="$("${cmd[@]}" 2>"$TMP_DIR/issue_create.err")"; then
       echo "Created issue: $title"
       issues_created=$((issues_created + 1))
       printf '%s\\n' "$title" >> "$KNOWN_ISSUE_TITLES_FILE"
+      created_issue_url="$(printf '%s\\n' "$issue_create_output" | tail -n 1)"
+      created_issue_number=""
+      created_issue_tail="${created_issue_url##*/}"
+      if [[ "$created_issue_tail" =~ ^[0-9]+$ ]]; then
+        created_issue_number="$created_issue_tail"
+      elif created_issue_number="$(issue_number_exact "$title")"; then
+        :
+      else
+        created_issue_number=""
+      fi
+      add_issue_to_project "$title" "$created_issue_number"
     else
       echo "Failed to create issue: $title" >&2
+      cat "$TMP_DIR/issue_create.err" >&2
       failures=$((failures + 1))
     fi
     continue
@@ -1695,6 +1952,17 @@ if [ "$DRY_RUN" -eq 1 ]; then
 fi
 echo "  milestones created: $milestones_created"
 echo "  issues created: $issues_created"
+if [ "$PROJECT_ENABLED" -eq 1 ]; then
+  echo "  project owner: $PROJECT_OWNER"
+  if [ -n "$RESOLVED_PROJECT_NUMBER" ]; then
+    echo "  project number: $RESOLVED_PROJECT_NUMBER"
+  else
+    echo "  project title: ${RESOLVED_PROJECT_TITLE:-$PROJECT_TITLE}"
+  fi
+  echo "  project created: $PROJECT_CREATED"
+  echo "  project items added: $PROJECT_ITEMS_ADDED"
+  echo "  project items skipped: $PROJECT_ITEMS_SKIPPED"
+fi
 echo "  skipped: $skipped"
 echo "  failures: $failures"
 

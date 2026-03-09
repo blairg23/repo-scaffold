@@ -101,7 +101,8 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "## Backlog bootstrap" in generated_readme
     assert "./scripts/create-issues.sh" in generated_readme
     assert "--auth-check" in generated_readme
-    assert "does not create a GitHub Project" in generated_readme
+    assert "Optional project integration" in generated_readme
+    assert "--project-title" in generated_readme
     assert "## PR workflow" in generated_readme
     assert "gh pr create" in generated_readme
     assert ".env.example" in generated_readme
@@ -116,6 +117,11 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "--repo owner/repo" in create_issues_script
     assert "--dry-run" in create_issues_script
     assert "--auth-check" in create_issues_script
+    assert "--project-number" in create_issues_script
+    assert "--project-title" in create_issues_script
+    assert "--project-owner" in create_issues_script
+    assert "gh project item-add" in create_issues_script
+    assert "gh project create" in create_issues_script
     assert "gh auth status" in create_issues_script
     assert "gh api /user" in create_issues_script
     assert "python3" in create_issues_script

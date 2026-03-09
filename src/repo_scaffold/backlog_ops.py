@@ -18,6 +18,17 @@ class BacklogApplySummary:
     issues_created: int
     issues_skipped: int
     failures: int
+    project_created: bool = False
+    project_items_added: int = 0
+    project_items_skipped: int = 0
+
+
+@dataclass(frozen=True)
+class _ProjectTarget:
+    owner: str
+    number: int | None
+    title: str
+    created: bool
 
 
 def resolve_authenticated_login(repo_dir: Path) -> str:
@@ -39,6 +50,229 @@ def resolve_authenticated_login(repo_dir: Path) -> str:
     if not isinstance(login, str) or not login.strip():
         raise RuntimeError("GitHub auth check failed: could not resolve authenticated user login.")
     return login.strip()
+
+
+def resolve_project_target_for_auth_check(
+    *,
+    repo_dir: Path,
+    repo: str,
+    project_number: int | None,
+    project_title: str | None,
+    project_owner: str | None,
+) -> str | None:
+    target = _resolve_project_target(
+        repo_dir=repo_dir,
+        repo=repo,
+        project_number=project_number,
+        project_title=project_title,
+        project_owner=project_owner,
+        dry_run=True,
+        out=lambda _line: None,
+    )
+    if target is None:
+        return None
+    if target.number is not None:
+        return f"{target.owner}/#{target.number} ({target.title})"
+    return f"{target.owner}/{target.title} (will be created)"
+
+
+def _project_scope_hint(stderr: str) -> str:
+    lowered = stderr.lower()
+    if "project scope" in lowered or "missing required token scopes" in lowered:
+        return (
+            "GitHub Projects access requires `project` scope. "
+            "Run: gh auth refresh -h github.com -s project (or use a token with project access)."
+        )
+    return stderr
+
+
+def _parse_repo_owner(repo: str) -> str:
+    if "/" not in repo:
+        raise RuntimeError(f"Invalid repo format: {repo}. Expected owner/repo.")
+    return repo.split("/", 1)[0]
+
+
+def _list_projects(repo_dir: Path, owner: str) -> list[dict[str, object]]:
+    cp = _run_gh(repo_dir, ["project", "list", "--owner", owner, "--limit", "100", "--format", "json"])
+    if cp.returncode != 0:
+        detail = cp.stderr.strip() or cp.stdout.strip() or "Failed listing projects."
+        raise RuntimeError(_project_scope_hint(detail))
+    data = json.loads(cp.stdout or "[]")
+    if not isinstance(data, list):
+        raise RuntimeError("Unexpected response from gh project list.")
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _project_title_for_number(repo_dir: Path, owner: str, number: int) -> str:
+    cp = _run_gh(repo_dir, ["project", "view", str(number), "--owner", owner, "--format", "json"])
+    if cp.returncode != 0:
+        detail = cp.stderr.strip() or cp.stdout.strip() or f"Failed viewing project #{number}."
+        raise RuntimeError(_project_scope_hint(detail))
+    try:
+        payload = json.loads(cp.stdout or "{}")
+    except json.JSONDecodeError:
+        return f"Project #{number}"
+    title = payload.get("title")
+    return title.strip() if isinstance(title, str) and title.strip() else f"Project #{number}"
+
+
+def _resolve_project_target(
+    *,
+    repo_dir: Path,
+    repo: str,
+    project_number: int | None,
+    project_title: str | None,
+    project_owner: str | None,
+    dry_run: bool,
+    out: Callable[[str], None],
+) -> _ProjectTarget | None:
+    if project_number is None and not project_title:
+        return None
+    if project_number is not None and project_title:
+        raise RuntimeError("Use only one of --project-number or --project-title.")
+
+    owner = (project_owner or _parse_repo_owner(repo)).strip()
+    if not owner:
+        raise RuntimeError("Project owner could not be resolved.")
+
+    if project_number is not None:
+        title = _project_title_for_number(repo_dir, owner, project_number)
+        out(f"Using project: {owner}/#{project_number} ({title})")
+        return _ProjectTarget(owner=owner, number=project_number, title=title, created=False)
+
+    assert project_title is not None
+    wanted_title = project_title.strip()
+    if not wanted_title:
+        raise RuntimeError("--project-title must not be empty.")
+
+    for item in _list_projects(repo_dir, owner):
+        title = item.get("title")
+        number = item.get("number")
+        if isinstance(title, str) and isinstance(number, int) and title == wanted_title:
+            out(f"Using project: {owner}/#{number} ({wanted_title})")
+            return _ProjectTarget(owner=owner, number=number, title=wanted_title, created=False)
+
+    if dry_run:
+        out(f"[dry-run] create project: {wanted_title} (owner: {owner})")
+        return _ProjectTarget(owner=owner, number=None, title=wanted_title, created=True)
+
+    cp = _run_gh(
+        repo_dir,
+        ["project", "create", "--owner", owner, "--title", wanted_title, "--format", "json"],
+    )
+    if cp.returncode != 0:
+        detail = cp.stderr.strip() or cp.stdout.strip() or f"Failed creating project: {wanted_title}"
+        raise RuntimeError(_project_scope_hint(detail))
+    payload = json.loads(cp.stdout or "{}")
+    number = payload.get("number")
+    if not isinstance(number, int):
+        for item in _list_projects(repo_dir, owner):
+            title = item.get("title")
+            num = item.get("number")
+            if isinstance(title, str) and isinstance(num, int) and title == wanted_title:
+                number = num
+                break
+    if not isinstance(number, int):
+        raise RuntimeError(f"Created project '{wanted_title}' but could not resolve project number.")
+
+    out(f"Created project: {owner}/#{number} ({wanted_title})")
+    return _ProjectTarget(owner=owner, number=number, title=wanted_title, created=True)
+
+
+def _link_project_to_repo(
+    *,
+    repo_dir: Path,
+    repo: str,
+    project: _ProjectTarget,
+    dry_run: bool,
+    out: Callable[[str], None],
+    emit_err: Callable[[str], None],
+) -> int:
+    if project.number is None:
+        if dry_run:
+            out(f"[dry-run] link project to repo: {project.title} -> {repo}")
+        return 0
+
+    if dry_run:
+        out(f"[dry-run] link project to repo: {project.owner}/#{project.number} -> {repo}")
+        return 0
+
+    cp = _run_gh(
+        repo_dir,
+        [
+            "project",
+            "link",
+            str(project.number),
+            "--owner",
+            project.owner,
+            "--repo",
+            repo,
+        ],
+    )
+    if cp.returncode == 0:
+        out(f"Linked project to repo: {project.owner}/#{project.number} -> {repo}")
+        return 0
+
+    stderr = (cp.stderr or "").lower()
+    if "already" in stderr and "link" in stderr:
+        out(f"Project already linked to repo: {project.owner}/#{project.number}")
+        return 0
+
+    detail = cp.stderr.strip() or cp.stdout.strip() or f"Failed linking project #{project.number} to repo."
+    emit_err(_project_scope_hint(detail))
+    return 1
+
+
+def _add_issue_to_project(
+    *,
+    repo_dir: Path,
+    repo: str,
+    project: _ProjectTarget,
+    issue_title: str,
+    issue_number: int | None,
+    dry_run: bool,
+    out: Callable[[str], None],
+    emit_err: Callable[[str], None],
+) -> tuple[int, int, int]:
+    if project.number is None:
+        if dry_run:
+            out(f"[dry-run] add issue to project: {issue_title} -> {project.title}")
+            return (1, 0, 0)
+        return (0, 0, 1)
+
+    if dry_run:
+        out(f"[dry-run] add issue to project: {issue_title} -> {project.owner}/#{project.number}")
+        return (1, 0, 0)
+
+    if issue_number is None:
+        emit_err(f"Failed to add issue to project (missing issue number): {issue_title}")
+        return (0, 0, 1)
+
+    issue_url = f"https://github.com/{repo}/issues/{issue_number}"
+    cp = _run_gh(
+        repo_dir,
+        [
+            "project",
+            "item-add",
+            str(project.number),
+            "--owner",
+            project.owner,
+            "--url",
+            issue_url,
+        ],
+    )
+    if cp.returncode == 0:
+        out(f"Added issue to project: {issue_title}")
+        return (1, 0, 0)
+
+    stderr = (cp.stderr or "").lower()
+    if "already" in stderr and ("exists" in stderr or "added" in stderr):
+        out(f"Skip project item (exists): {issue_title}")
+        return (0, 1, 0)
+
+    detail = cp.stderr.strip() or cp.stdout.strip() or f"Failed adding issue to project: {issue_title}"
+    emit_err(_project_scope_hint(detail))
+    return (0, 0, 1)
 
 
 def _load_token_from_env_file(env_file: Path) -> None:
@@ -271,6 +505,9 @@ def apply_backlog(
     repo: str,
     backlog_file: Path,
     dry_run: bool,
+    project_number: int | None = None,
+    project_title: str | None = None,
+    project_owner: str | None = None,
     out: Callable[[str], None] = print,
     err: Callable[[str], None] | None = None,
 ) -> BacklogApplySummary:
@@ -290,6 +527,28 @@ def apply_backlog(
     issues_created = 0
     issues_skipped = 0
     failures = 0
+    project_items_added = 0
+    project_items_skipped = 0
+
+    project = _resolve_project_target(
+        repo_dir=repo_dir,
+        repo=repo,
+        project_number=project_number,
+        project_title=project_title,
+        project_owner=project_owner,
+        dry_run=dry_run,
+        out=out,
+    )
+    project_created = bool(project and project.created)
+    if project is not None:
+        failures += _link_project_to_repo(
+            repo_dir=repo_dir,
+            repo=repo,
+            project=project,
+            dry_run=dry_run,
+            out=out,
+            emit_err=emit_err,
+        )
 
     existing_milestones: set[str] = set()
     cp = _run_gh(repo_dir, ["api", "--paginate", f"/repos/{repo}/milestones?state=all&per_page=100"])
@@ -355,11 +614,39 @@ def apply_backlog(
                 issues_skipped += 1
                 epic_numbers[epic_title] = number
                 out(f"Skip issue (exists): {epic_title}")
+                if project is not None:
+                    added, skipped, failed = _add_issue_to_project(
+                        repo_dir=repo_dir,
+                        repo=repo,
+                        project=project,
+                        issue_title=epic_title,
+                        issue_number=number,
+                        dry_run=dry_run,
+                        out=out,
+                        emit_err=emit_err,
+                    )
+                    project_items_added += added
+                    project_items_skipped += skipped
+                    failures += failed
             else:
                 if dry_run:
                     issues_created += 1
                     epic_numbers[epic_title] = None
                     out(f"[dry-run] create issue: {epic_title}")
+                    if project is not None:
+                        added, skipped, failed = _add_issue_to_project(
+                            repo_dir=repo_dir,
+                            repo=repo,
+                            project=project,
+                            issue_title=epic_title,
+                            issue_number=None,
+                            dry_run=dry_run,
+                            out=out,
+                            emit_err=emit_err,
+                        )
+                        project_items_added += added
+                        project_items_skipped += skipped
+                        failures += failed
                 else:
                     try:
                         number = _create_issue(
@@ -374,6 +661,20 @@ def apply_backlog(
                         epic_numbers[epic_title] = number
                         issues_created += 1
                         out(f"Created issue: {epic_title}")
+                        if project is not None:
+                            added, skipped, failed = _add_issue_to_project(
+                                repo_dir=repo_dir,
+                                repo=repo,
+                                project=project,
+                                issue_title=epic_title,
+                                issue_number=number,
+                                dry_run=dry_run,
+                                out=out,
+                                emit_err=emit_err,
+                            )
+                            project_items_added += added
+                            project_items_skipped += skipped
+                            failures += failed
                     except RuntimeError as exc:
                         failures += 1
                         emit_err(str(exc))
@@ -407,6 +708,20 @@ def apply_backlog(
             if existing_number is not None:
                 issues_skipped += 1
                 out(f"Skip issue (exists): {title}")
+                if project is not None:
+                    added, skipped, failed = _add_issue_to_project(
+                        repo_dir=repo_dir,
+                        repo=repo,
+                        project=project,
+                        issue_title=title,
+                        issue_number=existing_number,
+                        dry_run=dry_run,
+                        out=out,
+                        emit_err=emit_err,
+                    )
+                    project_items_added += added
+                    project_items_skipped += skipped
+                    failures += failed
                 continue
 
             parent_number = epic_numbers.get(epic_title)
@@ -419,10 +734,24 @@ def apply_backlog(
             if dry_run:
                 issues_created += 1
                 out(f"[dry-run] create issue: {title}")
+                if project is not None:
+                    added, skipped, failed = _add_issue_to_project(
+                        repo_dir=repo_dir,
+                        repo=repo,
+                        project=project,
+                        issue_title=title,
+                        issue_number=None,
+                        dry_run=dry_run,
+                        out=out,
+                        emit_err=emit_err,
+                    )
+                    project_items_added += added
+                    project_items_skipped += skipped
+                    failures += failed
                 continue
 
             try:
-                _create_issue(
+                created_number = _create_issue(
                     repo_dir,
                     repo,
                     title,
@@ -433,6 +762,20 @@ def apply_backlog(
                 )
                 issues_created += 1
                 out(f"Created issue: {title}")
+                if project is not None:
+                    added, skipped, failed = _add_issue_to_project(
+                        repo_dir=repo_dir,
+                        repo=repo,
+                        project=project,
+                        issue_title=title,
+                        issue_number=created_number,
+                        dry_run=dry_run,
+                        out=out,
+                        emit_err=emit_err,
+                    )
+                    project_items_added += added
+                    project_items_skipped += skipped
+                    failures += failed
             except RuntimeError as exc:
                 failures += 1
                 emit_err(str(exc))
@@ -443,4 +786,7 @@ def apply_backlog(
         issues_created=issues_created,
         issues_skipped=issues_skipped,
         failures=failures,
+        project_created=project_created,
+        project_items_added=project_items_added,
+        project_items_skipped=project_items_skipped,
     )

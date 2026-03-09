@@ -104,11 +104,25 @@ def test_apply_backlog_subcommand_delegates_to_backlog_ops(
 
     called: dict[str, object] = {}
 
-    def _fake_apply_backlog(*, repo_dir: Path, repo: str, backlog_file: Path, dry_run: bool, out, err):
+    def _fake_apply_backlog(
+        *,
+        repo_dir: Path,
+        repo: str,
+        backlog_file: Path,
+        dry_run: bool,
+        project_number,
+        project_title,
+        project_owner,
+        out,
+        err,
+    ):
         called["repo_dir"] = repo_dir
         called["repo"] = repo
         called["backlog_file"] = backlog_file
         called["dry_run"] = dry_run
+        called["project_number"] = project_number
+        called["project_title"] = project_title
+        called["project_owner"] = project_owner
         return BacklogApplySummary(
             milestones_created=1,
             milestones_skipped=2,
@@ -137,6 +151,9 @@ def test_apply_backlog_subcommand_delegates_to_backlog_ops(
     assert called["repo"] == "acme/repo"
     assert called["backlog_file"] == backlog / "issues.json"
     assert called["dry_run"] is True
+    assert called["project_number"] is None
+    assert called["project_title"] is None
+    assert called["project_owner"] is None
 
 
 def test_apply_backlog_auth_check(
@@ -146,11 +163,106 @@ def test_apply_backlog_auth_check(
     repo_dir.mkdir(parents=True)
 
     monkeypatch.setattr("repo_scaffold.cli.resolve_authenticated_login", lambda _: "octocat")
+    monkeypatch.setattr("repo_scaffold.cli.resolve_project_target_for_auth_check", lambda **_: None)
 
     rc = main(["apply", "backlog", "--path", str(repo_dir), "--repo", "acme/repo", "--auth-check"])
     assert rc == 0
     stdout = capsys.readouterr().out
     assert "GitHub auth OK: octocat" in stdout
+
+
+def test_apply_backlog_auth_check_with_project_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    monkeypatch.setattr("repo_scaffold.cli.resolve_authenticated_login", lambda _: "octocat")
+    monkeypatch.setattr(
+        "repo_scaffold.cli.resolve_project_target_for_auth_check",
+        lambda **_: "acme/#1 (Roadmap)",
+    )
+
+    rc = main(
+        [
+            "apply",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--repo",
+            "acme/repo",
+            "--project-number",
+            "1",
+            "--auth-check",
+        ]
+    )
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "GitHub auth OK: octocat" in stdout
+    assert "GitHub project access OK: acme/#1 (Roadmap)" in stdout
+
+
+def test_apply_backlog_project_title_delegates_to_backlog_ops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    backlog = repo_dir / "backlog"
+    backlog.mkdir(parents=True)
+    (backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+
+    called: dict[str, object] = {}
+
+    def _fake_apply_backlog(
+        *,
+        repo_dir: Path,
+        repo: str,
+        backlog_file: Path,
+        dry_run: bool,
+        project_number,
+        project_title,
+        project_owner,
+        out,
+        err,
+    ):
+        called["repo_dir"] = repo_dir
+        called["repo"] = repo
+        called["backlog_file"] = backlog_file
+        called["dry_run"] = dry_run
+        called["project_number"] = project_number
+        called["project_title"] = project_title
+        called["project_owner"] = project_owner
+        return BacklogApplySummary(
+            milestones_created=0,
+            milestones_skipped=0,
+            issues_created=0,
+            issues_skipped=0,
+            failures=0,
+            project_created=True,
+            project_items_added=2,
+            project_items_skipped=1,
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_backlog", _fake_apply_backlog)
+
+    rc = main(
+        [
+            "apply",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--repo",
+            "acme/repo",
+            "--project-title",
+            "Roadmap",
+            "--project-owner",
+            "acme",
+        ]
+    )
+    assert rc == 0
+    assert called["project_number"] is None
+    assert called["project_title"] == "Roadmap"
+    assert called["project_owner"] == "acme"
 
 
 def test_apply_rules_dry_run_does_not_execute(

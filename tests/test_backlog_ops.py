@@ -126,3 +126,82 @@ def test_resolve_authenticated_login_returns_login(tmp_path: Path, monkeypatch: 
     monkeypatch.setattr(backlog_ops, "_run_gh", lambda _repo_dir, _args: _cp_ok('{"login":"octocat"}'))
 
     assert backlog_ops.resolve_authenticated_login(repo_dir) == "octocat"
+
+
+def test_apply_backlog_project_title_creates_and_adds_items(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    backlog_file = repo_dir / "backlog.json"
+    backlog_file.write_text(
+        json.dumps(
+            {
+                "epics": [
+                    {
+                        "key": "A",
+                        "title": "Epic A",
+                        "body": "epic body",
+                        "labels": [],
+                        "tickets": [
+                            {
+                                "title": "A1",
+                                "body": "ticket body",
+                                "labels": [],
+                                "assignees": [],
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda _: None)
+
+    numbers = {"Epic A": 10, "A1": 11}
+    monkeypatch.setattr(backlog_ops, "_find_issue_number", lambda _repo_dir, _repo, title: numbers.get(title))
+    monkeypatch.setattr(backlog_ops, "_create_issue", lambda *args, **kwargs: 999)
+
+    calls: list[list[str]] = []
+
+    def _fake_run_gh(_repo_dir: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args == ["api", "/user"]:
+            return _cp_ok('{"login":"octocat"}')
+        if args[:2] == ["api", "--paginate"] and "milestones" in args[2]:
+            return _cp_ok("[]")
+        if args[:2] == ["api", "--paginate"] and "labels" in args[2]:
+            return _cp_ok("[]")
+        if args[:3] == ["api", "--method", "POST"] and args[3].endswith("/milestones"):
+            return _cp_ok("{}")
+        if args[:5] == ["project", "list", "--owner", "acme", "--limit"]:
+            return _cp_ok("[]")
+        if args[:4] == ["project", "create", "--owner", "acme"]:
+            return _cp_ok('{"number":42,"title":"Roadmap"}')
+        if args[:4] == ["project", "link", "42", "--owner"]:
+            return _cp_ok("")
+        if args[:4] == ["project", "item-add", "42", "--owner"]:
+            return _cp_ok("{}")
+        raise AssertionError(f"Unexpected gh invocation: {args}")
+
+    monkeypatch.setattr(backlog_ops, "_run_gh", _fake_run_gh)
+
+    summary = backlog_ops.apply_backlog(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        backlog_file=backlog_file,
+        dry_run=False,
+        project_title="Roadmap",
+        project_owner="acme",
+        out=lambda _: None,
+        err=lambda _: None,
+    )
+
+    assert summary.failures == 0
+    assert summary.project_created is True
+    assert summary.project_items_added == 2
+    assert summary.project_items_skipped == 0
+    assert summary.milestones_created == 1
+    assert summary.issues_skipped == 2

@@ -5,7 +5,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .backlog_ops import BacklogApplySummary, apply_backlog, resolve_authenticated_login
+from .backlog_ops import (
+    BacklogApplySummary,
+    apply_backlog,
+    resolve_authenticated_login,
+    resolve_project_target_for_auth_check,
+)
 from .create_ops import CreateSummary, create_repository
 from .generator import (
     SUPPORTED_LICENSE,
@@ -125,6 +130,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--file",
         default="backlog/issues.json",
         help="Backlog JSON path (default: backlog/issues.json)",
+    )
+    project_group = apply_backlog_cmd.add_mutually_exclusive_group()
+    project_group.add_argument(
+        "--project-number",
+        type=int,
+        help="GitHub Project number to attach issues to",
+    )
+    project_group.add_argument(
+        "--project-title",
+        help="GitHub Project title to use (creates it if missing)",
+    )
+    apply_backlog_cmd.add_argument(
+        "--project-owner",
+        help="GitHub login/org owning the project (defaults to repo owner)",
     )
     apply_backlog_cmd.add_argument(
         "--auth-check",
@@ -349,10 +368,19 @@ def main(argv: list[str] | None = None) -> int:
         if ns.auth_check:
             try:
                 login = resolve_authenticated_login(repo_dir)
+                project_target = resolve_project_target_for_auth_check(
+                    repo_dir=repo_dir,
+                    repo=ns.repo,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    project_owner=ns.project_owner,
+                )
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
                 return 1
             print(f"GitHub auth OK: {login}")
+            if project_target is not None:
+                print(f"GitHub project access OK: {project_target}")
             return 0
         backlog_file = Path(ns.file)
         if not backlog_file.is_absolute():
@@ -363,6 +391,9 @@ def main(argv: list[str] | None = None) -> int:
                 repo=ns.repo,
                 backlog_file=backlog_file,
                 dry_run=ns.dry_run,
+                project_number=ns.project_number,
+                project_title=ns.project_title,
+                project_owner=ns.project_owner,
                 out=print,
                 err=lambda line: print(line, file=sys.stderr),
             )
@@ -378,6 +409,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  milestones skipped: {summary.milestones_skipped}")
         print(f"  issues created: {summary.issues_created}")
         print(f"  issues skipped: {summary.issues_skipped}")
+        if ns.project_number is not None or ns.project_title:
+            print(f"  project created: {summary.project_created}")
+            print(f"  project items added: {summary.project_items_added}")
+            print(f"  project items skipped: {summary.project_items_skipped}")
         print(f"  failures: {summary.failures}")
         return 1 if summary.failures > 0 else 0
 
