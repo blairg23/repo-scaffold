@@ -1,6 +1,6 @@
 # repo-scaffold
 
-`repo-scaffold` is a repo operations toolkit with two modes:
+`repo-scaffold` is a repo operations toolkit with three modes:
 
 - `create`: create/push a GitHub repo from a local folder and apply baseline settings
 - `init`: generate a new GitHub-ready repository scaffold
@@ -91,6 +91,35 @@ Per-file output labels:
 - falls back to `gh auth status` / `gh auth login`
 - supports `--auth-check` to validate token/session (`gh api /user`) before writing anything
 - ticket bodies include a `Parent epic: #<number>` link when the epic issue exists/was created
+- creates milestones/issues only; it does not create a GitHub Project
+
+## Bulk GitHub Backlog Upload
+
+Validate auth first:
+
+```bash
+poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --auth-check
+```
+
+Preview writes:
+
+```bash
+poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --dry-run
+```
+
+Apply:
+
+```bash
+poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO
+```
+
+Equivalent generated-repo script:
+
+```bash
+./scripts/create-issues.sh --repo OWNER/REPO --auth-check
+./scripts/create-issues.sh --repo OWNER/REPO --dry-run
+./scripts/create-issues.sh --repo OWNER/REPO
+```
 
 ## GitHub token permissions
 
@@ -123,6 +152,22 @@ Edit these source templates to customize generated `.github` markdown:
 - `src/repo_scaffold/templates/github/ISSUE_TEMPLATE/ticket.md`
 
 `backlog/issues.json` starts empty by default; add your own epic/ticket entries (you can base bodies on these templates).
+
+## PR Creation Workflow
+
+`repo-scaffold` applies and generates `.github/pull_request_template.md`, which is used by GitHub when opening PRs.
+
+There is currently no dedicated `repo-scaffold` PR-create command. Use `gh` directly:
+
+```bash
+gh pr create --base main --head <branch>
+```
+
+If you want to force the local template body explicitly:
+
+```bash
+gh pr create --base main --head <branch> --body-file .github/pull_request_template.md
+```
 
 ## Generated structure (init)
 

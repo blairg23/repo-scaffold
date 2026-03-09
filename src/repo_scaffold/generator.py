@@ -491,6 +491,7 @@ The scripts auto-load `./.env` and also honor exported `GH_TOKEN` / `GITHUB_TOKE
 Keep `.env` uncommitted (it is ignored by the generated `.gitignore`).
 If executable bits are lost (for example after a zip download), run:
 `chmod +x scripts/create-issues.sh`.
+Backlog bootstrap creates milestones/issues only; it does not create a GitHub Project.
 
 ## GitHub token permissions
 
@@ -506,6 +507,11 @@ Optional scopes:
 
 - `delete_repo` for automated cleanup/delete flows
 - `project` if you later automate GitHub Projects
+
+## PR workflow
+
+This scaffold includes `.github/pull_request_template.md`, which GitHub uses when creating pull requests.
+There is no dedicated `repo-scaffold` PR-create command; use `gh pr create` directly.
 
 ## Development
 

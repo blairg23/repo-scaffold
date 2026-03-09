@@ -100,6 +100,10 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     generated_readme = (out_dir / "README.md").read_text(encoding="utf-8")
     assert "## Backlog bootstrap" in generated_readme
     assert "./scripts/create-issues.sh" in generated_readme
+    assert "--auth-check" in generated_readme
+    assert "does not create a GitHub Project" in generated_readme
+    assert "## PR workflow" in generated_readme
+    assert "gh pr create" in generated_readme
     assert ".env.example" in generated_readme
     assert "--dry-run" in generated_readme
     assert "Dependabot alerts + automated security updates" in generated_readme
