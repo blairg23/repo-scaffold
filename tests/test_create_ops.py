@@ -39,7 +39,9 @@ def test_resolve_repo_accepts_host_owner_repo_from_env() -> None:
     assert resolved == "acme/demo"
 
 
-def test_create_or_push_repo_uses_absolute_source_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_create_or_push_repo_uses_absolute_source_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.chdir(tmp_path)
     repo_dir = Path("rel-repo")
     repo_dir.mkdir(parents=True)
@@ -58,9 +60,13 @@ def test_create_or_push_repo_uses_absolute_source_path(monkeypatch: pytest.Monke
         stdin_text: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         run_calls.append((args, cwd))
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stdout="", stderr=""
+        )
 
-    def _fake_push_main(*, repo_dir: Path, env: dict[str, str]) -> tuple[bool, str | None]:
+    def _fake_push_main(
+        *, repo_dir: Path, env: dict[str, str]
+    ) -> tuple[bool, str | None]:
         return True, None
 
     monkeypatch.setattr(create_ops, "_repo_exists", _fake_repo_exists)
@@ -106,21 +112,37 @@ def test_ensure_git_repo_initializes_when_inside_parent_repo(
         calls.append(args)
         if args == ["git", "rev-parse", "--show-toplevel"]:
             # Simulate being inside a parent git repo, not repo_dir itself.
-            return subprocess.CompletedProcess(args=args, returncode=0, stdout=str(tmp_path), stderr="")
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout=str(tmp_path), stderr=""
+            )
         if args == ["git", "init"]:
-            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="", stderr=""
+            )
         if args == ["git", "rev-parse", "--verify", "HEAD"]:
-            return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="")
+            return subprocess.CompletedProcess(
+                args=args, returncode=1, stdout="", stderr=""
+            )
         if args == ["git", "config", "user.name"]:
-            return subprocess.CompletedProcess(args=args, returncode=0, stdout="Tester\n", stderr="")
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="Tester\n", stderr=""
+            )
         if args == ["git", "config", "user.email"]:
-            return subprocess.CompletedProcess(args=args, returncode=0, stdout="tester@example.com\n", stderr="")
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="tester@example.com\n", stderr=""
+            )
         if args == ["git", "add", "-A"]:
-            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="", stderr=""
+            )
         if args == ["git", "diff", "--cached", "--quiet"]:
-            return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="")
+            return subprocess.CompletedProcess(
+                args=args, returncode=1, stdout="", stderr=""
+            )
         if args == ["git", "commit", "-m", "Initial scaffold"]:
-            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="", stderr=""
+            )
         raise AssertionError(f"Unexpected git args: {args}")
 
     monkeypatch.setattr(create_ops, "_run", _fake_run)
@@ -150,7 +172,9 @@ def test_push_main_uses_head_ref_without_token(monkeypatch: pytest.MonkeyPatch) 
         stdin_text: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         calls.append(args)
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stdout="", stderr=""
+        )
 
     monkeypatch.setattr(create_ops, "_resolve_push_token", _fake_resolve_push_token)
     monkeypatch.setattr(create_ops, "_run", _fake_run)
@@ -175,7 +199,9 @@ def test_push_main_uses_head_ref_with_token(monkeypatch: pytest.MonkeyPatch) -> 
         stdin_text: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         calls.append(args)
-        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stdout="", stderr=""
+        )
 
     monkeypatch.setattr(create_ops, "_resolve_push_token", _fake_resolve_push_token)
     monkeypatch.setattr(create_ops, "_run", _fake_run)

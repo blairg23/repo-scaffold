@@ -37,6 +37,8 @@ Defaults:
 - `--name` defaults to `GITHUB_REPO` (if set), otherwise `repo-scaffold-e2e-<UTC timestamp>`
 - `--languages` defaults to `go,python,react`
 - output defaults to `./out/<name>`
+- scaffolds include `.pre-commit-config.yaml`
+- Python scaffolds include `tox.ini`; generated CI runs `tox` (`lint`, `type`, `test`)
 
 Fast path (no required flags):
 
@@ -67,7 +69,7 @@ Defaults:
 - also attempts to enable Dependabot alerts and automated security updates (best-effort; warnings only if plan/policy blocks them)
 - supports `--dry-run`
 
-Tip: avoid shell-expanding possibly-unset vars in `--repo` (for example `--repo "$GITHUB_ORG/$TEST_REPO"`).  
+Tip: avoid shell-expanding possibly-unset vars in `--repo` (for example `--repo "$GITHUB_ORG/$TEST_REPO"`).
 If you keep repo metadata in `.env`, omit `--repo` and let `repo-scaffold` resolve it.
 
 ### `apply`
@@ -302,6 +304,7 @@ gh pr create --base main --head <branch> --body-file .github/pull_request_templa
 
 ```text
 <out>/
+  .pre-commit-config.yaml
   .github/
     pull_request_template.md
     CODEOWNERS
@@ -313,6 +316,10 @@ gh pr create --base main --head <branch> --body-file .github/pull_request_templa
       ci.yml
       codeql.yml
     dependabot.yml
+  pyproject.toml   # when python selected
+  tox.ini          # when python selected
+  go.mod           # when go selected
+  web/             # when react selected
   docs/
     requirements.md
     api-v1.md
@@ -323,6 +330,25 @@ gh pr create --base main --head <branch> --body-file .github/pull_request_templa
 
 ```bash
 poetry run pytest
+```
+
+Pre-commit checks:
+
+```bash
+poetry run pre-commit install
+poetry run pre-commit run --all-files
+```
+
+Tox workflow (lint, type, test):
+
+```bash
+tox -e lint,type,test
+```
+
+If `tox` is not installed locally:
+
+```bash
+python -m pip install tox
 ```
 
 Real GitHub E2E (creates a temporary remote repo and deletes it by default):

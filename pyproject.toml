@@ -19,6 +19,8 @@ optional = true
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0.0"
+pre-commit = ">=3.8.0"
+tox = ">=4.20.0"
 
 [tool.poetry.scripts]
 repo-scaffold = "repo_scaffold.cli:main"

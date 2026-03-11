@@ -27,3 +27,9 @@ artifacts/
 .DS_Store
 .idea/
 .vscode/
+
+# tox
+.tox/
+
+# pre-commit
+.pre-commit-cache/

@@ -13,7 +13,17 @@ from repo_scaffold.delete_ops import DeleteSummary
 
 def test_init_mode_supports_legacy_root_invocation(tmp_path: Path) -> None:
     out_dir = tmp_path / "demo"
-    rc = main(["--name", "demo", "--languages", "go,python", "--out", str(out_dir), "--dry-run"])
+    rc = main(
+        [
+            "--name",
+            "demo",
+            "--languages",
+            "go,python",
+            "--out",
+            str(out_dir),
+            "--dry-run",
+        ]
+    )
     assert rc == 0
     assert not out_dir.exists()
 
@@ -29,7 +39,9 @@ def test_root_help_shows_all_modes(capsys: pytest.CaptureFixture[str]) -> None:
     assert "delete" in stdout
 
 
-def test_init_defaults_name_and_languages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_init_defaults_name_and_languages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     for key in ("GH_REPO", "GITHUB_REPOSITORY", "GITHUB_ORG", "GITHUB_REPO"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.chdir(tmp_path)
@@ -48,7 +60,9 @@ def test_init_defaults_name_and_languages(tmp_path: Path, monkeypatch: pytest.Mo
     assert (out_dir / "web" / "package.json").exists()
 
 
-def test_init_defaults_name_from_github_repo_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_init_defaults_name_from_github_repo_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     out_dir = tmp_path / "default-init-from-env"
     monkeypatch.setenv("GITHUB_REPO", "from-env-repo")
     rc = main(["init", "--out", str(out_dir), "--yes"])
@@ -62,13 +76,17 @@ def test_init_rejects_conflicting_overwrite_flags() -> None:
     assert exc.value.code == 2
 
 
-def test_init_prompt_defaults_to_no(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_init_prompt_defaults_to_no(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     out_dir = tmp_path / "demo"
     out_dir.mkdir(parents=True)
     readme = out_dir / "README.md"
     readme.write_text("keep me\n", encoding="utf-8")
 
-    monkeypatch.setattr("repo_scaffold.cli.sys.stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(
+        "repo_scaffold.cli.sys.stdin", SimpleNamespace(isatty=lambda: True)
+    )
 
     prompts: list[str] = []
 
@@ -89,7 +107,19 @@ def test_apply_templates_only_writes_template_files(tmp_path: Path) -> None:
     repo_dir.mkdir(parents=True)
     (repo_dir / "README.md").write_text("# Existing\n", encoding="utf-8")
 
-    rc = main(["apply", "templates", "--path", str(repo_dir), "--name", "repo", "--owner", "acme", "--yes"])
+    rc = main(
+        [
+            "apply",
+            "templates",
+            "--path",
+            str(repo_dir),
+            "--name",
+            "repo",
+            "--owner",
+            "acme",
+            "--yes",
+        ]
+    )
     assert rc == 0
     assert (repo_dir / ".github" / "pull_request_template.md").exists()
     assert (repo_dir / ".github" / "ISSUE_TEMPLATE" / "ticket.md").exists()
@@ -111,18 +141,27 @@ def test_apply_ci_dry_run_prints_plan_without_writes(
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
 
-    rc = main(["apply", "ci", "--path", str(repo_dir), "--languages", "go", "--dry-run"])
+    rc = main(
+        ["apply", "ci", "--path", str(repo_dir), "--languages", "go", "--dry-run"]
+    )
     assert rc == 0
     assert not (repo_dir / ".github" / "workflows" / "ci.yml").exists()
     stdout = capsys.readouterr().out
-    assert f"CREATE    {(repo_dir / '.github' / 'workflows' / 'ci.yml').as_posix()}" in stdout
+    assert (
+        f"CREATE    {(repo_dir / '.github' / 'workflows' / 'ci.yml').as_posix()}"
+        in stdout
+    )
 
 
 def test_apply_dependabot_infers_languages_from_repo(tmp_path: Path) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
-    (repo_dir / "go.mod").write_text("module example.com/repo\ngo 1.22\n", encoding="utf-8")
-    (repo_dir / "pyproject.toml").write_text("[project]\nname='repo'\n", encoding="utf-8")
+    (repo_dir / "go.mod").write_text(
+        "module example.com/repo\ngo 1.22\n", encoding="utf-8"
+    )
+    (repo_dir / "pyproject.toml").write_text(
+        "[project]\nname='repo'\n", encoding="utf-8"
+    )
 
     rc = main(["apply", "dependabot", "--path", str(repo_dir), "--low-noise", "--yes"])
     assert rc == 0
@@ -201,10 +240,24 @@ def test_apply_backlog_auth_check(
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
 
-    monkeypatch.setattr("repo_scaffold.cli.resolve_authenticated_login", lambda _: "octocat")
-    monkeypatch.setattr("repo_scaffold.cli.resolve_project_target_for_auth_check", lambda **_: None)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.resolve_authenticated_login", lambda _: "octocat"
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.resolve_project_target_for_auth_check", lambda **_: None
+    )
 
-    rc = main(["apply", "backlog", "--path", str(repo_dir), "--repo", "acme/repo", "--auth-check"])
+    rc = main(
+        [
+            "apply",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--repo",
+            "acme/repo",
+            "--auth-check",
+        ]
+    )
     assert rc == 0
     stdout = capsys.readouterr().out
     assert "GitHub auth OK: octocat" in stdout
@@ -216,7 +269,9 @@ def test_apply_backlog_auth_check_with_project_target(
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
 
-    monkeypatch.setattr("repo_scaffold.cli.resolve_authenticated_login", lambda _: "octocat")
+    monkeypatch.setattr(
+        "repo_scaffold.cli.resolve_authenticated_login", lambda _: "octocat"
+    )
     monkeypatch.setattr(
         "repo_scaffold.cli.resolve_project_target_for_auth_check",
         lambda **_: "acme/#1 (Roadmap)",
@@ -423,7 +478,9 @@ def test_apply_backlog_resolves_repo_from_dotenv_when_repo_omitted(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True)
-    (workspace / ".env").write_text("GITHUB_ORG=acme\nGITHUB_REPO=from-dotenv\n", encoding="utf-8")
+    (workspace / ".env").write_text(
+        "GITHUB_ORG=acme\nGITHUB_REPO=from-dotenv\n", encoding="utf-8"
+    )
 
     repo_dir = workspace / "repo"
     repo_dir.mkdir(parents=True)
@@ -519,7 +576,18 @@ def test_create_subcommand_delegates_to_create_ops(
 
     called: dict[str, object] = {}
 
-    def _fake_create_repository(*, repo_dir: Path, repo, owner, name, visibility, apply_settings, dry_run, out, err):
+    def _fake_create_repository(
+        *,
+        repo_dir: Path,
+        repo,
+        owner,
+        name,
+        visibility,
+        apply_settings,
+        dry_run,
+        out,
+        err,
+    ):
         called["repo_dir"] = repo_dir
         called["repo"] = repo
         called["owner"] = owner
@@ -559,7 +627,18 @@ def test_create_auto_inits_default_path_from_github_repo_env(
 
     called: dict[str, object] = {}
 
-    def _fake_create_repository(*, repo_dir: Path, repo, owner, name, visibility, apply_settings, dry_run, out, err):
+    def _fake_create_repository(
+        *,
+        repo_dir: Path,
+        repo,
+        owner,
+        name,
+        visibility,
+        apply_settings,
+        dry_run,
+        out,
+        err,
+    ):
         called["repo_dir"] = repo_dir
         called["repo"] = repo
         called["owner"] = owner
@@ -599,7 +678,18 @@ def test_create_repo_flag_name_takes_precedence_for_auto_init_path(
 
     called: dict[str, object] = {}
 
-    def _fake_create_repository(*, repo_dir: Path, repo, owner, name, visibility, apply_settings, dry_run, out, err):
+    def _fake_create_repository(
+        *,
+        repo_dir: Path,
+        repo,
+        owner,
+        name,
+        visibility,
+        apply_settings,
+        dry_run,
+        out,
+        err,
+    ):
         called["repo_dir"] = repo_dir
         called["repo"] = repo
         return CreateSummary(
@@ -665,7 +755,9 @@ def test_delete_subcommand_delegates_to_delete_ops(
             local_failures=0,
         )
 
-    monkeypatch.setattr("repo_scaffold.cli.delete_repositories", _fake_delete_repositories)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.delete_repositories", _fake_delete_repositories
+    )
 
     rc = main(
         [
@@ -686,7 +778,10 @@ def test_delete_subcommand_delegates_to_delete_ops(
     assert rc == 0
     assert called["owner"] == "acme"
     assert called["prefix"] == "repo-scaffold-e2e"
-    assert called["exact_names"] == ("repo-scaffold-e2e", "repo-scaffold-e2e-20260311001924")
+    assert called["exact_names"] == (
+        "repo-scaffold-e2e",
+        "repo-scaffold-e2e-20260311001924",
+    )
     assert called["include_local"] is True
     assert called["delete_local_only"] is False
     assert called["local_roots"] == ("/tmp",)
@@ -736,7 +831,9 @@ def test_delete_subcommand_delete_local_only(
             local_failures=0,
         )
 
-    monkeypatch.setattr("repo_scaffold.cli.delete_repositories", _fake_delete_repositories)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.delete_repositories", _fake_delete_repositories
+    )
     rc = main(["delete", "--local-only"])
     assert rc == 0
     assert called["owner"] is None
