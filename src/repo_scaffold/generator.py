@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 ALLOWED_LANGUAGES = ("go", "python", "react")
 SUPPORTED_LICENSE = "apache-2.0"
+TEMPLATE_ROOT = Path(__file__).resolve().parent / "templates"
 
 
 @dataclass(frozen=True)
@@ -15,7 +17,13 @@ class ScaffoldConfig:
     owner: str | None
     license_id: str
     out_dir: Path
-    overwrite: bool = False
+
+
+@dataclass(frozen=True)
+class ScaffoldFile:
+    path: Path
+    content: str
+    executable: bool = False
 
 
 def parse_language_csv(raw: str) -> tuple[str, ...]:
@@ -48,6 +56,13 @@ def _ensure_license_supported(license_id: str) -> None:
         raise ValueError(f"Unsupported license '{license_id}'. Only '{SUPPORTED_LICENSE}' is supported.")
 
 
+def _load_template(relative_path: str, fallback: str) -> str:
+    template_path = TEMPLATE_ROOT / relative_path
+    if template_path.exists():
+        return template_path.read_text(encoding="utf-8")
+    return fallback
+
+
 def _render_codeowners(owner: str | None) -> str:
     if owner:
         handle = owner if owner.startswith("@") else f"@{owner}"
@@ -56,7 +71,7 @@ def _render_codeowners(owner: str | None) -> str:
 
 
 def _render_pr_template() -> str:
-    return """## Summary
+    fallback = """## Summary
 
 - 
 
@@ -84,10 +99,11 @@ def _render_pr_template() -> str:
 - [ ] Added tests (or documented why not)
 - [ ] No secrets or credentials committed
 """
+    return _load_template("github/pull_request_template.md", fallback)
 
 
 def _render_issue_epic_template() -> str:
-    return """---
+    fallback = """---
 name: Epic
 about: Track a multi-ticket initiative
 title: "[EPIC] "
@@ -114,10 +130,11 @@ assignees: []
 
 ## Linked tickets
 """
+    return _load_template("github/ISSUE_TEMPLATE/epic.md", fallback)
 
 
 def _render_issue_ticket_template() -> str:
-    return """---
+    fallback = """---
 name: Ticket
 about: Describe one implementation task
 title: "[Ticket] "
@@ -140,6 +157,7 @@ assignees: []
 - [ ] Tests added/updated
 - [ ] Documentation updated
 """
+    return _load_template("github/ISSUE_TEMPLATE/ticket.md", fallback)
 
 
 def _render_issue_config(owner: str | None, name: str) -> str:
@@ -172,7 +190,7 @@ env:
 
 jobs:
   go:
-    if: contains(env.LANGUAGES, 'go')
+    if: contains(env.LANGUAGES, 'go') && hashFiles('go.mod') != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -195,7 +213,7 @@ jobs:
           version: v1.61
 
   python:
-    if: contains(env.LANGUAGES, 'python')
+    if: contains(env.LANGUAGES, 'python') && hashFiles('pyproject.toml') != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -208,11 +226,15 @@ jobs:
           pip install -e .[dev]
       - name: Ruff
         run: ruff check .
+      - name: Black
+        run: black --check .
+      - name: Mypy
+        run: mypy src
       - name: Pytest
         run: pytest
 
   react:
-    if: contains(env.LANGUAGES, 'react')
+    if: contains(env.LANGUAGES, 'react') && hashFiles('web/package.json') != ''
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -231,6 +253,8 @@ jobs:
           fi
       - name: Install dependencies
         run: npm ci
+      - name: Lint
+        run: npm run lint --if-present
       - name: Build
         run: npm run build
       - name: Test (optional)
@@ -341,6 +365,7 @@ def _render_gitignore(languages: Iterable[str]) -> str:
         "# Environment",
         ".env",
         ".env.*",
+        "!.env.example",
         "",
         "# Logs",
         "*.log",
@@ -367,6 +392,10 @@ def _render_gitignore(languages: Iterable[str]) -> str:
                 ".pytest_cache/",
                 ".ruff_cache/",
                 ".mypy_cache/",
+                ".tox/",
+                ".coverage",
+                ".coverage.*",
+                "htmlcov/",
                 ".venv/",
                 "venv/",
                 "dist/",
@@ -407,21 +436,44 @@ indent_style = tab
 
 
 def _render_makefile() -> str:
-    return """.PHONY: lint test build
+    return """.PHONY: format lint typecheck test build
+
+format:
+\t@if [ -f go.mod ]; then \\
+\t\techo "Formatting Go"; \\
+\t\tgofmt -w .; \\
+\tfi
+\t@if [ -f pyproject.toml ]; then \\
+\t\techo "Formatting Python"; \\
+\t\truff check --fix .; \\
+\t\tblack .; \\
+\tfi
+\t@if [ -f web/package.json ]; then \\
+\t\techo "Formatting React"; \\
+\t\tcd web && npm run format --if-present; \\
+\tfi
 
 lint:
 \t@if [ -f go.mod ]; then \\
 \t\techo "Linting Go"; \\
+\t\tunformatted="$(gofmt -l .)"; \\
+\t\tif [ -n "$$unformatted" ]; then echo "$$unformatted"; exit 1; fi; \\
 \t\tif command -v golangci-lint >/dev/null 2>&1; then golangci-lint run ./...; else echo "golangci-lint not installed; skipping"; fi; \\
 \tfi
 \t@if [ -f pyproject.toml ]; then \\
 \t\techo "Linting Python"; \\
 \t\truff check .; \\
+\t\tblack --check .; \\
 \tfi
 \t@if [ -f web/package.json ]; then \\
 \t\techo "Linting React"; \\
 \t\tcd web && npm run lint --if-present; \\
 \tfi
+
+typecheck:
+\t@if [ -f go.mod ]; then go vet ./...; fi
+\t@if [ -f pyproject.toml ]; then mypy src; fi
+\t@if [ -f web/package.json ]; then cd web && npm run typecheck --if-present; fi
 
 test:
 \t@if [ -f go.mod ]; then go test ./...; fi
@@ -435,26 +487,151 @@ build:
 """
 
 
+def _render_backlog_issues_json() -> str:
+    # Backlog starts empty by default. Users can add project-specific epics/tickets later.
+    return json.dumps({"epics": []}, indent=2, ensure_ascii=False)
+
+
 def _render_repo_readme(config: ScaffoldConfig) -> str:
-    langs = ", ".join(config.languages)
-    owner_part = config.owner or "OWNER"
-    return f"""# {config.name}
+    lines: list[str] = [
+        f"# {config.name}",
+        "",
+        "Created by [repo-scaffold](https://github.com/your-org/repo-scaffold).",
+        "",
+        "## Enabled languages",
+        "",
+    ]
+    lines.extend(f"- {lang}" for lang in config.languages)
+    lines.extend(["", "## Setup", ""])
 
-Repository scaffold generated by `repo-scaffold`.
+    if "python" in config.languages:
+        lines.extend(
+            [
+                "### Python",
+                "",
+                "```bash",
+                "python -m venv .venv",
+                "source .venv/bin/activate",
+                "pip install -e .[dev]",
+                "```",
+                "",
+            ]
+        )
 
-## Enabled languages
+    if "go" in config.languages:
+        lines.extend(
+            [
+                "### Go",
+                "",
+                "```bash",
+                "go mod tidy",
+                "```",
+                "",
+            ]
+        )
 
-{langs}
+    if "react" in config.languages:
+        lines.extend(
+            [
+                "### React",
+                "",
+                "```bash",
+                "cd web",
+                "npm ci",
+                "```",
+                "",
+            ]
+        )
 
-## Quick start
+    lines.extend(["## Day-to-day commands", ""])
 
-1. Create a GitHub repository named `{config.name}`.
-2. Run `scripts/gh-apply-settings.sh {owner_part} {config.name}` after pushing.
-3. Open issues with `.github/ISSUE_TEMPLATE/` forms and submit PRs with the PR template.
+    if "python" in config.languages:
+        lines.extend(
+            [
+                "### Python",
+                "",
+                "```bash",
+                "ruff check .",
+                "black --check .",
+                "mypy src",
+                "pytest",
+                "tox",
+                "```",
+                "",
+            ]
+        )
 
-## Development
+    if "go" in config.languages:
+        lines.extend(
+            [
+                "### Go",
+                "",
+                "```bash",
+                "gofmt -w .",
+                "golangci-lint run ./...",
+                "go test ./...",
+                "```",
+                "",
+            ]
+        )
 
-Use `make lint`, `make test`, and `make build` where applicable.
+    if "react" in config.languages:
+        lines.extend(
+            [
+                "### React",
+                "",
+                "```bash",
+                "cd web",
+                "npm run lint --if-present",
+                "npm test --if-present",
+                "npm run build",
+                "```",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "## Convenience targets",
+            "",
+            "Optional wrappers are provided in `Makefile`: `make format`, `make lint`, `make typecheck`, `make test`, `make build`.",
+            "",
+            "## GitHub templates included",
+            "",
+            "- `.github/ISSUE_TEMPLATE/epic.md`",
+            "- `.github/ISSUE_TEMPLATE/ticket.md`",
+            "- `.github/pull_request_template.md`",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _render_env_example(name: str) -> str:
+    return f"""# Copy this file to .env and set real values.
+# Do not commit .env.
+
+# GitHub token used by scripts/backlog/apply/create flows.
+# Recommended classic PAT scopes: repo, workflow, read:org.
+# Optional scopes: delete_repo (cleanup), project (Projects automation).
+GH_TOKEN=ghp_replace_with_real_token
+
+# Optional metadata for local tooling/docs.
+GITHUB_ORG=YOUR_ORG
+GITHUB_REPO={name}
+# Alternative single value instead of GITHUB_ORG + GITHUB_REPO:
+# GH_REPO=YOUR_ORG/{name}
+
+# Optional backlog project naming defaults (used with --with-project):
+# GITHUB_PROJECT_TITLE=YOUR_FIXED_PROJECT_TITLE
+# GITHUB_PROJECT_TITLE_TEMPLATE={{repo}} Roadmap
+
+# Legacy lowercase aliases are still supported:
+# github_token=...
+# github_org=...
+# github_repo=...
+# github_full_repo=...
+# github_project_title=...
+# github_project_title_template=...
 """
 
 
@@ -644,21 +821,124 @@ set -euo pipefail
 
 OWNER="${1:-}"
 REPO="${2:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="$REPO_ROOT/.env"
 
-if [ -z "$OWNER" ] || [ -z "$REPO" ]; then
-  echo "Usage: $0 <owner> <repo>" >&2
-  exit 1
-fi
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/gh-apply-settings.sh [owner] [repo]
+
+Values resolve in this order:
+  1) positional args
+  2) .env / exported env:
+     - GITHUB_ORG / github_org
+     - GITHUB_REPO / github_repo
+     - GH_REPO / GITHUB_REPOSITORY / github_full_repo
+EOF
+}
 
 if ! command -v gh >/dev/null 2>&1; then
   echo "GitHub CLI (gh) is required." >&2
   exit 1
 fi
 
-if ! gh auth status >/dev/null 2>&1; then
+load_env_from_file() {
+  local env_file="$1"
+  local line key value
+
+  if [ ! -f "$env_file" ]; then
+    return 0
+  fi
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [ -z "$line" ] && continue
+    case "$line" in
+      #*) continue ;;
+      export[[:space:]]*) line="${line#export }" ;;
+    esac
+    if [[ "$line" != *=* ]]; then
+      continue
+    fi
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="$(printf '%s' "$key" | tr -d '[:space:]')"
+    value="${value%$'\\r'}"
+
+    if [ "${value#\\"}" != "$value" ] && [ "${value%\\"}" != "$value" ]; then
+      value="${value#\\"}"
+      value="${value%\\"}"
+    elif [ "${value#\\'}" != "$value" ] && [ "${value%\\'}" != "$value" ]; then
+      value="${value#\\'}"
+      value="${value%\\'}"
+    fi
+
+    case "$key" in
+      github_token|GH_TOKEN|GITHUB_TOKEN)
+        export GH_TOKEN="$value"
+        ;;
+      github_org|GITHUB_ORG)
+        export GITHUB_ORG="$value"
+        ;;
+      github_repo|GITHUB_REPO)
+        export GITHUB_REPO="$value"
+        ;;
+      github_full_repo|GH_REPO|GITHUB_REPOSITORY)
+        export GH_REPO="$value"
+        ;;
+    esac
+  done < "$env_file"
+}
+
+resolve_repo_ref() {
+  local full_repo
+  full_repo="${GH_REPO:-${GITHUB_REPOSITORY:-}}"
+
+  if [ -z "$OWNER" ] && [ -n "${GITHUB_ORG:-}" ]; then
+    OWNER="$GITHUB_ORG"
+  fi
+  if [ -z "$REPO" ] && [ -n "${GITHUB_REPO:-}" ]; then
+    REPO="$GITHUB_REPO"
+  fi
+
+  if { [ -z "$OWNER" ] || [ -z "$REPO" ]; } && [ -n "$full_repo" ] && [[ "$full_repo" == */* ]]; then
+    if [ -z "$OWNER" ]; then
+      OWNER="${full_repo%%/*}"
+    fi
+    if [ -z "$REPO" ]; then
+      REPO="${full_repo##*/}"
+    fi
+  fi
+
+  if [ -z "$OWNER" ] || [ -z "$REPO" ]; then
+    usage >&2
+    exit 1
+  fi
+}
+
+ensure_gh_auth() {
+  if [ -z "${GH_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+    export GH_TOKEN="$GITHUB_TOKEN"
+  fi
+
+  if [ -n "${GH_TOKEN:-}" ]; then
+    return 0
+  fi
+
+  if gh auth status >/dev/null 2>&1; then
+    return 0
+  fi
+
   echo "Authenticate first: gh auth login" >&2
+  echo "Or set GH_TOKEN/GITHUB_TOKEN (legacy .env alias: github_token)." >&2
   exit 1
-fi
+}
+
+load_env_from_file "$ENV_FILE"
+resolve_repo_ref
+ensure_gh_auth
 
 echo "Applying repository-level merge settings..."
 gh api \
@@ -705,21 +985,327 @@ gh api \
 }
 JSON
 
+enable_optional_feature() {
+  local label="$1"
+  local endpoint="$2"
+
+  if gh api --method PUT -H "Accept: application/vnd.github+json" "$endpoint" >/dev/null 2>&1; then
+    echo "Enabled $label."
+    return 0
+  fi
+
+  echo "Warning: could not enable $label (continuing)." >&2
+  return 0
+}
+
+echo "Enabling optional security defaults..."
+enable_optional_feature "Dependabot alerts" "/repos/$OWNER/$REPO/vulnerability-alerts"
+enable_optional_feature "Dependabot security updates" "/repos/$OWNER/$REPO/automated-security-fixes"
+
 echo "Repository settings applied for $OWNER/$REPO"
 """
 
 
-def _render_gh_create_project_script(name: str, owner: str | None) -> str:
-    default_owner = owner or "<owner>"
-    return f"""#!/usr/bin/env bash
+def _render_gh_create_project_script(name: str) -> str:
+    return """#!/usr/bin/env bash
 set -euo pipefail
 
-OWNER="${{1:-{default_owner}}}"
-REPO="${{2:-{name}}}"
-VISIBILITY="${{3:-private}}"
+OWNER="${1:-}"
+REPO="${2:-}"
+VISIBILITY="${3:-public}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="$REPO_ROOT/.env"
 
-if [ "$OWNER" = "<owner>" ]; then
-  echo "Usage: $0 <owner> [repo] [private|public|internal]" >&2
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/gh-create-project.sh [owner] [repo] [private|public|internal]
+
+Values resolve in this order:
+  1) positional args
+  2) .env / exported env:
+     - GITHUB_ORG / github_org
+     - GITHUB_REPO / github_repo
+     - GH_REPO / GITHUB_REPOSITORY / github_full_repo
+EOF
+}
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "GitHub CLI (gh) is required." >&2
+  exit 1
+fi
+
+if ! command -v git >/dev/null 2>&1; then
+  echo "git is required." >&2
+  exit 1
+fi
+
+load_env_from_file() {
+  local env_file="$1"
+  local line key value
+
+  if [ ! -f "$env_file" ]; then
+    return 0
+  fi
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [ -z "$line" ] && continue
+    case "$line" in
+      #*) continue ;;
+      export[[:space:]]*) line="${line#export }" ;;
+    esac
+    if [[ "$line" != *=* ]]; then
+      continue
+    fi
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="$(printf '%s' "$key" | tr -d '[:space:]')"
+    value="${value%$'\\r'}"
+
+    if [ "${value#\\"}" != "$value" ] && [ "${value%\\"}" != "$value" ]; then
+      value="${value#\\"}"
+      value="${value%\\"}"
+    elif [ "${value#\\'}" != "$value" ] && [ "${value%\\'}" != "$value" ]; then
+      value="${value#\\'}"
+      value="${value%\\'}"
+    fi
+
+    case "$key" in
+      github_token|GH_TOKEN|GITHUB_TOKEN)
+        export GH_TOKEN="$value"
+        ;;
+      github_org|GITHUB_ORG)
+        export GITHUB_ORG="$value"
+        ;;
+      github_repo|GITHUB_REPO)
+        export GITHUB_REPO="$value"
+        ;;
+      github_full_repo|GH_REPO|GITHUB_REPOSITORY)
+        export GH_REPO="$value"
+        ;;
+    esac
+  done < "$env_file"
+}
+
+resolve_repo_ref() {
+  local full_repo
+  full_repo="${GH_REPO:-${GITHUB_REPOSITORY:-}}"
+
+  if [ -z "$OWNER" ] && [ -n "${GITHUB_ORG:-}" ]; then
+    OWNER="$GITHUB_ORG"
+  fi
+  if [ -z "$REPO" ] && [ -n "${GITHUB_REPO:-}" ]; then
+    REPO="$GITHUB_REPO"
+  fi
+
+  if { [ -z "$OWNER" ] || [ -z "$REPO" ]; } && [ -n "$full_repo" ] && [[ "$full_repo" == */* ]]; then
+    if [ -z "$OWNER" ]; then
+      OWNER="${full_repo%%/*}"
+    fi
+    if [ -z "$REPO" ]; then
+      REPO="${full_repo##*/}"
+    fi
+  fi
+
+  if [ -z "$REPO" ]; then
+    REPO="__REPO_NAME__"
+  fi
+
+  if [ -z "$OWNER" ]; then
+    usage >&2
+    exit 1
+  fi
+}
+
+ensure_gh_auth() {
+  if [ -z "${GH_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+    export GH_TOKEN="$GITHUB_TOKEN"
+  fi
+
+  if [ -n "${GH_TOKEN:-}" ]; then
+    return 0
+  fi
+
+  if gh auth status >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Authenticate first: gh auth login" >&2
+  echo "Or set GH_TOKEN/GITHUB_TOKEN (legacy .env alias: github_token)." >&2
+  exit 1
+}
+
+ensure_git_repo() {
+  local current_branch
+  cd "$REPO_ROOT"
+
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Initializing local git repository..."
+    git init >/dev/null
+  fi
+
+  if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+    if ! git config user.name >/dev/null 2>&1 || ! git config user.email >/dev/null 2>&1; then
+      echo "Git user.name and user.email are required for the initial commit." >&2
+      echo 'Set them with: git config --global user.name "Your Name"' >&2
+      echo '               git config --global user.email "you@example.com"' >&2
+      exit 1
+    fi
+
+    git add -A
+    if git diff --cached --quiet; then
+      git commit --allow-empty -m "Initial scaffold" >/dev/null
+    else
+      git commit -m "Initial scaffold" >/dev/null
+    fi
+  fi
+
+  current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+  if [ "$current_branch" != "main" ]; then
+    git branch -M main
+  fi
+}
+
+ensure_origin_remote() {
+  local https_remote
+  local ssh_remote
+  local current_remote
+  https_remote="https://github.com/$OWNER/$REPO.git"
+  ssh_remote="git@github.com:$OWNER/$REPO.git"
+
+  if git remote get-url origin >/dev/null 2>&1; then
+    current_remote="$(git remote get-url origin)"
+    if [ "$current_remote" != "$https_remote" ] && [ "$current_remote" != "$ssh_remote" ]; then
+      echo "Updating origin remote to $https_remote"
+      git remote set-url origin "$https_remote"
+    fi
+  else
+    git remote add origin "$https_remote"
+  fi
+}
+
+load_env_from_file "$ENV_FILE"
+resolve_repo_ref
+ensure_gh_auth
+ensure_git_repo
+
+if gh repo view "$OWNER/$REPO" >/dev/null 2>&1; then
+  echo "Repository already exists: $OWNER/$REPO"
+  ensure_origin_remote
+  echo "Pushing local main branch..."
+  git push -u origin main
+else
+  echo "Creating repository $OWNER/$REPO ($VISIBILITY)..."
+  gh repo create "$OWNER/$REPO" --"$VISIBILITY" --source "$REPO_ROOT" --remote origin --push
+fi
+
+"$SCRIPT_DIR/gh-apply-settings.sh" "$OWNER" "$REPO"
+
+echo "Repository created and settings applied."
+""".replace("__REPO_NAME__", name)
+
+
+def _render_create_issues_script() -> str:
+    return """#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/create-issues.sh [--repo owner/repo] [--file backlog/issues.json] [--dry-run] [--auth-check] [--project-number N | --project-title TITLE] [--project-owner OWNER]
+
+Bulk-create milestones and issues from backlog JSON.
+
+Options:
+  --repo owner/repo   Target repository (optional if set in .env)
+  --file PATH         Backlog file path (default: backlog/issues.json)
+  --dry-run           Print planned actions without creating resources
+  --auth-check        Validate GitHub auth/token and exit
+  --project-number N  Add issues to an existing GitHub Project number
+  --project-title T   Add issues to a GitHub Project title (creates if missing)
+  --project-owner O   Owner login/org for the project (default: repo owner)
+  -h, --help          Show this help message
+EOF
+}
+
+REPO=""
+BACKLOG_FILE="backlog/issues.json"
+DRY_RUN=0
+AUTH_CHECK=0
+PROJECT_NUMBER=""
+PROJECT_TITLE=""
+PROJECT_OWNER=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)
+      REPO="${2:-}"
+      if [ -z "$REPO" ]; then
+        echo "Error: --repo requires a value." >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --file)
+      BACKLOG_FILE="${2:-}"
+      if [ -z "$BACKLOG_FILE" ]; then
+        echo "Error: --file requires a value." >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --auth-check)
+      AUTH_CHECK=1
+      shift
+      ;;
+    --project-number)
+      PROJECT_NUMBER="${2:-}"
+      if [ -z "$PROJECT_NUMBER" ]; then
+        echo "Error: --project-number requires a value." >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --project-title)
+      PROJECT_TITLE="${2:-}"
+      if [ -z "$PROJECT_TITLE" ]; then
+        echo "Error: --project-title requires a value." >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --project-owner)
+      PROJECT_OWNER="${2:-}"
+      if [ -z "$PROJECT_OWNER" ]; then
+        echo "Error: --project-owner requires a value." >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Error: unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ -n "$PROJECT_NUMBER" ] && [ -n "$PROJECT_TITLE" ]; then
+  echo "Error: use only one of --project-number or --project-title." >&2
+  exit 1
+fi
+
+if [ ! -f "$BACKLOG_FILE" ]; then
+  echo "Error: backlog file not found: $BACKLOG_FILE" >&2
   exit 1
 fi
 
@@ -728,13 +1314,760 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Creating repository $OWNER/$REPO ($VISIBILITY)..."
-gh repo create "$OWNER/$REPO" --"$VISIBILITY" --source . --remote origin
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 is required." >&2
+  exit 1
+fi
 
-SCRIPT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
-"$SCRIPT_DIR/gh-apply-settings.sh" "$OWNER" "$REPO"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="$REPO_ROOT/.env"
 
-echo "Repository created and settings applied."
+load_env_from_file() {
+  local env_file="$1"
+  local line key value
+
+  if [ ! -f "$env_file" ]; then
+    return 0
+  fi
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [ -z "$line" ] && continue
+    case "$line" in
+      #*) continue ;;
+      export[[:space:]]*) line="${line#export }" ;;
+    esac
+    if [[ "$line" != *=* ]]; then
+      continue
+    fi
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="$(printf '%s' "$key" | tr -d '[:space:]')"
+    value="${value%$'\\r'}"
+
+    if [ "${value#\\"}" != "$value" ] && [ "${value%\\"}" != "$value" ]; then
+      value="${value#\\"}"
+      value="${value%\\"}"
+    elif [ "${value#\\'}" != "$value" ] && [ "${value%\\'}" != "$value" ]; then
+      value="${value#\\'}"
+      value="${value%\\'}"
+    fi
+
+    case "$key" in
+      github_token|GH_TOKEN|GITHUB_TOKEN)
+        export GH_TOKEN="$value"
+        ;;
+      github_org|GITHUB_ORG)
+        export GITHUB_ORG="$value"
+        ;;
+      github_repo|GITHUB_REPO)
+        export GITHUB_REPO="$value"
+        ;;
+      github_full_repo|GH_REPO|GITHUB_REPOSITORY)
+        export GH_REPO="$value"
+        ;;
+    esac
+  done < "$env_file"
+}
+
+resolve_repo_ref() {
+  local full_repo
+  full_repo="${GH_REPO:-${GITHUB_REPOSITORY:-}}"
+
+  if [ -z "$REPO" ]; then
+    if [ -n "$full_repo" ] && [[ "$full_repo" == */* ]]; then
+      REPO="$full_repo"
+    elif [ -n "${GITHUB_ORG:-}" ] && [ -n "${GITHUB_REPO:-}" ]; then
+      REPO="${GITHUB_ORG}/${GITHUB_REPO}"
+    fi
+  fi
+
+  if [ -z "$REPO" ]; then
+    echo "Error: repo is required (pass --repo owner/repo or set GH_REPO or GITHUB_ORG + GITHUB_REPO)." >&2
+    usage >&2
+    exit 1
+  fi
+}
+
+resolve_project_config() {
+  REPO_OWNER="${REPO%%/*}"
+
+  if [ -n "$PROJECT_NUMBER" ] || [ -n "$PROJECT_TITLE" ]; then
+    PROJECT_ENABLED=1
+    if [ -z "$PROJECT_OWNER" ]; then
+      PROJECT_OWNER="$REPO_OWNER"
+    fi
+  else
+    PROJECT_ENABLED=0
+    PROJECT_OWNER="${PROJECT_OWNER:-$REPO_OWNER}"
+  fi
+}
+
+ensure_gh_auth() {
+  if [ -z "${GH_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+    export GH_TOKEN="$GITHUB_TOKEN"
+  fi
+
+  if [ -n "${GH_TOKEN:-}" ]; then
+    return 0
+  fi
+
+  if gh auth status >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Authenticate first: gh auth login" >&2
+  echo "Or set GH_TOKEN/GITHUB_TOKEN (legacy .env alias: github_token)." >&2
+  exit 1
+}
+
+resolve_auth_user() {
+  local login
+  if ! login="$(gh api /user --jq .login 2>/dev/null)"; then
+    echo "GitHub auth check failed. Ensure GH_TOKEN/GITHUB_TOKEN is valid, or run gh auth login." >&2
+    exit 1
+  fi
+  if [ -z "$login" ] || [ "$login" = "null" ]; then
+    echo "GitHub auth check failed: could not resolve authenticated user login." >&2
+    exit 1
+  fi
+  printf '%s' "$login"
+}
+
+load_env_from_file "$ENV_FILE"
+resolve_repo_ref
+resolve_project_config
+ensure_gh_auth
+AUTH_USER="$(resolve_auth_user)"
+
+if [ "$AUTH_CHECK" -eq 1 ]; then
+  echo "GitHub auth OK: $AUTH_USER"
+  if [ "$PROJECT_ENABLED" -eq 1 ]; then
+    if gh project list --owner "$PROJECT_OWNER" --limit 1 >/dev/null 2>&1; then
+      echo "GitHub project access OK: owner $PROJECT_OWNER"
+    else
+      echo "GitHub project access failed for owner $PROJECT_OWNER. Ensure project scope is granted." >&2
+      exit 1
+    fi
+  fi
+  exit 0
+fi
+
+TMP_DIR="$(mktemp -d)"
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+MILESTONE_TITLES_FILE="$TMP_DIR/milestones.txt"
+KNOWN_ISSUE_TITLES_FILE="$TMP_DIR/known_issue_titles.txt"
+LABEL_NAMES_FILE="$TMP_DIR/labels.txt"
+PROJECT_CREATED=0
+PROJECT_ITEMS_ADDED=0
+PROJECT_ITEMS_SKIPPED=0
+RESOLVED_PROJECT_NUMBER=""
+RESOLVED_PROJECT_TITLE=""
+
+line_exists() {
+  local needle="$1"
+  local file="$2"
+  [ -f "$file" ] && grep -Fxq -- "$needle" "$file"
+}
+
+resolve_project_target() {
+  local projects_json="$TMP_DIR/projects.json"
+  local project_create_json="$TMP_DIR/project_create.json"
+
+  [ "$PROJECT_ENABLED" -eq 1 ] || return 0
+
+  if [ -n "$PROJECT_NUMBER" ]; then
+    if ! gh project view "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json > "$TMP_DIR/project_view.json" 2>"$TMP_DIR/project_view.err"; then
+      cat "$TMP_DIR/project_view.err" >&2
+      echo "Hint: GitHub Projects requires project scope; run: gh auth refresh -h github.com -s project" >&2
+      exit 1
+    fi
+    RESOLVED_PROJECT_NUMBER="$PROJECT_NUMBER"
+    RESOLVED_PROJECT_TITLE="$(python3 - "$TMP_DIR/project_view.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8") or "{}")
+title = payload.get("title")
+print(title.strip() if isinstance(title, str) and title.strip() else "")
+PY
+)"
+    [ -z "$RESOLVED_PROJECT_TITLE" ] && RESOLVED_PROJECT_TITLE="Project #$PROJECT_NUMBER"
+    echo "Using project: $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER ($RESOLVED_PROJECT_TITLE)"
+    return 0
+  fi
+
+  if ! gh project list --owner "$PROJECT_OWNER" --limit 100 --format json > "$projects_json" 2>"$TMP_DIR/project_list.err"; then
+    cat "$TMP_DIR/project_list.err" >&2
+    echo "Hint: GitHub Projects requires project scope; run: gh auth refresh -h github.com -s project" >&2
+    exit 1
+  fi
+
+  RESOLVED_PROJECT_NUMBER="$(python3 - "$projects_json" "$PROJECT_TITLE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8") or "[]")
+target = sys.argv[2]
+
+if isinstance(data, list):
+    for item in data:
+        if isinstance(item, dict) and item.get("title") == target and isinstance(item.get("number"), int):
+            print(item["number"])
+            raise SystemExit(0)
+PY
+)"
+
+  if [ -n "$RESOLVED_PROJECT_NUMBER" ]; then
+    RESOLVED_PROJECT_TITLE="$PROJECT_TITLE"
+    echo "Using project: $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER ($RESOLVED_PROJECT_TITLE)"
+    return 0
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] create project: $PROJECT_TITLE (owner: $PROJECT_OWNER)"
+    RESOLVED_PROJECT_TITLE="$PROJECT_TITLE"
+    return 0
+  fi
+
+  if ! gh project create --owner "$PROJECT_OWNER" --title "$PROJECT_TITLE" --format json > "$project_create_json" 2>"$TMP_DIR/project_create.err"; then
+    cat "$TMP_DIR/project_create.err" >&2
+    echo "Hint: GitHub Projects requires project scope; run: gh auth refresh -h github.com -s project" >&2
+    exit 1
+  fi
+
+  RESOLVED_PROJECT_NUMBER="$(python3 - "$project_create_json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8") or "{}")
+number = payload.get("number")
+print(number if isinstance(number, int) else "")
+PY
+)"
+
+  if [ -z "$RESOLVED_PROJECT_NUMBER" ]; then
+    echo "Failed to resolve project number after project creation." >&2
+    exit 1
+  fi
+
+  RESOLVED_PROJECT_TITLE="$PROJECT_TITLE"
+  PROJECT_CREATED=1
+  echo "Created project: $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER ($RESOLVED_PROJECT_TITLE)"
+}
+
+link_project_to_repo() {
+  local link_err="$TMP_DIR/project_link.err"
+  [ "$PROJECT_ENABLED" -eq 1 ] || return 0
+
+  if [ -z "$RESOLVED_PROJECT_NUMBER" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "[dry-run] link project to repo: ${RESOLVED_PROJECT_TITLE:-$PROJECT_TITLE} -> $REPO"
+    fi
+    return 0
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] link project to repo: $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER -> $REPO"
+    return 0
+  fi
+
+  if gh project link "$RESOLVED_PROJECT_NUMBER" --owner "$PROJECT_OWNER" --repo "$REPO" >/dev/null 2>"$link_err"; then
+    echo "Linked project to repo: $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER -> $REPO"
+    return 0
+  fi
+
+  if grep -qiE 'already.*link' "$link_err"; then
+    echo "Project already linked to repo: $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER"
+    return 0
+  fi
+
+  cat "$link_err" >&2
+  failures=$((failures + 1))
+}
+
+add_issue_to_project() {
+  local issue_title="$1"
+  local issue_number="${2:-}"
+  local issue_url
+  local add_err="$TMP_DIR/project_add.err"
+
+  [ "$PROJECT_ENABLED" -eq 1 ] || return 0
+
+  if [ -z "$RESOLVED_PROJECT_NUMBER" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "[dry-run] add issue to project: $issue_title -> ${RESOLVED_PROJECT_TITLE:-$PROJECT_TITLE}"
+      PROJECT_ITEMS_ADDED=$((PROJECT_ITEMS_ADDED + 1))
+      return 0
+    fi
+    echo "Failed to add issue to project (missing project number): $issue_title" >&2
+    failures=$((failures + 1))
+    return 0
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] add issue to project: $issue_title -> $PROJECT_OWNER/#$RESOLVED_PROJECT_NUMBER"
+    PROJECT_ITEMS_ADDED=$((PROJECT_ITEMS_ADDED + 1))
+    return 0
+  fi
+
+  if [ -z "$issue_number" ]; then
+    echo "Failed to add issue to project (missing issue number): $issue_title" >&2
+    failures=$((failures + 1))
+    return 0
+  fi
+
+  issue_url="https://github.com/$REPO/issues/$issue_number"
+  if gh project item-add "$RESOLVED_PROJECT_NUMBER" --owner "$PROJECT_OWNER" --url "$issue_url" >/dev/null 2>"$add_err"; then
+    echo "Added issue to project: $issue_title"
+    PROJECT_ITEMS_ADDED=$((PROJECT_ITEMS_ADDED + 1))
+    return 0
+  fi
+
+  if grep -qiE 'already.*(exists|added)' "$add_err"; then
+    echo "Skip project item (exists): $issue_title"
+    PROJECT_ITEMS_SKIPPED=$((PROJECT_ITEMS_SKIPPED + 1))
+    return 0
+  fi
+
+  cat "$add_err" >&2
+  failures=$((failures + 1))
+}
+
+gh api --paginate "/repos/$REPO/milestones?state=all&per_page=100" > "$TMP_DIR/milestones.json"
+python3 - "$TMP_DIR/milestones.json" "$MILESTONE_TITLES_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+raw = Path(sys.argv[1]).read_text(encoding="utf-8")
+decoder = json.JSONDecoder()
+idx = 0
+titles = []
+
+while True:
+    while idx < len(raw) and raw[idx].isspace():
+        idx += 1
+    if idx >= len(raw):
+        break
+    data, idx = decoder.raw_decode(raw, idx)
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and isinstance(item.get("title"), str):
+                titles.append(item["title"])
+
+text = "\\n".join(sorted(set(titles)))
+if text:
+    text += "\\n"
+Path(sys.argv[2]).write_text(text, encoding="utf-8")
+PY
+
+gh api --paginate "/repos/$REPO/labels?per_page=100" > "$TMP_DIR/labels.json"
+python3 - "$TMP_DIR/labels.json" "$LABEL_NAMES_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+raw = Path(sys.argv[1]).read_text(encoding="utf-8")
+decoder = json.JSONDecoder()
+idx = 0
+labels = []
+
+while True:
+    while idx < len(raw) and raw[idx].isspace():
+        idx += 1
+    if idx >= len(raw):
+        break
+    data, idx = decoder.raw_decode(raw, idx)
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                labels.append(item["name"])
+
+text = "\\n".join(sorted(set(labels)))
+if text:
+    text += "\\n"
+Path(sys.argv[2]).write_text(text, encoding="utf-8")
+PY
+
+touch "$KNOWN_ISSUE_TITLES_FILE"
+touch "$LABEL_NAMES_FILE"
+
+label_color() {
+  python3 - "$1" <<'PY'
+import hashlib
+import sys
+
+print(hashlib.sha1(sys.argv[1].encode("utf-8")).hexdigest()[:6])
+PY
+}
+
+ensure_labels_exist() {
+  local labels_csv="$1"
+  local label color
+  local -a labels_arr
+  local label_err_file="$TMP_DIR/label_create.err"
+
+  [ -z "$labels_csv" ] && return 0
+  IFS=',' read -r -a labels_arr <<< "$labels_csv"
+
+  for label in "${labels_arr[@]}"; do
+    label="${label#"${label%%[![:space:]]*}"}"
+    label="${label%"${label##*[![:space:]]}"}"
+    [ -z "$label" ] && continue
+
+    if line_exists "$label" "$LABEL_NAMES_FILE"; then
+      continue
+    fi
+
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "[dry-run] create label: $label"
+      printf '%s\\n' "$label" >> "$LABEL_NAMES_FILE"
+      continue
+    fi
+
+    color="$(label_color "$label")"
+    if gh api --method POST "/repos/$REPO/labels" -f name="$label" -f color="$color" >/dev/null 2>"$label_err_file"; then
+      echo "Created label: $label"
+      printf '%s\\n' "$label" >> "$LABEL_NAMES_FILE"
+      continue
+    fi
+
+    if grep -qiE 'already_exists|name already exists on this repository' "$label_err_file"; then
+      printf '%s\\n' "$label" >> "$LABEL_NAMES_FILE"
+      continue
+    fi
+
+    echo "Failed to create label: $label" >&2
+    failures=$((failures + 1))
+  done
+}
+
+issue_exists_exact() {
+  local title="$1"
+  local search_output="$TMP_DIR/issue_search.json"
+
+  if line_exists "$title" "$KNOWN_ISSUE_TITLES_FILE"; then
+    return 0
+  fi
+
+  if ! gh issue list \
+    --repo "$REPO" \
+    --state all \
+    --limit 100 \
+    --search "$title in:title" \
+    --json title > "$search_output"; then
+    return 2
+  fi
+
+  if python3 - "$search_output" "$title" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+target = sys.argv[2]
+
+if not isinstance(data, list):
+    raise SystemExit("Unexpected gh issue list response shape")
+
+exists = any(
+    isinstance(item, dict) and isinstance(item.get("title"), str) and item["title"] == target
+    for item in data
+)
+raise SystemExit(0 if exists else 1)
+PY
+  then
+    printf '%s\\n' "$title" >> "$KNOWN_ISSUE_TITLES_FILE"
+    return 0
+  fi
+
+  return 1
+}
+
+issue_number_exact() {
+  local title="$1"
+  local search_output="$TMP_DIR/issue_search_number.json"
+
+  if ! gh issue list \
+    --repo "$REPO" \
+    --state all \
+    --limit 100 \
+    --search "$title in:title" \
+    --json title,number > "$search_output"; then
+    return 2
+  fi
+
+  python3 - "$search_output" "$title" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+target = sys.argv[2]
+
+if not isinstance(data, list):
+    raise SystemExit("Unexpected gh issue list response shape")
+
+for item in data:
+    if (
+        isinstance(item, dict)
+        and isinstance(item.get("title"), str)
+        and item["title"] == target
+        and isinstance(item.get("number"), int)
+    ):
+        print(item["number"])
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+milestones_created=0
+issues_created=0
+skipped=0
+failures=0
+
+resolve_project_target
+link_project_to_repo
+
+while IFS= read -r -d '' kind \
+  && IFS= read -r -d '' title \
+  && IFS= read -r -d '' milestone \
+  && IFS= read -r -d '' labels_csv \
+  && IFS= read -r -d '' assignees_csv \
+  && IFS= read -r -d '' body; do
+  if [ "$kind" = "milestone" ]; then
+    if line_exists "$title" "$MILESTONE_TITLES_FILE"; then
+      echo "Skip milestone (exists): $title"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "[dry-run] create milestone: $title"
+      milestones_created=$((milestones_created + 1))
+      printf '%s\\n' "$title" >> "$MILESTONE_TITLES_FILE"
+      continue
+    fi
+
+    if gh api --method POST "/repos/$REPO/milestones" -f title="$title" >/dev/null; then
+      echo "Created milestone: $title"
+      milestones_created=$((milestones_created + 1))
+      printf '%s\\n' "$title" >> "$MILESTONE_TITLES_FILE"
+    else
+      echo "Failed to create milestone: $title" >&2
+      failures=$((failures + 1))
+    fi
+    continue
+  fi
+
+  if [ "$kind" = "issue" ]; then
+    if issue_exists_exact "$title"; then
+      echo "Skip issue (exists): $title"
+      skipped=$((skipped + 1))
+      if existing_issue_number="$(issue_number_exact "$title")"; then
+        add_issue_to_project "$title" "$existing_issue_number"
+      fi
+      continue
+    else
+      exists_rc=$?
+      if [ "$exists_rc" -eq 2 ]; then
+        echo "Failed to check existing issue by title: $title" >&2
+        failures=$((failures + 1))
+        continue
+      fi
+    fi
+
+    ensure_labels_exist "$labels_csv"
+
+    body_payload="$body"
+    if [ -n "$milestone" ]; then
+      if parent_epic_number="$(issue_number_exact "$milestone")"; then
+        body_payload="Epic: #$parent_epic_number"$'\\n\\n'"$body_payload"
+      else
+        parent_lookup_rc=$?
+        if [ "$DRY_RUN" -eq 1 ] && [ "$parent_lookup_rc" -eq 1 ]; then
+          body_payload="Epic: #<epic_issue_number>"$'\\n\\n'"$body_payload"
+        elif [ "$parent_lookup_rc" -eq 2 ]; then
+          echo "Failed to resolve parent epic issue by title: $milestone" >&2
+          failures=$((failures + 1))
+          continue
+        else
+          echo "Failed to resolve epic issue number for milestone: $milestone" >&2
+          failures=$((failures + 1))
+          continue
+        fi
+      fi
+    fi
+
+    body_file="$TMP_DIR/issue_body.md"
+    printf '%s' "$body_payload" > "$body_file"
+
+    cmd=(gh issue create --repo "$REPO" --title "$title" --body-file "$body_file")
+    if [ -n "$milestone" ]; then
+      cmd+=(--milestone "$milestone")
+    fi
+    if [ -n "$labels_csv" ]; then
+      cmd+=(--label "$labels_csv")
+    fi
+    if [ -n "$assignees_csv" ]; then
+      cmd+=(--assignee "$assignees_csv")
+    fi
+
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "[dry-run] create issue: $title"
+      issues_created=$((issues_created + 1))
+      printf '%s\\n' "$title" >> "$KNOWN_ISSUE_TITLES_FILE"
+      add_issue_to_project "$title"
+      continue
+    fi
+
+    issue_create_output=""
+    if issue_create_output="$("${cmd[@]}" 2>"$TMP_DIR/issue_create.err")"; then
+      echo "Created issue: $title"
+      issues_created=$((issues_created + 1))
+      printf '%s\\n' "$title" >> "$KNOWN_ISSUE_TITLES_FILE"
+      created_issue_url="$(printf '%s\\n' "$issue_create_output" | tail -n 1)"
+      created_issue_number=""
+      created_issue_tail="${created_issue_url##*/}"
+      if [[ "$created_issue_tail" =~ ^[0-9]+$ ]]; then
+        created_issue_number="$created_issue_tail"
+      elif created_issue_number="$(issue_number_exact "$title")"; then
+        :
+      else
+        created_issue_number=""
+      fi
+      add_issue_to_project "$title" "$created_issue_number"
+    else
+      echo "Failed to create issue: $title" >&2
+      cat "$TMP_DIR/issue_create.err" >&2
+      failures=$((failures + 1))
+    fi
+    continue
+  fi
+
+  echo "Skipping unsupported operation type: $kind"
+  skipped=$((skipped + 1))
+done < <(python3 - "$BACKLOG_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+epics = data.get("epics")
+
+if not isinstance(epics, list):
+    raise SystemExit("Invalid backlog JSON: expected top-level 'epics' list.")
+
+def validate_str_list(value, field_name):
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise SystemExit(f"Invalid {field_name}: expected list of strings.")
+    return value
+
+def emit(value):
+    if "\\0" in value:
+        raise SystemExit("Invalid backlog JSON: null byte is not allowed in text fields.")
+    sys.stdout.write(value)
+    sys.stdout.write("\\0")
+
+for epic in epics:
+    if not isinstance(epic, dict):
+        raise SystemExit("Invalid backlog JSON: each epic must be an object.")
+
+    key = str(epic.get("key", "")).strip()
+    title = str(epic.get("title", "")).strip()
+    body = str(epic.get("body", "")).strip()
+    labels = validate_str_list(epic.get("labels", []), "epic.labels")
+    assignees = validate_str_list(epic.get("assignees", []), "epic.assignees")
+    tickets = epic.get("tickets", [])
+
+    if not key:
+        raise SystemExit("Invalid backlog JSON: epic.key is required.")
+    if not title:
+        raise SystemExit("Invalid backlog JSON: epic.title is required.")
+    if not body:
+        raise SystemExit(f"Invalid backlog JSON: epic body is required for '{title}'.")
+    if not isinstance(tickets, list):
+        raise SystemExit("Invalid backlog JSON: epic.tickets must be a list.")
+
+    epic_labels = []
+    for label in ["epic", f"epic:{key}", *labels]:
+        normalized = label.strip()
+        if normalized and normalized not in epic_labels:
+            epic_labels.append(normalized)
+
+    emit("milestone")
+    emit(title)
+    emit("")
+    emit("")
+    emit("")
+    emit("")
+
+    emit("issue")
+    emit(title)
+    emit("")
+    emit(",".join(epic_labels))
+    emit(",".join(assignees))
+    emit(body)
+
+    for ticket in tickets:
+        if not isinstance(ticket, dict):
+            raise SystemExit("Invalid backlog JSON: ticket entries must be objects.")
+
+        ticket_title = str(ticket.get("title", "")).strip()
+        ticket_body = str(ticket.get("body", "")).strip()
+        ticket_labels = validate_str_list(ticket.get("labels", []), "ticket.labels")
+        ticket_assignees = validate_str_list(ticket.get("assignees", []), "ticket.assignees")
+
+        if not ticket_title:
+            raise SystemExit("Invalid backlog JSON: ticket.title is required.")
+        if not ticket_body:
+            raise SystemExit(f"Invalid backlog JSON: ticket body is required for '{ticket_title}'.")
+
+        emit("issue")
+        emit(ticket_title)
+        emit(title)
+        emit(",".join(ticket_labels))
+        emit(",".join(ticket_assignees))
+        emit(ticket_body)
+PY
+)
+
+echo ""
+echo "Summary:"
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "  mode: dry-run (created counts are planned actions)"
+fi
+echo "  milestones created: $milestones_created"
+echo "  issues created: $issues_created"
+if [ "$PROJECT_ENABLED" -eq 1 ]; then
+  echo "  project owner: $PROJECT_OWNER"
+  if [ -n "$RESOLVED_PROJECT_NUMBER" ]; then
+    echo "  project number: $RESOLVED_PROJECT_NUMBER"
+  else
+    echo "  project title: ${RESOLVED_PROJECT_TITLE:-$PROJECT_TITLE}"
+  fi
+  echo "  project created: $PROJECT_CREATED"
+  echo "  project items added: $PROJECT_ITEMS_ADDED"
+  echo "  project items skipped: $PROJECT_ITEMS_SKIPPED"
+fi
+echo "  skipped: $skipped"
+echo "  failures: $failures"
+
+if [ "$failures" -gt 0 ]; then
+  exit 1
+fi
 """
 
 
@@ -775,8 +2108,11 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = [
+  "black>=24.8.0",
+  "mypy>=1.11.0",
   "pytest>=8.0.0",
   "ruff>=0.6.0",
+  "tox>=4.20.0",
 ]
 
 [tool.setuptools]
@@ -789,12 +2125,47 @@ where = ["src"]
 addopts = "-q -s"
 testpaths = ["tests"]
 
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+mypy_path = "src"
+files = ["src", "tests"]
+strict = false
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_optional = true
+
+[tool.tox]
+legacy_tox_ini = '''
+[tox]
+env_list = py,lint,type
+
+[testenv]
+deps = -e .[dev]
+commands = pytest
+
+[testenv:lint]
+deps = -e .[dev]
+commands =
+  ruff check .
+  black --check .
+
+[testenv:type]
+deps = -e .[dev]
+commands = mypy src
+'''
 """
 
 
@@ -812,6 +2183,7 @@ def _render_react_package_json(name: str) -> str:
   "type": "module",
   "scripts": {{
     "dev": "vite",
+    "lint": "eslint .",
     "build": "vite build",
     "preview": "vite preview"
   }},
@@ -820,10 +2192,48 @@ def _render_react_package_json(name: str) -> str:
     "react-dom": "^18.3.1"
   }},
   "devDependencies": {{
+    "@eslint/js": "^9.21.0",
     "@vitejs/plugin-react": "^4.3.2",
+    "eslint": "^9.21.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.19",
+    "globals": "^16.0.0",
     "vite": "^5.4.8"
   }}
 }}
+"""
+
+
+def _render_react_eslint_config() -> str:
+    return """import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+
+export default [
+  { ignores: ['dist'] },
+  {
+    files: ['**/*.{js,jsx}'],
+    languageOptions: {
+      ecmaVersion: 2021,
+      globals: globals.browser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        ecmaFeatures: { jsx: true },
+        sourceType: 'module',
+      },
+    },
+    plugins: {
+      'react-hooks': reactHooks,
+      'react-refresh': reactRefresh,
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      ...reactHooks.configs.recommended.rules,
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+    },
+  },
+]
 """
 
 
@@ -911,114 +2321,172 @@ export default defineConfig({
 """
 
 
-def generate_scaffold(config: ScaffoldConfig) -> None:
+def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
     _ensure_license_supported(config.license_id)
 
-    files: list[tuple[Path, str, bool]] = [
-        (config.out_dir / ".github" / "pull_request_template.md", _render_pr_template(), False),
-        (config.out_dir / ".github" / "CODEOWNERS", _render_codeowners(config.owner), False),
-        (config.out_dir / ".github" / "ISSUE_TEMPLATE" / "epic.md", _render_issue_epic_template(), False),
-        (
+    files: list[ScaffoldFile] = [
+        ScaffoldFile(config.out_dir / ".github" / "pull_request_template.md", _render_pr_template()),
+        ScaffoldFile(config.out_dir / ".github" / "CODEOWNERS", _render_codeowners(config.owner)),
+        ScaffoldFile(config.out_dir / ".github" / "ISSUE_TEMPLATE" / "epic.md", _render_issue_epic_template()),
+        ScaffoldFile(
             config.out_dir / ".github" / "ISSUE_TEMPLATE" / "ticket.md",
             _render_issue_ticket_template(),
-            False,
         ),
-        (
+        ScaffoldFile(
             config.out_dir / ".github" / "ISSUE_TEMPLATE" / "config.yml",
             _render_issue_config(config.owner, config.name),
-            False,
         ),
-        (config.out_dir / ".github" / "workflows" / "ci.yml", _render_ci_yaml(config.languages), False),
-        (
+        ScaffoldFile(config.out_dir / ".github" / "workflows" / "ci.yml", _render_ci_yaml(config.languages)),
+        ScaffoldFile(
             config.out_dir / ".github" / "workflows" / "codeql.yml",
             _render_codeql_yaml(config.languages),
-            False,
         ),
-        (
+        ScaffoldFile(
             config.out_dir / ".github" / "dependabot.yml",
             _render_dependabot_yaml(config.languages),
-            False,
         ),
-        (config.out_dir / "docs" / "requirements.md", "# Requirements\n\nTBD\n", False),
-        (config.out_dir / "docs" / "api-v1.md", "# API v1\n\nTBD\n", False),
-        (
-            config.out_dir / "scripts" / "gh-apply-settings.sh",
-            _render_gh_apply_settings_script(),
-            True,
-        ),
-        (
-            config.out_dir / "scripts" / "gh-create-project.sh",
-            _render_gh_create_project_script(config.name, config.owner),
-            True,
-        ),
-        (config.out_dir / "README.md", _render_repo_readme(config), False),
-        (config.out_dir / "LICENSE", _apache_2_license(), False),
-        (config.out_dir / ".gitignore", _render_gitignore(config.languages), False),
-        (config.out_dir / ".editorconfig", _render_editorconfig(), False),
-        (config.out_dir / "Makefile", _render_makefile(), False),
+        ScaffoldFile(config.out_dir / "docs" / "requirements.md", "# Requirements\n\nTBD\n"),
+        ScaffoldFile(config.out_dir / "docs" / "api-v1.md", "# API v1\n\nTBD\n"),
+        ScaffoldFile(config.out_dir / ".env.example", _render_env_example(config.name)),
+        ScaffoldFile(config.out_dir / "README.md", _render_repo_readme(config)),
+        ScaffoldFile(config.out_dir / "LICENSE", _apache_2_license()),
+        ScaffoldFile(config.out_dir / ".gitignore", _render_gitignore(config.languages)),
+        ScaffoldFile(config.out_dir / ".editorconfig", _render_editorconfig()),
+        ScaffoldFile(config.out_dir / "Makefile", _render_makefile()),
     ]
 
     selected = set(config.languages)
     if "go" in selected:
         files.extend(
             [
-                (config.out_dir / "go.mod", _render_go_mod(config.name, config.owner), False),
-                (
+                ScaffoldFile(config.out_dir / "go.mod", _render_go_mod(config.name, config.owner)),
+                ScaffoldFile(
                     config.out_dir / "cmd" / config.name / "main.go",
                     _render_go_main(config.name),
-                    False,
                 ),
-                (config.out_dir / "internal" / ".gitkeep", "", False),
+                ScaffoldFile(config.out_dir / "internal" / ".gitkeep", ""),
             ]
         )
 
     if "python" in selected:
         files.extend(
             [
-                (config.out_dir / "pyproject.toml", _render_python_pyproject(config.name), False),
-                (
+                ScaffoldFile(config.out_dir / "pyproject.toml", _render_python_pyproject(config.name)),
+                ScaffoldFile(
                     config.out_dir / "src" / config.name / "__init__.py",
                     _render_python_init(config.name),
-                    False,
                 ),
-                (config.out_dir / "tests" / ".gitkeep", "", False),
+                ScaffoldFile(config.out_dir / "tests" / ".gitkeep", ""),
             ]
         )
 
     if "react" in selected:
         files.extend(
             [
-                (
+                ScaffoldFile(
                     config.out_dir / "web" / "package.json",
                     _render_react_package_json(config.name),
-                    False,
                 ),
-                (
+                ScaffoldFile(
                     config.out_dir / "web" / "index.html",
                     _render_react_index_html(config.name),
-                    False,
                 ),
-                (config.out_dir / "web" / "src" / "main.jsx", _render_react_main_jsx(), False),
-                (
+                ScaffoldFile(
+                    config.out_dir / "web" / "eslint.config.js",
+                    _render_react_eslint_config(),
+                ),
+                ScaffoldFile(config.out_dir / "web" / "src" / "main.jsx", _render_react_main_jsx()),
+                ScaffoldFile(
                     config.out_dir / "web" / "src" / "App.jsx",
                     _render_react_app_jsx(config.name),
-                    False,
                 ),
-                (
+                ScaffoldFile(
                     config.out_dir / "web" / "src" / "styles.css",
                     _render_react_styles(),
-                    False,
                 ),
-                (
+                ScaffoldFile(
                     config.out_dir / "web" / "vite.config.js",
                     _render_react_vite_config(),
-                    False,
                 ),
             ]
         )
 
-    for path, content, executable in files:
-        _write_file(path, content, executable=executable)
+    return files
+
+
+TEMPLATE_FILE_PATHS = (
+    ".github/pull_request_template.md",
+    ".github/CODEOWNERS",
+    ".github/ISSUE_TEMPLATE/epic.md",
+    ".github/ISSUE_TEMPLATE/ticket.md",
+    ".github/ISSUE_TEMPLATE/config.yml",
+)
+
+
+def _filter_files_for_paths(
+    files: Iterable[ScaffoldFile], root: Path, wanted_rel_paths: Iterable[str]
+) -> list[ScaffoldFile]:
+    wanted = set(wanted_rel_paths)
+    filtered: list[ScaffoldFile] = []
+    for file in files:
+        rel = file.path.relative_to(root).as_posix()
+        if rel in wanted:
+            filtered.append(file)
+    return filtered
+
+
+def detect_languages_from_repo(repo_dir: Path) -> tuple[str, ...]:
+    selected: list[str] = []
+    if (repo_dir / "go.mod").exists():
+        selected.append("go")
+    if (repo_dir / "pyproject.toml").exists():
+        selected.append("python")
+    if (repo_dir / "web" / "package.json").exists():
+        selected.append("react")
+    return tuple(lang for lang in ALLOWED_LANGUAGES if lang in selected)
+
+
+def build_template_files(target_dir: Path, *, owner: str | None = None, name: str | None = None) -> list[ScaffoldFile]:
+    repo_name = name or target_dir.name
+    cfg = ScaffoldConfig(
+        name=repo_name,
+        languages=ALLOWED_LANGUAGES,
+        owner=owner,
+        license_id=SUPPORTED_LICENSE,
+        out_dir=target_dir,
+    )
+    return _filter_files_for_paths(build_scaffold_files(cfg), target_dir, TEMPLATE_FILE_PATHS)
+
+
+def build_ci_files(target_dir: Path, *, languages: tuple[str, ...], owner: str | None = None, name: str | None = None) -> list[ScaffoldFile]:
+    repo_name = name or target_dir.name
+    cfg = ScaffoldConfig(
+        name=repo_name,
+        languages=languages,
+        owner=owner,
+        license_id=SUPPORTED_LICENSE,
+        out_dir=target_dir,
+    )
+    return _filter_files_for_paths(build_scaffold_files(cfg), target_dir, [".github/workflows/ci.yml"])
+
+
+def build_dependabot_files(
+    target_dir: Path, *, languages: tuple[str, ...], owner: str | None = None, name: str | None = None
+) -> list[ScaffoldFile]:
+    repo_name = name or target_dir.name
+    cfg = ScaffoldConfig(
+        name=repo_name,
+        languages=languages,
+        owner=owner,
+        license_id=SUPPORTED_LICENSE,
+        out_dir=target_dir,
+    )
+    return _filter_files_for_paths(build_scaffold_files(cfg), target_dir, [".github/dependabot.yml"])
+
+
+def generate_scaffold(config: ScaffoldConfig) -> None:
+    for file in build_scaffold_files(config):
+        _write_file(file.path, file.content, executable=file.executable)
 
 
 def remove_tree(path: Path) -> None:

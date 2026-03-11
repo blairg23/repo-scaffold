@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
+import repo_scaffold.generator as generator_module
 from repo_scaffold.generator import ScaffoldConfig, generate_scaffold
 
 
@@ -43,9 +45,8 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
         ".github/dependabot.yml",
         "docs/requirements.md",
         "docs/api-v1.md",
-        "scripts/gh-apply-settings.sh",
-        "scripts/gh-create-project.sh",
         "README.md",
+        ".env.example",
         "LICENSE",
         ".gitignore",
         ".editorconfig",
@@ -56,6 +57,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
         "pyproject.toml",
         "src/demo/__init__.py",
         "web/package.json",
+        "web/eslint.config.js",
         "web/index.html",
         "web/src/main.jsx",
         "web/src/App.jsx",
@@ -76,15 +78,42 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "package-ecosystem: \"npm\"" in (out_dir / ".github/dependabot.yml").read_text(
         encoding="utf-8"
     )
+    ci_yaml = (out_dir / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "- name: Black" in ci_yaml
+    assert "- name: Mypy" in ci_yaml
+    assert "- name: Lint" in ci_yaml
     assert "language:" in (out_dir / ".github/workflows/codeql.yml").read_text(encoding="utf-8")
-    assert '"is_template": true' in (out_dir / "scripts/gh-apply-settings.sh").read_text(
-        encoding="utf-8"
-    )
-
-    apply_mode = (out_dir / "scripts/gh-apply-settings.sh").stat().st_mode & 0o111
-    create_mode = (out_dir / "scripts/gh-create-project.sh").stat().st_mode & 0o111
-    assert apply_mode != 0
-    assert create_mode != 0
+    generated_readme = (out_dir / "README.md").read_text(encoding="utf-8")
+    assert "Created by [repo-scaffold]" in generated_readme
+    assert "## Setup" in generated_readme
+    assert "## Day-to-day commands" in generated_readme
+    assert "pip install -e .[dev]" in generated_readme
+    assert "black --check ." in generated_readme
+    assert "mypy src" in generated_readme
+    assert "go test ./..." in generated_readme
+    assert "npm run build" in generated_readme
+    assert "make typecheck" in generated_readme
+    assert "## Backlog bootstrap" not in generated_readme
+    assert "## GitHub token permissions" not in generated_readme
+    assert "./scripts/create-issues.sh" not in generated_readme
+    env_example = (out_dir / ".env.example").read_text(encoding="utf-8")
+    assert "GH_TOKEN=" in env_example
+    assert "GITHUB_ORG=" in env_example
+    assert "GH_REPO=" in env_example
+    assert "GITHUB_PROJECT_TITLE=" in env_example
+    assert "GITHUB_PROJECT_TITLE_TEMPLATE=" in env_example
+    pyproject = (out_dir / "pyproject.toml").read_text(encoding="utf-8")
+    assert "black>=" in pyproject
+    assert "mypy>=" in pyproject
+    assert "tox>=" in pyproject
+    assert "[tool.mypy]" in pyproject
+    assert "[tool.tox]" in pyproject
+    web_package = (out_dir / "web/package.json").read_text(encoding="utf-8")
+    assert '"lint": "eslint ."' in web_package
+    assert '"eslint": "^9.21.0"' in web_package
+    assert "!.env.example" in (out_dir / ".gitignore").read_text(encoding="utf-8")
+    assert not (out_dir / "backlog").exists()
+    assert not (out_dir / "scripts").exists()
 
 
 def test_generation_is_deterministic(tmp_path: Path) -> None:
@@ -129,3 +158,45 @@ def test_react_only_codeql_is_noop(tmp_path: Path) -> None:
     assert 'package-ecosystem: "npm"' in dependabot
     assert 'package-ecosystem: "gomod"' not in dependabot
     assert 'package-ecosystem: "pip"' not in dependabot
+
+
+def test_generate_scaffold_uses_custom_markdown_templates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    template_root = tmp_path / "templates"
+    (template_root / "github" / "ISSUE_TEMPLATE").mkdir(parents=True)
+
+    pr_template = "## Custom PR Template\n\n- custom\n"
+    epic_template = "## Custom Epic Template\n"
+    ticket_template = "## Custom Ticket Template\n"
+
+    (template_root / "github" / "pull_request_template.md").write_text(
+        pr_template, encoding="utf-8"
+    )
+    (template_root / "github" / "ISSUE_TEMPLATE" / "epic.md").write_text(
+        epic_template, encoding="utf-8"
+    )
+    (template_root / "github" / "ISSUE_TEMPLATE" / "ticket.md").write_text(
+        ticket_template, encoding="utf-8"
+    )
+
+    monkeypatch.setattr(generator_module, "TEMPLATE_ROOT", template_root)
+
+    cfg = ScaffoldConfig(
+        name="custom",
+        languages=("go",),
+        owner="acme",
+        license_id="apache-2.0",
+        out_dir=tmp_path / "custom",
+    )
+    generate_scaffold(cfg)
+
+    assert (
+        cfg.out_dir / ".github" / "pull_request_template.md"
+    ).read_text(encoding="utf-8") == pr_template
+    assert (cfg.out_dir / ".github" / "ISSUE_TEMPLATE" / "epic.md").read_text(
+        encoding="utf-8"
+    ) == epic_template
+    assert (cfg.out_dir / ".github" / "ISSUE_TEMPLATE" / "ticket.md").read_text(
+        encoding="utf-8"
+    ) == ticket_template
