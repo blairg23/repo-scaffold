@@ -91,7 +91,9 @@ def _ensure_gh_ready(cwd: Path) -> None:
 def _list_repo_names(*, cwd: Path, owner: str) -> list[str]:
     cp = _run_gh(cwd, ["repo", "list", owner, "--limit", "1000", "--json", "name"])
     if cp.returncode != 0:
-        raise RuntimeError(cp.stderr.strip() or f"Failed listing repositories for owner '{owner}'.")
+        raise RuntimeError(
+            cp.stderr.strip() or f"Failed listing repositories for owner '{owner}'."
+        )
 
     try:
         payload = json.loads(cp.stdout or "[]")
@@ -111,7 +113,9 @@ def _list_repo_names(*, cwd: Path, owner: str) -> list[str]:
     return sorted(names)
 
 
-def _select_matches(*, repo_names: Sequence[str], prefix: str, exact_names: Sequence[str]) -> list[str]:
+def _select_matches(
+    *, repo_names: Sequence[str], prefix: str, exact_names: Sequence[str]
+) -> list[str]:
     exact_set = {name.strip() for name in exact_names if name and name.strip()}
     if exact_set:
         return [name for name in repo_names if name in exact_set]
@@ -119,7 +123,11 @@ def _select_matches(*, repo_names: Sequence[str], prefix: str, exact_names: Sequ
     clean_prefix = prefix.strip()
     if not clean_prefix:
         raise RuntimeError("--prefix must not be empty when --exact is not provided.")
-    return [name for name in repo_names if name == clean_prefix or name.startswith(f"{clean_prefix}-")]
+    return [
+        name
+        for name in repo_names
+        if name == clean_prefix or name.startswith(f"{clean_prefix}-")
+    ]
 
 
 def _default_local_roots(cwd: Path) -> tuple[Path, ...]:
@@ -145,7 +153,9 @@ def _resolve_local_roots(*, cwd: Path, local_roots: Sequence[str]) -> list[Path]
             continue
         seen.add(key)
         if key == "/":
-            raise RuntimeError("Refusing local cleanup root '/'. Use a specific path such as /tmp.")
+            raise RuntimeError(
+                "Refusing local cleanup root '/'. Use a specific path such as /tmp."
+            )
         resolved.append(normalized)
     return resolved
 
@@ -164,7 +174,9 @@ def _list_local_matches(
             continue
         children = [child for child in root.iterdir() if child.is_dir()]
         names = sorted({child.name for child in children})
-        selected_names = _select_matches(repo_names=names, prefix=prefix, exact_names=exact_names)
+        selected_names = _select_matches(
+            repo_names=names, prefix=prefix, exact_names=exact_names
+        )
         for name in selected_names:
             for child in children:
                 if child.name == name:
@@ -200,7 +212,9 @@ def delete_repositories(
         resolved_owner = _resolve_owner(owner)
         _ensure_gh_ready(cwd)
         repo_names = _list_repo_names(cwd=cwd, owner=resolved_owner)
-        remote_matches = _select_matches(repo_names=repo_names, prefix=prefix, exact_names=exact_names)
+        remote_matches = _select_matches(
+            repo_names=repo_names, prefix=prefix, exact_names=exact_names
+        )
 
     local_matches: list[Path] = []
     if local_enabled:
@@ -312,7 +326,9 @@ def delete_repositories(
 
         if resolved_path == cwd_resolved:
             local_failures += 1
-            err(f"FAILED  {resolved_path}: refusing to delete current working directory")
+            err(
+                f"FAILED  {resolved_path}: refusing to delete current working directory"
+            )
             continue
 
         out(f"DELETE  {resolved_path}")

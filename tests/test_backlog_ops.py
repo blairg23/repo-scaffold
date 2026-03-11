@@ -10,10 +10,14 @@ import repo_scaffold.backlog_ops as backlog_ops
 
 
 def _cp_ok(stdout: str = "") -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=["gh"], returncode=0, stdout=stdout, stderr="")
+    return subprocess.CompletedProcess(
+        args=["gh"], returncode=0, stdout=stdout, stderr=""
+    )
 
 
-def test_apply_backlog_creates_missing_labels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_backlog_creates_missing_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
     backlog_file = repo_dir / "backlog.json"
@@ -42,11 +46,15 @@ def test_apply_backlog_creates_missing_labels(tmp_path: Path, monkeypatch: pytes
     )
 
     monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda repo_dir: None)
-    monkeypatch.setattr(backlog_ops, "_find_issue_number", lambda repo_dir, repo, title: None)
+    monkeypatch.setattr(
+        backlog_ops, "_find_issue_number", lambda repo_dir, repo, title: None
+    )
 
     created_labels: list[str] = []
 
-    def _fake_run_gh(repo_dir: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    def _fake_run_gh(
+        repo_dir: Path, args: list[str]
+    ) -> subprocess.CompletedProcess[str]:
         if args == ["api", "/user"]:
             return _cp_ok('{"login":"octocat"}')
         if args[:2] == ["api", "--paginate"] and "milestones" in args[2]:
@@ -57,7 +65,11 @@ def test_apply_backlog_creates_missing_labels(tmp_path: Path, monkeypatch: pytes
             return _cp_ok("{}")
         if args[:3] == ["api", "--method", "POST"] and args[3].endswith("/labels"):
             for idx, token in enumerate(args):
-                if token == "-f" and idx + 1 < len(args) and args[idx + 1].startswith("name="):
+                if (
+                    token == "-f"
+                    and idx + 1 < len(args)
+                    and args[idx + 1].startswith("name=")
+                ):
                     created_labels.append(args[idx + 1].split("=", 1)[1])
                     break
             return _cp_ok("{}")
@@ -112,11 +124,15 @@ def test_apply_backlog_creates_missing_labels(tmp_path: Path, monkeypatch: pytes
     assert created_issues[1]["milestone"] == "Epic e2e"
 
 
-def test_ensure_missing_labels_dry_run_updates_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ensure_missing_labels_dry_run_updates_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     existing = {"epic"}
     calls: list[list[str]] = []
 
-    def _fake_run_gh(repo_dir: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    def _fake_run_gh(
+        repo_dir: Path, args: list[str]
+    ) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         return _cp_ok("{}")
 
@@ -136,11 +152,15 @@ def test_ensure_missing_labels_dry_run_updates_cache(monkeypatch: pytest.MonkeyP
     assert calls == []
 
 
-def test_resolve_authenticated_login_returns_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_authenticated_login_returns_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
     monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda _: None)
-    monkeypatch.setattr(backlog_ops, "_run_gh", lambda _repo_dir, _args: _cp_ok('{"login":"octocat"}'))
+    monkeypatch.setattr(
+        backlog_ops, "_run_gh", lambda _repo_dir, _args: _cp_ok('{"login":"octocat"}')
+    )
 
     assert backlog_ops.resolve_authenticated_login(repo_dir) == "octocat"
 
@@ -178,12 +198,18 @@ def test_apply_backlog_project_title_creates_and_adds_items(
     monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda _: None)
 
     numbers = {"Epic A": 10, "A1": 11}
-    monkeypatch.setattr(backlog_ops, "_find_issue_number", lambda _repo_dir, _repo, title: numbers.get(title))
+    monkeypatch.setattr(
+        backlog_ops,
+        "_find_issue_number",
+        lambda _repo_dir, _repo, title: numbers.get(title),
+    )
     monkeypatch.setattr(backlog_ops, "_create_issue", lambda *args, **kwargs: 999)
 
     calls: list[list[str]] = []
 
-    def _fake_run_gh(_repo_dir: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    def _fake_run_gh(
+        _repo_dir: Path, args: list[str]
+    ) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args == ["api", "/user"]:
             return _cp_ok('{"login":"octocat"}')
@@ -226,7 +252,9 @@ def test_apply_backlog_project_title_creates_and_adds_items(
     assert summary.issues_skipped == 2
 
 
-def test_apply_backlog_requires_epic_body_and_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_backlog_requires_epic_body_and_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
     backlog_file = repo_dir / "backlog.json"
@@ -248,7 +276,9 @@ def test_apply_backlog_requires_epic_body_and_key(tmp_path: Path, monkeypatch: p
 
     monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda _: None)
 
-    def _fake_run_gh(_repo_dir: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    def _fake_run_gh(
+        _repo_dir: Path, args: list[str]
+    ) -> subprocess.CompletedProcess[str]:
         if args == ["api", "/user"]:
             return _cp_ok('{"login":"octocat"}')
         if args[:2] == ["api", "--paginate"] and "milestones" in args[2]:

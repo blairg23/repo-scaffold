@@ -87,7 +87,9 @@ def apply_files(
         except UnicodeDecodeError:
             content_changed = True
 
-        needs_overwrite = content_changed or (file.executable and not _has_execute_bit(path))
+        needs_overwrite = content_changed or (
+            file.executable and not _has_execute_bit(path)
+        )
         if not needs_overwrite:
             out(f"SKIP      {display} (exists)")
             skipped += 1

@@ -36,7 +36,9 @@ def parse_language_csv(raw: str) -> tuple[str, ...]:
     unknown = [part for part in parts if part not in ALLOWED_LANGUAGES]
     if unknown:
         bad = ", ".join(sorted(set(unknown)))
-        raise ValueError(f"Unknown language value(s): {bad}. Allowed: go, python, react")
+        raise ValueError(
+            f"Unknown language value(s): {bad}. Allowed: go, python, react"
+        )
 
     selected = set(parts)
     return tuple(lang for lang in ALLOWED_LANGUAGES if lang in selected)
@@ -53,7 +55,9 @@ def _write_file(path: Path, content: str, executable: bool = False) -> None:
 
 def _ensure_license_supported(license_id: str) -> None:
     if license_id != SUPPORTED_LICENSE:
-        raise ValueError(f"Unsupported license '{license_id}'. Only '{SUPPORTED_LICENSE}' is supported.")
+        raise ValueError(
+            f"Unsupported license '{license_id}'. Only '{SUPPORTED_LICENSE}' is supported."
+        )
 
 
 def _load_template(relative_path: str, fallback: str) -> str:
@@ -73,15 +77,15 @@ def _render_codeowners(owner: str | None) -> str:
 def _render_pr_template() -> str:
     fallback = """## Summary
 
-- 
+-
 
 ## Motivation
 
-- 
+-
 
 ## Changes
 
-- 
+-
 
 ## Validation
 
@@ -91,7 +95,7 @@ def _render_pr_template() -> str:
 
 ## Risks
 
-- 
+-
 
 ## Checklist
 
@@ -146,7 +150,7 @@ assignees: []
 
 ## Acceptance criteria
 
-- [ ] 
+- [ ]
 
 ## Implementation notes
 
@@ -177,10 +181,7 @@ def _render_ci_yaml(languages: Iterable[str]) -> str:
     joined = ",".join(languages)
     return f"""name: CI
 
-on:
-  pull_request:
-  push:
-    branches: [main]
+on: [push, pull_request]
 
 permissions:
   contents: read
@@ -189,6 +190,21 @@ env:
   LANGUAGES: "{joined}"
 
 jobs:
+  pre-commit:
+    if: hashFiles('.pre-commit-config.yaml') != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pre-commit
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pre-commit
+      - name: Run pre-commit
+        run: pre-commit run --all-files --show-diff-on-failure
+
   go:
     if: contains(env.LANGUAGES, 'go') && hashFiles('go.mod') != ''
     runs-on: ubuntu-latest
@@ -215,23 +231,21 @@ jobs:
   python:
     if: contains(env.LANGUAGES, 'python') && hashFiles('pyproject.toml') != ''
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tox-env: [lint, type, test]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dependencies
+      - name: Install tox
         run: |
           python -m pip install --upgrade pip
-          pip install -e .[dev]
-      - name: Ruff
-        run: ruff check .
-      - name: Black
-        run: black --check .
-      - name: Mypy
-        run: mypy src
-      - name: Pytest
-        run: pytest
+          python -m pip install tox
+      - name: Run tox (${{{{ matrix.tox-env }}}})
+        run: tox -e ${{{{ matrix.tox-env }}}}
 
   react:
     if: contains(env.LANGUAGES, 'react') && hashFiles('web/package.json') != ''
@@ -369,6 +383,9 @@ def _render_gitignore(languages: Iterable[str]) -> str:
         "",
         "# Logs",
         "*.log",
+        "",
+        "# Pre-commit",
+        ".pre-commit-cache/",
         "",
     ]
 
@@ -543,6 +560,19 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
             ]
         )
 
+    lines.extend(
+        [
+            "## Git hooks",
+            "",
+            "```bash",
+            "python -m pip install pre-commit",
+            "pre-commit install",
+            "pre-commit run --all-files",
+            "```",
+            "",
+        ]
+    )
+
     lines.extend(["## Day-to-day commands", ""])
 
     if "python" in config.languages:
@@ -551,12 +581,15 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
                 "### Python",
                 "",
                 "```bash",
+                "tox -e format",
                 "ruff check .",
                 "black --check .",
                 "mypy src",
                 "pytest",
-                "tox",
+                "tox -e lint,type,test",
                 "```",
+                "",
+                "CI runs the same Python quality matrix via tox (`lint`, `type`, `test`).",
                 "",
             ]
         )
@@ -2110,6 +2143,7 @@ dependencies = []
 dev = [
   "black>=24.8.0",
   "mypy>=1.11.0",
+  "pre-commit>=3.8.0",
   "pytest>=8.0.0",
   "ruff>=0.6.0",
   "tox>=4.20.0",
@@ -2146,27 +2180,68 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_return_any = true
 no_implicit_optional = true
+"""
 
-[tool.tox]
-legacy_tox_ini = '''
-[tox]
-env_list = py,lint,type
+
+def _render_tox_ini() -> str:
+    return """[tox]
+envlist = lint,type,test
+isolated_build = true
 
 [testenv]
 deps = -e .[dev]
-commands = pytest
+setenv =
+    VIRTUALENV_OVERRIDE_APP_DATA={toxinidir}/.tox/venv_app_data
 
 [testenv:lint]
 deps = -e .[dev]
 commands =
-  ruff check .
-  black --check .
+    black --check src tests
+    ruff check src tests
+
+[testenv:format]
+deps = -e .[dev]
+commands =
+    black src tests
+    ruff check src tests --fix
 
 [testenv:type]
 deps = -e .[dev]
-commands = mypy src
-'''
+commands =
+    mypy src
+
+[testenv:test]
+deps = -e .[dev]
+commands =
+    pytest -q {posargs:tests}
 """
+
+
+def _render_pre_commit_config(languages: Iterable[str]) -> str:
+    selected = set(languages)
+    lines = [
+        "repos:",
+        "  - repo: https://github.com/pre-commit/pre-commit-hooks",
+        "    rev: v4.6.0",
+        "    hooks:",
+        "      - id: check-merge-conflict",
+        "      - id: check-yaml",
+        "      - id: check-toml",
+        "      - id: end-of-file-fixer",
+        "      - id: trailing-whitespace",
+    ]
+    if "python" in selected:
+        lines.extend(
+            [
+                "  - repo: https://github.com/astral-sh/ruff-pre-commit",
+                "    rev: v0.6.9",
+                "    hooks:",
+                "      - id: ruff",
+                "        args: [--fix]",
+                "      - id: ruff-format",
+            ]
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _render_python_init(name: str) -> str:
@@ -2325,9 +2400,21 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
     _ensure_license_supported(config.license_id)
 
     files: list[ScaffoldFile] = [
-        ScaffoldFile(config.out_dir / ".github" / "pull_request_template.md", _render_pr_template()),
-        ScaffoldFile(config.out_dir / ".github" / "CODEOWNERS", _render_codeowners(config.owner)),
-        ScaffoldFile(config.out_dir / ".github" / "ISSUE_TEMPLATE" / "epic.md", _render_issue_epic_template()),
+        ScaffoldFile(
+            config.out_dir / ".pre-commit-config.yaml",
+            _render_pre_commit_config(config.languages),
+        ),
+        ScaffoldFile(
+            config.out_dir / ".github" / "pull_request_template.md",
+            _render_pr_template(),
+        ),
+        ScaffoldFile(
+            config.out_dir / ".github" / "CODEOWNERS", _render_codeowners(config.owner)
+        ),
+        ScaffoldFile(
+            config.out_dir / ".github" / "ISSUE_TEMPLATE" / "epic.md",
+            _render_issue_epic_template(),
+        ),
         ScaffoldFile(
             config.out_dir / ".github" / "ISSUE_TEMPLATE" / "ticket.md",
             _render_issue_ticket_template(),
@@ -2336,7 +2423,10 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
             config.out_dir / ".github" / "ISSUE_TEMPLATE" / "config.yml",
             _render_issue_config(config.owner, config.name),
         ),
-        ScaffoldFile(config.out_dir / ".github" / "workflows" / "ci.yml", _render_ci_yaml(config.languages)),
+        ScaffoldFile(
+            config.out_dir / ".github" / "workflows" / "ci.yml",
+            _render_ci_yaml(config.languages),
+        ),
         ScaffoldFile(
             config.out_dir / ".github" / "workflows" / "codeql.yml",
             _render_codeql_yaml(config.languages),
@@ -2345,12 +2435,16 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
             config.out_dir / ".github" / "dependabot.yml",
             _render_dependabot_yaml(config.languages),
         ),
-        ScaffoldFile(config.out_dir / "docs" / "requirements.md", "# Requirements\n\nTBD\n"),
+        ScaffoldFile(
+            config.out_dir / "docs" / "requirements.md", "# Requirements\n\nTBD\n"
+        ),
         ScaffoldFile(config.out_dir / "docs" / "api-v1.md", "# API v1\n\nTBD\n"),
         ScaffoldFile(config.out_dir / ".env.example", _render_env_example(config.name)),
         ScaffoldFile(config.out_dir / "README.md", _render_repo_readme(config)),
         ScaffoldFile(config.out_dir / "LICENSE", _apache_2_license()),
-        ScaffoldFile(config.out_dir / ".gitignore", _render_gitignore(config.languages)),
+        ScaffoldFile(
+            config.out_dir / ".gitignore", _render_gitignore(config.languages)
+        ),
         ScaffoldFile(config.out_dir / ".editorconfig", _render_editorconfig()),
         ScaffoldFile(config.out_dir / "Makefile", _render_makefile()),
     ]
@@ -2359,7 +2453,9 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
     if "go" in selected:
         files.extend(
             [
-                ScaffoldFile(config.out_dir / "go.mod", _render_go_mod(config.name, config.owner)),
+                ScaffoldFile(
+                    config.out_dir / "go.mod", _render_go_mod(config.name, config.owner)
+                ),
                 ScaffoldFile(
                     config.out_dir / "cmd" / config.name / "main.go",
                     _render_go_main(config.name),
@@ -2371,7 +2467,11 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
     if "python" in selected:
         files.extend(
             [
-                ScaffoldFile(config.out_dir / "pyproject.toml", _render_python_pyproject(config.name)),
+                ScaffoldFile(
+                    config.out_dir / "pyproject.toml",
+                    _render_python_pyproject(config.name),
+                ),
+                ScaffoldFile(config.out_dir / "tox.ini", _render_tox_ini()),
                 ScaffoldFile(
                     config.out_dir / "src" / config.name / "__init__.py",
                     _render_python_init(config.name),
@@ -2395,7 +2495,10 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
                     config.out_dir / "web" / "eslint.config.js",
                     _render_react_eslint_config(),
                 ),
-                ScaffoldFile(config.out_dir / "web" / "src" / "main.jsx", _render_react_main_jsx()),
+                ScaffoldFile(
+                    config.out_dir / "web" / "src" / "main.jsx",
+                    _render_react_main_jsx(),
+                ),
                 ScaffoldFile(
                     config.out_dir / "web" / "src" / "App.jsx",
                     _render_react_app_jsx(config.name),
@@ -2446,7 +2549,9 @@ def detect_languages_from_repo(repo_dir: Path) -> tuple[str, ...]:
     return tuple(lang for lang in ALLOWED_LANGUAGES if lang in selected)
 
 
-def build_template_files(target_dir: Path, *, owner: str | None = None, name: str | None = None) -> list[ScaffoldFile]:
+def build_template_files(
+    target_dir: Path, *, owner: str | None = None, name: str | None = None
+) -> list[ScaffoldFile]:
     repo_name = name or target_dir.name
     cfg = ScaffoldConfig(
         name=repo_name,
@@ -2455,23 +2560,17 @@ def build_template_files(target_dir: Path, *, owner: str | None = None, name: st
         license_id=SUPPORTED_LICENSE,
         out_dir=target_dir,
     )
-    return _filter_files_for_paths(build_scaffold_files(cfg), target_dir, TEMPLATE_FILE_PATHS)
-
-
-def build_ci_files(target_dir: Path, *, languages: tuple[str, ...], owner: str | None = None, name: str | None = None) -> list[ScaffoldFile]:
-    repo_name = name or target_dir.name
-    cfg = ScaffoldConfig(
-        name=repo_name,
-        languages=languages,
-        owner=owner,
-        license_id=SUPPORTED_LICENSE,
-        out_dir=target_dir,
+    return _filter_files_for_paths(
+        build_scaffold_files(cfg), target_dir, TEMPLATE_FILE_PATHS
     )
-    return _filter_files_for_paths(build_scaffold_files(cfg), target_dir, [".github/workflows/ci.yml"])
 
 
-def build_dependabot_files(
-    target_dir: Path, *, languages: tuple[str, ...], owner: str | None = None, name: str | None = None
+def build_ci_files(
+    target_dir: Path,
+    *,
+    languages: tuple[str, ...],
+    owner: str | None = None,
+    name: str | None = None,
 ) -> list[ScaffoldFile]:
     repo_name = name or target_dir.name
     cfg = ScaffoldConfig(
@@ -2481,7 +2580,29 @@ def build_dependabot_files(
         license_id=SUPPORTED_LICENSE,
         out_dir=target_dir,
     )
-    return _filter_files_for_paths(build_scaffold_files(cfg), target_dir, [".github/dependabot.yml"])
+    return _filter_files_for_paths(
+        build_scaffold_files(cfg), target_dir, [".github/workflows/ci.yml"]
+    )
+
+
+def build_dependabot_files(
+    target_dir: Path,
+    *,
+    languages: tuple[str, ...],
+    owner: str | None = None,
+    name: str | None = None,
+) -> list[ScaffoldFile]:
+    repo_name = name or target_dir.name
+    cfg = ScaffoldConfig(
+        name=repo_name,
+        languages=languages,
+        owner=owner,
+        license_id=SUPPORTED_LICENSE,
+        out_dir=target_dir,
+    )
+    return _filter_files_for_paths(
+        build_scaffold_files(cfg), target_dir, [".github/dependabot.yml"]
+    )
 
 
 def generate_scaffold(config: ScaffoldConfig) -> None:

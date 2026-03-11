@@ -97,12 +97,16 @@ def _seed_env_from_dotenv(path: Path) -> None:
         elif os.environ.get("github_full_repo"):
             os.environ["GH_REPO"] = os.environ["github_full_repo"]
 
-    if not os.environ.get("GITHUB_PROJECT_TITLE") and os.environ.get("github_project_title"):
+    if not os.environ.get("GITHUB_PROJECT_TITLE") and os.environ.get(
+        "github_project_title"
+    ):
         os.environ["GITHUB_PROJECT_TITLE"] = os.environ["github_project_title"]
     if not os.environ.get("GITHUB_PROJECT_TITLE_TEMPLATE") and os.environ.get(
         "github_project_title_template"
     ):
-        os.environ["GITHUB_PROJECT_TITLE_TEMPLATE"] = os.environ["github_project_title_template"]
+        os.environ["GITHUB_PROJECT_TITLE_TEMPLATE"] = os.environ[
+            "github_project_title_template"
+        ]
 
 
 def _normalize_owner_repo(raw: str, *, allow_host_prefix: bool) -> str | None:
@@ -152,11 +156,25 @@ def _seed_env_for_parsed_mode(ns: argparse.Namespace) -> None:
 
 def _add_overwrite_policy_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--yes", action="store_true", help="Assume yes to overwrite prompts")
-    group.add_argument("--no", action="store_true", help="Assume no to overwrite prompts")
-    group.add_argument("--force", action="store_true", help="Overwrite without prompting")
-    parser.add_argument("--dry-run", action="store_true", help="Print planned actions without changing state")
-    parser.add_argument("--backup", action="store_true", help="Write <file>.bak.<timestamp> before overwrite")
+    group.add_argument(
+        "--yes", action="store_true", help="Assume yes to overwrite prompts"
+    )
+    group.add_argument(
+        "--no", action="store_true", help="Assume no to overwrite prompts"
+    )
+    group.add_argument(
+        "--force", action="store_true", help="Overwrite without prompting"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print planned actions without changing state",
+    )
+    parser.add_argument(
+        "--backup",
+        action="store_true",
+        help="Write <file>.bak.<timestamp> before overwrite",
+    )
 
 
 def _add_scaffold_args(parser: argparse.ArgumentParser) -> None:
@@ -181,9 +199,13 @@ def _add_scaffold_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_apply_target_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--path", default=".", help="Target repository path (default: .)")
+    parser.add_argument(
+        "--path", default=".", help="Target repository path (default: .)"
+    )
     parser.add_argument("--owner", help="GitHub owner for generated metadata")
-    parser.add_argument("--name", help="Repository name override (defaults to folder name)")
+    parser.add_argument(
+        "--name", help="Repository name override (defaults to folder name)"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -193,13 +215,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
-    create_cmd = subparsers.add_parser("create", help="Create/push remote repo and apply baseline settings")
+    create_cmd = subparsers.add_parser(
+        "create", help="Create/push remote repo and apply baseline settings"
+    )
     create_cmd.add_argument(
         "--path",
         help="Local repository path (default: ./out/<repo-name>; auto-inits when missing/empty)",
     )
     create_cmd.add_argument("--repo", help="Target GitHub repo in owner/repo format")
-    create_cmd.add_argument("--owner", help="GitHub owner override (used when --repo is omitted)")
+    create_cmd.add_argument(
+        "--owner", help="GitHub owner override (used when --repo is omitted)"
+    )
     create_cmd.add_argument(
         "--name",
         help="Repository name fallback when --repo is omitted",
@@ -220,10 +246,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip applying repository settings/protections after creation/push",
     )
-    create_cmd.add_argument("--dry-run", action="store_true", help="Print planned actions without changing state")
+    create_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print planned actions without changing state",
+    )
 
-    delete_cmd = subparsers.add_parser("delete", help="Delete matching GitHub repositories")
-    delete_cmd.add_argument("--owner", help="GitHub owner/org (defaults to .env/environment)")
+    delete_cmd = subparsers.add_parser(
+        "delete", help="Delete matching GitHub repositories"
+    )
+    delete_cmd.add_argument(
+        "--owner", help="GitHub owner/org (defaults to .env/environment)"
+    )
     delete_cmd.add_argument(
         "--prefix",
         default="repo-scaffold-e2e",
@@ -277,13 +311,19 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parent = argparse.ArgumentParser(add_help=False)
     _add_overwrite_policy_args(apply_parent)
 
-    apply_cmd = subparsers.add_parser("apply", help="Apply capabilities to an existing repo")
+    apply_cmd = subparsers.add_parser(
+        "apply", help="Apply capabilities to an existing repo"
+    )
     apply_sub = apply_cmd.add_subparsers(dest="apply_command", required=True)
 
-    apply_templates = apply_sub.add_parser("templates", parents=[apply_parent], help="Apply GitHub templates")
+    apply_templates = apply_sub.add_parser(
+        "templates", parents=[apply_parent], help="Apply GitHub templates"
+    )
     _add_apply_target_args(apply_templates)
 
-    apply_ci = apply_sub.add_parser("ci", parents=[apply_parent], help="Apply CI workflow")
+    apply_ci = apply_sub.add_parser(
+        "ci", parents=[apply_parent], help="Apply CI workflow"
+    )
     _add_apply_target_args(apply_ci)
     apply_ci.add_argument(
         "--languages",
@@ -310,7 +350,9 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[apply_parent],
         help="Create milestones/issues in GitHub from backlog/issues.json",
     )
-    apply_backlog_cmd.add_argument("--path", default=".", help="Repo path containing backlog data (default: .)")
+    apply_backlog_cmd.add_argument(
+        "--path", default=".", help="Repo path containing backlog data (default: .)"
+    )
     apply_backlog_cmd.add_argument("--repo", help="Target GitHub repo (owner/repo)")
     apply_backlog_cmd.add_argument(
         "--file",
@@ -378,7 +420,9 @@ def _policy_from_ns(ns: argparse.Namespace) -> OverwritePolicy:
     )
 
 
-def _parse_languages_or_die(parser: argparse.ArgumentParser, raw: str) -> tuple[str, ...]:
+def _parse_languages_or_die(
+    parser: argparse.ArgumentParser, raw: str
+) -> tuple[str, ...]:
     try:
         return parse_language_csv(raw)
     except ValueError as exc:
@@ -451,7 +495,9 @@ def _apply_rules(repo: str) -> int:
     commands = _render_rules_commands(repo)
     failures = 0
     for command in commands:
-        cp = subprocess.run(["bash", "-lc", command], text=True, capture_output=True, check=False)
+        cp = subprocess.run(
+            ["bash", "-lc", command], text=True, capture_output=True, check=False
+        )
         if cp.returncode != 0:
             failures += 1
             if cp.stderr.strip():
@@ -467,11 +513,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if ns.mode == "create":
         repo_name_hint = (
-            _repo_name_from_repo_ref(ns.repo) or (ns.name or "").strip() or _default_init_name()
+            _repo_name_from_repo_ref(ns.repo)
+            or (ns.name or "").strip()
+            or _default_init_name()
         )
         repo_dir = Path(ns.path) if ns.path else default_output_path(repo_name_hint)
         if repo_dir.exists() and not repo_dir.is_dir():
-            print(f"Error: local repo path exists and is not a directory: {repo_dir}", file=sys.stderr)
+            print(
+                f"Error: local repo path exists and is not a directory: {repo_dir}",
+                file=sys.stderr,
+            )
             return 2
 
         needs_init = not repo_dir.exists()
@@ -495,17 +546,21 @@ def main(argv: list[str] | None = None) -> int:
                 is_tty=sys.stdin.isatty(),
             )
             if init_summary.failures > 0:
-                print("Error: failed to initialize scaffold for create.", file=sys.stderr)
+                print(
+                    "Error: failed to initialize scaffold for create.", file=sys.stderr
+                )
                 return 1
 
         create_repo_dir = repo_dir
         temp_create_dir: tempfile.TemporaryDirectory[str] | None = None
         if ns.dry_run and needs_init and not repo_dir.exists():
-            temp_create_dir = tempfile.TemporaryDirectory(prefix="repo-scaffold-create-")
+            temp_create_dir = tempfile.TemporaryDirectory(
+                prefix="repo-scaffold-create-"
+            )
             create_repo_dir = Path(temp_create_dir.name)
 
         try:
-            summary: CreateSummary = create_repository(
+            create_summary: CreateSummary = create_repository(
                 repo_dir=create_repo_dir,
                 repo=ns.repo,
                 owner=ns.owner,
@@ -514,12 +569,25 @@ def main(argv: list[str] | None = None) -> int:
                 apply_settings=not ns.skip_settings,
                 dry_run=ns.dry_run,
                 out=(
-                    (lambda line: print(line.replace(create_repo_dir.as_posix(), repo_dir.as_posix())))
+                    (
+                        lambda line: print(
+                            line.replace(
+                                create_repo_dir.as_posix(), repo_dir.as_posix()
+                            )
+                        )
+                    )
                     if temp_create_dir
                     else print
                 ),
                 err=(
-                    (lambda line: print(line.replace(create_repo_dir.as_posix(), repo_dir.as_posix()), file=sys.stderr))
+                    (
+                        lambda line: print(
+                            line.replace(
+                                create_repo_dir.as_posix(), repo_dir.as_posix()
+                            ),
+                            file=sys.stderr,
+                        )
+                    )
                     if temp_create_dir
                     else (lambda line: print(line, file=sys.stderr))
                 ),
@@ -536,16 +604,16 @@ def main(argv: list[str] | None = None) -> int:
         print("Summary:")
         if ns.dry_run:
             print("  mode: dry-run")
-        print(f"  repo: {summary.repo}")
-        print(f"  repo created: {summary.repo_created}")
-        print(f"  pushed: {summary.pushed}")
-        print(f"  settings applied: {summary.settings_applied}")
-        print(f"  failures: {summary.failures}")
-        return 1 if summary.failures > 0 else 0
+        print(f"  repo: {create_summary.repo}")
+        print(f"  repo created: {create_summary.repo_created}")
+        print(f"  pushed: {create_summary.pushed}")
+        print(f"  settings applied: {create_summary.settings_applied}")
+        print(f"  failures: {create_summary.failures}")
+        return 1 if create_summary.failures > 0 else 0
 
     if ns.mode == "delete":
         try:
-            summary: DeleteSummary = delete_repositories(
+            delete_summary: DeleteSummary = delete_repositories(
                 owner=ns.owner,
                 prefix=ns.prefix,
                 exact_names=tuple(ns.exact or ()),
@@ -568,25 +636,28 @@ def main(argv: list[str] | None = None) -> int:
         print("Summary:")
         if not bool(getattr(ns, "do_apply", False)):
             print("  mode: dry-run")
-        if summary.owner is not None:
-            print(f"  owner: {summary.owner}")
-        print(f"  remote matched: {summary.remote_matched}")
-        print(f"  remote deleted: {summary.remote_deleted}")
-        print(f"  remote skipped: {summary.remote_skipped}")
-        print(f"  remote failures: {summary.remote_failures}")
-        print(f"  local matched: {summary.local_matched}")
-        print(f"  local deleted: {summary.local_deleted}")
-        print(f"  local skipped: {summary.local_skipped}")
-        print(f"  local failures: {summary.local_failures}")
-        print(f"  failures: {summary.failures}")
-        return 1 if summary.failures > 0 else 0
+        if delete_summary.owner is not None:
+            print(f"  owner: {delete_summary.owner}")
+        print(f"  remote matched: {delete_summary.remote_matched}")
+        print(f"  remote deleted: {delete_summary.remote_deleted}")
+        print(f"  remote skipped: {delete_summary.remote_skipped}")
+        print(f"  remote failures: {delete_summary.remote_failures}")
+        print(f"  local matched: {delete_summary.local_matched}")
+        print(f"  local deleted: {delete_summary.local_deleted}")
+        print(f"  local skipped: {delete_summary.local_skipped}")
+        print(f"  local failures: {delete_summary.local_failures}")
+        print(f"  failures: {delete_summary.failures}")
+        return 1 if delete_summary.failures > 0 else 0
 
     if ns.mode == "init":
         init_name = (ns.name or "").strip() or _default_init_name()
         languages = _parse_languages_or_die(parser, ns.languages)
         out_dir = Path(ns.out) if ns.out else default_output_path(init_name)
         if out_dir.exists() and not out_dir.is_dir():
-            print(f"Error: output path '{out_dir}' exists and is not a directory.", file=sys.stderr)
+            print(
+                f"Error: output path '{out_dir}' exists and is not a directory.",
+                file=sys.stderr,
+            )
             return 2
 
         cfg = ScaffoldConfig(
@@ -598,67 +669,101 @@ def main(argv: list[str] | None = None) -> int:
         )
         rc = _run_file_apply(build_scaffold_files(cfg), _policy_from_ns(ns))
         if rc == 0:
-            print(f"{'Dry-run complete for' if ns.dry_run else 'Scaffold initialized at'}: {out_dir}")
+            print(
+                f"{'Dry-run complete for' if ns.dry_run else 'Scaffold initialized at'}: {out_dir}"
+            )
         return rc
 
     if ns.mode == "apply" and ns.apply_command == "templates":
         repo_dir = Path(ns.path)
         if repo_dir.exists() and not repo_dir.is_dir():
-            print(f"Error: target path '{repo_dir}' exists and is not a directory.", file=sys.stderr)
+            print(
+                f"Error: target path '{repo_dir}' exists and is not a directory.",
+                file=sys.stderr,
+            )
             return 2
         files = build_template_files(repo_dir, owner=ns.owner, name=ns.name)
         rc = _run_file_apply(files, _policy_from_ns(ns))
         if rc == 0:
-            print(f"{'Dry-run complete for' if ns.dry_run else 'Templates applied to'}: {repo_dir}")
+            print(
+                f"{'Dry-run complete for' if ns.dry_run else 'Templates applied to'}: {repo_dir}"
+            )
         return rc
 
     if ns.mode == "apply" and ns.apply_command == "ci":
         repo_dir = Path(ns.path)
         if repo_dir.exists() and not repo_dir.is_dir():
-            print(f"Error: target path '{repo_dir}' exists and is not a directory.", file=sys.stderr)
+            print(
+                f"Error: target path '{repo_dir}' exists and is not a directory.",
+                file=sys.stderr,
+            )
             return 2
         languages = _parse_languages_or_die(parser, ns.languages)
-        files = build_ci_files(repo_dir, languages=languages, owner=ns.owner, name=ns.name)
+        files = build_ci_files(
+            repo_dir, languages=languages, owner=ns.owner, name=ns.name
+        )
         rc = _run_file_apply(files, _policy_from_ns(ns))
         if rc == 0:
-            print(f"{'Dry-run complete for' if ns.dry_run else 'CI applied to'}: {repo_dir}")
+            print(
+                f"{'Dry-run complete for' if ns.dry_run else 'CI applied to'}: {repo_dir}"
+            )
         return rc
 
     if ns.mode == "apply" and ns.apply_command == "dependabot":
         repo_dir = Path(ns.path)
         if repo_dir.exists() and not repo_dir.is_dir():
-            print(f"Error: target path '{repo_dir}' exists and is not a directory.", file=sys.stderr)
+            print(
+                f"Error: target path '{repo_dir}' exists and is not a directory.",
+                file=sys.stderr,
+            )
             return 2
         if ns.languages:
             languages = _parse_languages_or_die(parser, ns.languages)
         else:
             languages = detect_languages_from_repo(repo_dir)
-        files = build_dependabot_files(repo_dir, languages=languages, owner=ns.owner, name=ns.name)
+        files = build_dependabot_files(
+            repo_dir, languages=languages, owner=ns.owner, name=ns.name
+        )
         rc = _run_file_apply(files, _policy_from_ns(ns))
         if rc == 0:
-            print(f"{'Dry-run complete for' if ns.dry_run else 'Dependabot applied to'}: {repo_dir}")
+            print(
+                f"{'Dry-run complete for' if ns.dry_run else 'Dependabot applied to'}: {repo_dir}"
+            )
         return rc
 
     if ns.mode == "apply" and ns.apply_command == "backlog":
         repo_dir = Path(ns.path)
         if not repo_dir.exists() or not repo_dir.is_dir():
-            print(f"Error: repo path does not exist or is not a directory: {repo_dir}", file=sys.stderr)
+            print(
+                f"Error: repo path does not exist or is not a directory: {repo_dir}",
+                file=sys.stderr,
+            )
             return 2
-        target_repo, repo_error = _resolve_repo_from_args_or_env(repo=ns.repo, fallback_name=repo_dir.name)
+        target_repo, repo_error = _resolve_repo_from_args_or_env(
+            repo=ns.repo, fallback_name=repo_dir.name
+        )
         if repo_error:
             print(repo_error, file=sys.stderr)
             return 2
         assert target_repo is not None
         effective_project_number = ns.project_number
         effective_project_title = ns.project_title
-        if ns.with_project and effective_project_number is None and not effective_project_title:
+        if (
+            ns.with_project
+            and effective_project_number is None
+            and not effective_project_title
+        ):
             repo_name = target_repo.split("/", 1)[1]
             env_project_title = (os.environ.get("GITHUB_PROJECT_TITLE") or "").strip()
-            env_project_template = (os.environ.get("GITHUB_PROJECT_TITLE_TEMPLATE") or "").strip()
+            env_project_template = (
+                os.environ.get("GITHUB_PROJECT_TITLE_TEMPLATE") or ""
+            ).strip()
             if env_project_title:
                 effective_project_title = env_project_title
             elif env_project_template:
-                effective_project_title = env_project_template.replace("{repo}", repo_name)
+                effective_project_title = env_project_template.replace(
+                    "{repo}", repo_name
+                )
             else:
                 effective_project_title = f"{repo_name} Roadmap"
         if ns.auth_check:
@@ -682,7 +787,7 @@ def main(argv: list[str] | None = None) -> int:
         if not backlog_file.is_absolute():
             backlog_file = repo_dir / backlog_file
         try:
-            summary: BacklogApplySummary = apply_backlog(
+            backlog_summary: BacklogApplySummary = apply_backlog(
                 repo_dir=repo_dir,
                 repo=target_repo,
                 backlog_file=backlog_file,
@@ -701,19 +806,21 @@ def main(argv: list[str] | None = None) -> int:
         print("Summary:")
         if ns.dry_run:
             print("  mode: dry-run")
-        print(f"  milestones created: {summary.milestones_created}")
-        print(f"  milestones skipped: {summary.milestones_skipped}")
-        print(f"  issues created: {summary.issues_created}")
-        print(f"  issues skipped: {summary.issues_skipped}")
+        print(f"  milestones created: {backlog_summary.milestones_created}")
+        print(f"  milestones skipped: {backlog_summary.milestones_skipped}")
+        print(f"  issues created: {backlog_summary.issues_created}")
+        print(f"  issues skipped: {backlog_summary.issues_skipped}")
         if effective_project_number is not None or effective_project_title:
-            print(f"  project created: {summary.project_created}")
-            print(f"  project items added: {summary.project_items_added}")
-            print(f"  project items skipped: {summary.project_items_skipped}")
-        print(f"  failures: {summary.failures}")
-        return 1 if summary.failures > 0 else 0
+            print(f"  project created: {backlog_summary.project_created}")
+            print(f"  project items added: {backlog_summary.project_items_added}")
+            print(f"  project items skipped: {backlog_summary.project_items_skipped}")
+        print(f"  failures: {backlog_summary.failures}")
+        return 1 if backlog_summary.failures > 0 else 0
 
     if ns.mode == "apply" and ns.apply_command == "rules":
-        target_repo, repo_error = _resolve_repo_from_args_or_env(repo=ns.repo, fallback_name=None)
+        target_repo, repo_error = _resolve_repo_from_args_or_env(
+            repo=ns.repo, fallback_name=None
+        )
         if repo_error:
             print(repo_error, file=sys.stderr)
             return 2

@@ -207,12 +207,19 @@ def _ensure_git_repo(
         if not dry_run:
             cp = _run(["git", "init"], cwd=repo_dir, env=env)
             if cp.returncode != 0:
-                raise RuntimeError(cp.stderr.strip() or "Failed to initialize git repository.")
+                raise RuntimeError(
+                    cp.stderr.strip() or "Failed to initialize git repository."
+                )
             is_repo_root = True
 
     has_commit = False
     if is_repo_root:
-        has_commit = _run(["git", "rev-parse", "--verify", "HEAD"], cwd=repo_dir, env=env).returncode == 0
+        has_commit = (
+            _run(
+                ["git", "rev-parse", "--verify", "HEAD"], cwd=repo_dir, env=env
+            ).returncode
+            == 0
+        )
     if not has_commit:
         out(f"{'[dry-run] ' if dry_run else ''}create initial commit")
         if not dry_run:
@@ -226,20 +233,37 @@ def _ensure_git_repo(
                 )
             add_cp = _run(["git", "add", "-A"], cwd=repo_dir, env=env)
             if add_cp.returncode != 0:
-                raise RuntimeError(add_cp.stderr.strip() or "Failed staging files for initial commit.")
-            staged = _run(["git", "diff", "--cached", "--quiet"], cwd=repo_dir, env=env).returncode != 0
+                raise RuntimeError(
+                    add_cp.stderr.strip() or "Failed staging files for initial commit."
+                )
+            staged = (
+                _run(
+                    ["git", "diff", "--cached", "--quiet"], cwd=repo_dir, env=env
+                ).returncode
+                != 0
+            )
             commit_cmd = ["git", "commit", "-m", "Initial scaffold"]
             if not staged:
-                commit_cmd = ["git", "commit", "--allow-empty", "-m", "Initial scaffold"]
+                commit_cmd = [
+                    "git",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    "Initial scaffold",
+                ]
             commit_cp = _run(commit_cmd, cwd=repo_dir, env=env)
             if commit_cp.returncode != 0:
-                raise RuntimeError(commit_cp.stderr.strip() or "Failed creating initial commit.")
+                raise RuntimeError(
+                    commit_cp.stderr.strip() or "Failed creating initial commit."
+                )
 
     out(f"{'[dry-run] ' if dry_run else ''}prepare remote main push")
 
 
 def _repo_exists(*, repo_dir: Path, env: dict[str, str], repo: str) -> bool:
-    cp = _run(["gh", "repo", "view", repo, "--json", "nameWithOwner"], cwd=repo_dir, env=env)
+    cp = _run(
+        ["gh", "repo", "view", repo, "--json", "nameWithOwner"], cwd=repo_dir, env=env
+    )
     if cp.returncode == 0:
         return True
 
@@ -265,7 +289,11 @@ def _ensure_origin_remote(
     if current.returncode != 0:
         out(f"{'[dry-run] ' if dry_run else ''}add origin remote: {expected_https}")
         if not dry_run:
-            cp = _run(["git", "remote", "add", "origin", expected_https], cwd=repo_dir, env=env)
+            cp = _run(
+                ["git", "remote", "add", "origin", expected_https],
+                cwd=repo_dir,
+                env=env,
+            )
             if cp.returncode != 0:
                 raise RuntimeError(cp.stderr.strip() or "Failed adding origin remote.")
         return
@@ -276,7 +304,11 @@ def _ensure_origin_remote(
 
     out(f"{'[dry-run] ' if dry_run else ''}set origin remote: {expected_https}")
     if not dry_run:
-        cp = _run(["git", "remote", "set-url", "origin", expected_https], cwd=repo_dir, env=env)
+        cp = _run(
+            ["git", "remote", "set-url", "origin", expected_https],
+            cwd=repo_dir,
+            env=env,
+        )
         if cp.returncode != 0:
             raise RuntimeError(cp.stderr.strip() or "Failed updating origin remote.")
 
@@ -300,7 +332,9 @@ def _push_main(*, repo_dir: Path, env: dict[str, str]) -> tuple[bool, str | None
 
     if token:
         # Use an in-memory auth header so git push can run non-interactively.
-        basic = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
+        basic = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode(
+            "ascii"
+        )
         cp = _run(
             [
                 "git",
@@ -317,13 +351,18 @@ def _push_main(*, repo_dir: Path, env: dict[str, str]) -> tuple[bool, str | None
             env=push_env,
         )
     else:
-        cp = _run(["git", "push", "-u", "origin", "HEAD:main"], cwd=repo_dir, env=push_env)
+        cp = _run(
+            ["git", "push", "-u", "origin", "HEAD:main"], cwd=repo_dir, env=push_env
+        )
 
     if cp.returncode == 0:
         return True, None
 
     stderr = (cp.stderr or "").strip()
-    if not token and ("could not read username" in stderr.lower() or "authentication failed" in stderr.lower()):
+    if not token and (
+        "could not read username" in stderr.lower()
+        or "authentication failed" in stderr.lower()
+    ):
         return (
             False,
             (
@@ -362,7 +401,9 @@ def _create_or_push_repo(
 
     if exists:
         out(f"Repository already exists: {repo}")
-        _ensure_origin_remote(repo_dir=repo_dir, env=env, repo=repo, dry_run=dry_run, out=out)
+        _ensure_origin_remote(
+            repo_dir=repo_dir, env=env, repo=repo, dry_run=dry_run, out=out
+        )
         out(f"{'[dry-run] ' if dry_run else ''}push main to origin")
         if not dry_run:
             pushed, push_error = _push_main(repo_dir=repo_dir, env=env)
@@ -388,7 +429,11 @@ def _create_or_push_repo(
             env=env,
         )
         if cp.returncode != 0:
-            return False, False, cp.stderr.strip() or f"Failed creating repository: {repo}"
+            return (
+                False,
+                False,
+                cp.stderr.strip() or f"Failed creating repository: {repo}",
+            )
 
         out("push main to origin")
         pushed, push_error = _push_main(repo_dir=repo_dir, env=env)
@@ -419,16 +464,28 @@ def _apply_settings(
         stdin_text=_REPO_PATCH_PAYLOAD,
     )
     if patch_cp.returncode != 0:
-        raise RuntimeError(patch_cp.stderr.strip() or "Failed applying repository merge settings.")
+        raise RuntimeError(
+            patch_cp.stderr.strip() or "Failed applying repository merge settings."
+        )
 
     protect_cp = _run(
-        ["gh", "api", "--method", "PUT", f"/repos/{repo}/branches/main/protection", "--input", "-"],
+        [
+            "gh",
+            "api",
+            "--method",
+            "PUT",
+            f"/repos/{repo}/branches/main/protection",
+            "--input",
+            "-",
+        ],
         cwd=repo_dir,
         env=env,
         stdin_text=_PROTECTION_PAYLOAD,
     )
     if protect_cp.returncode != 0:
-        raise RuntimeError(protect_cp.stderr.strip() or "Failed applying main branch protection.")
+        raise RuntimeError(
+            protect_cp.stderr.strip() or "Failed applying main branch protection."
+        )
 
     for feature_name, endpoint_template in _BEST_EFFORT_SECURITY_FEATURES:
         endpoint = endpoint_template.format(repo=repo)
@@ -440,7 +497,9 @@ def _apply_settings(
         if feature_cp.returncode == 0:
             out(f"Enabled {feature_name.lower()}.")
             continue
-        feature_err = feature_cp.stderr.strip() or feature_cp.stdout.strip() or "unknown error"
+        feature_err = (
+            feature_cp.stderr.strip() or feature_cp.stdout.strip() or "unknown error"
+        )
         warn(f"Warning: could not enable {feature_name.lower()}: {feature_err}")
 
 
@@ -465,7 +524,9 @@ def create_repository(
     if visibility not in {"private", "public", "internal"}:
         raise RuntimeError("Visibility must be one of: private, public, internal.")
 
-    target_repo = _resolve_repo(repo_dir=repo_dir, env=env, repo=repo, owner=owner, name=name)
+    target_repo = _resolve_repo(
+        repo_dir=repo_dir, env=env, repo=repo, owner=owner, name=name
+    )
 
     repo_created = False
     pushed = False

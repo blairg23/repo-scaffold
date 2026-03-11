@@ -35,6 +35,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     generate_scaffold(cfg)
 
     expected_files = [
+        ".pre-commit-config.yaml",
         ".github/pull_request_template.md",
         ".github/CODEOWNERS",
         ".github/ISSUE_TEMPLATE/epic.md",
@@ -55,6 +56,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
         "cmd/demo/main.go",
         "internal/.gitkeep",
         "pyproject.toml",
+        "tox.ini",
         "src/demo/__init__.py",
         "web/package.json",
         "web/eslint.config.js",
@@ -68,30 +70,40 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     for rel in expected_files:
         assert (out_dir / rel).exists(), f"missing: {rel}"
 
-    assert "module github.com/acme/demo" in (out_dir / "go.mod").read_text(encoding="utf-8")
-    assert "package-ecosystem: \"gomod\"" in (out_dir / ".github/dependabot.yml").read_text(
+    assert "module github.com/acme/demo" in (out_dir / "go.mod").read_text(
         encoding="utf-8"
     )
-    assert "package-ecosystem: \"pip\"" in (out_dir / ".github/dependabot.yml").read_text(
+    assert 'package-ecosystem: "gomod"' in (
+        out_dir / ".github/dependabot.yml"
+    ).read_text(encoding="utf-8")
+    assert 'package-ecosystem: "pip"' in (out_dir / ".github/dependabot.yml").read_text(
         encoding="utf-8"
     )
-    assert "package-ecosystem: \"npm\"" in (out_dir / ".github/dependabot.yml").read_text(
+    assert 'package-ecosystem: "npm"' in (out_dir / ".github/dependabot.yml").read_text(
         encoding="utf-8"
     )
     ci_yaml = (out_dir / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "- name: Black" in ci_yaml
-    assert "- name: Mypy" in ci_yaml
-    assert "- name: Lint" in ci_yaml
-    assert "language:" in (out_dir / ".github/workflows/codeql.yml").read_text(encoding="utf-8")
+    assert "name: Install pre-commit" in ci_yaml
+    assert "pre-commit run --all-files --show-diff-on-failure" in ci_yaml
+    assert "tox-env: [lint, type, test]" in ci_yaml
+    assert "- name: Install tox" in ci_yaml
+    assert "run: tox -e ${{ matrix.tox-env }}" in ci_yaml
+    assert "language:" in (out_dir / ".github/workflows/codeql.yml").read_text(
+        encoding="utf-8"
+    )
     generated_readme = (out_dir / "README.md").read_text(encoding="utf-8")
     assert "Created by [repo-scaffold]" in generated_readme
     assert "## Setup" in generated_readme
+    assert "## Git hooks" in generated_readme
+    assert "pre-commit install" in generated_readme
     assert "## Day-to-day commands" in generated_readme
     assert "pip install -e .[dev]" in generated_readme
     assert "black --check ." in generated_readme
     assert "mypy src" in generated_readme
     assert "go test ./..." in generated_readme
     assert "npm run build" in generated_readme
+    assert "tox -e format" in generated_readme
+    assert "tox -e lint,type,test" in generated_readme
     assert "make typecheck" in generated_readme
     assert "## Backlog bootstrap" not in generated_readme
     assert "## GitHub token permissions" not in generated_readme
@@ -105,13 +117,24 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     pyproject = (out_dir / "pyproject.toml").read_text(encoding="utf-8")
     assert "black>=" in pyproject
     assert "mypy>=" in pyproject
+    assert "pre-commit>=" in pyproject
     assert "tox>=" in pyproject
     assert "[tool.mypy]" in pyproject
-    assert "[tool.tox]" in pyproject
+    assert "[tool.tox]" not in pyproject
+    tox_ini = (out_dir / "tox.ini").read_text(encoding="utf-8")
+    assert "envlist = lint,type,test" in tox_ini
+    assert "black --check src tests" in tox_ini
+    assert "ruff check src tests" in tox_ini
+    assert "[testenv:format]" in tox_ini
+    assert "black src tests" in tox_ini
+    assert "ruff check src tests --fix" in tox_ini
+    assert "pytest -q {posargs:tests}" in tox_ini
     web_package = (out_dir / "web/package.json").read_text(encoding="utf-8")
     assert '"lint": "eslint ."' in web_package
     assert '"eslint": "^9.21.0"' in web_package
-    assert "!.env.example" in (out_dir / ".gitignore").read_text(encoding="utf-8")
+    gitignore = (out_dir / ".gitignore").read_text(encoding="utf-8")
+    assert "!.env.example" in gitignore
+    assert ".pre-commit-cache/" in gitignore
     assert not (out_dir / "backlog").exists()
     assert not (out_dir / "scripts").exists()
 
@@ -191,9 +214,9 @@ def test_generate_scaffold_uses_custom_markdown_templates(
     )
     generate_scaffold(cfg)
 
-    assert (
-        cfg.out_dir / ".github" / "pull_request_template.md"
-    ).read_text(encoding="utf-8") == pr_template
+    assert (cfg.out_dir / ".github" / "pull_request_template.md").read_text(
+        encoding="utf-8"
+    ) == pr_template
     assert (cfg.out_dir / ".github" / "ISSUE_TEMPLATE" / "epic.md").read_text(
         encoding="utf-8"
     ) == epic_template

@@ -86,7 +86,11 @@ def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     owner = os.environ.get("GITHUB_ORG")
     assert owner, "Set GITHUB_ORG in env/.env."
 
-    base_name = os.environ.get("GITHUB_E2E_REPO_BASENAME") or os.environ.get("GITHUB_REPO") or "repo-scaffold-e2e"
+    base_name = (
+        os.environ.get("GITHUB_E2E_REPO_BASENAME")
+        or os.environ.get("GITHUB_REPO")
+        or "repo-scaffold-e2e"
+    )
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     suffix = uuid.uuid4().hex[:8]
     repo_name = f"{base_name}-{timestamp}-{suffix}"
@@ -98,7 +102,11 @@ def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     local_repo = tmp_path / repo_name
     backlog_file = local_repo / "backlog" / "issues.json"
 
-    token_present = bool(os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or os.environ.get("github_token"))
+    token_present = bool(
+        os.environ.get("GH_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+        or os.environ.get("github_token")
+    )
     if token_present:
         auth = _run_gh(["api", "/user"], cwd=project_root)
         assert auth.returncode == 0, (
@@ -185,7 +193,13 @@ def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         created_remote = create_summary.repo_created
 
         repo_view = _run_gh_json(
-            ["repo", "view", target_repo, "--json", "nameWithOwner,defaultBranchRef,visibility"],
+            [
+                "repo",
+                "view",
+                target_repo,
+                "--json",
+                "nameWithOwner,defaultBranchRef,visibility",
+            ],
             cwd=local_repo,
         )
         assert isinstance(repo_view, dict)
@@ -201,9 +215,17 @@ def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             assert repo_api["allow_rebase_merge"] is False
             assert repo_api["delete_branch_on_merge"] is True
 
-            protection = _run_gh_json(["api", f"/repos/{target_repo}/branches/main/protection"], cwd=local_repo)
+            protection = _run_gh_json(
+                ["api", f"/repos/{target_repo}/branches/main/protection"],
+                cwd=local_repo,
+            )
             assert isinstance(protection, dict)
-            assert protection["required_pull_request_reviews"]["required_approving_review_count"] == 1
+            assert (
+                protection["required_pull_request_reviews"][
+                    "required_approving_review_count"
+                ]
+                == 1
+            )
             assert protection["required_linear_history"]["enabled"] is True
             assert protection["required_conversation_resolution"]["enabled"] is True
             assert protection["allow_force_pushes"]["enabled"] is False
@@ -293,7 +315,11 @@ def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         )
         assert isinstance(issues, list)
         match = next(
-            (item for item in issues if isinstance(item, dict) and item.get("title") == ticket_title),
+            (
+                item
+                for item in issues
+                if isinstance(item, dict) and item.get("title") == ticket_title
+            ),
             None,
         )
         assert isinstance(match, dict), f"Expected ticket not found: {ticket_title}"
@@ -305,7 +331,9 @@ def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         assert body.startswith("Epic: #")
     finally:
         if created_remote and not keep_repo:
-            delete_cp = _run_gh(["repo", "delete", target_repo, "--yes"], cwd=project_root)
+            delete_cp = _run_gh(
+                ["repo", "delete", target_repo, "--yes"], cwd=project_root
+            )
             if delete_cp.returncode != 0:
                 print(
                     "WARNING: cleanup could not delete E2E repo. "

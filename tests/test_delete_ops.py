@@ -8,8 +8,12 @@ import pytest
 from repo_scaffold.delete_ops import delete_repositories
 
 
-def _cp(args: list[str], *, code: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=args, returncode=code, stdout=stdout, stderr=stderr)
+def _cp(
+    args: list[str], *, code: int, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=args, returncode=code, stdout=stdout, stderr=stderr
+    )
 
 
 def test_delete_repositories_dry_run_prefix(
@@ -18,7 +22,9 @@ def test_delete_repositories_dry_run_prefix(
     monkeypatch.setenv("GITHUB_ORG", "acme")
     monkeypatch.delenv("GH_REPO", raising=False)
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
-    monkeypatch.setattr("repo_scaffold.delete_ops.shutil.which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(
+        "repo_scaffold.delete_ops.shutil.which", lambda _name: "/usr/bin/gh"
+    )
 
     calls: list[list[str]] = []
 
@@ -74,7 +80,9 @@ def test_delete_repositories_apply_exact_only(
     monkeypatch.setenv("GH_REPO", "github.com/acme/some-repo")
     monkeypatch.delenv("GITHUB_ORG", raising=False)
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
-    monkeypatch.setattr("repo_scaffold.delete_ops.shutil.which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(
+        "repo_scaffold.delete_ops.shutil.which", lambda _name: "/usr/bin/gh"
+    )
 
     deleted_calls: list[str] = []
 
@@ -131,7 +139,10 @@ def test_delete_repositories_apply_exact_only(
         "acme/repo-scaffold-e2e-20260311001924",
     ]
     assert all("repo-scaffold-e2e-unwanted" not in call for call in deleted_calls)
-    assert any(line.startswith("FAILED  acme/repo-scaffold-e2e-20260311001924") for line in err_lines)
+    assert any(
+        line.startswith("FAILED  acme/repo-scaffold-e2e-20260311001924")
+        for line in err_lines
+    )
 
 
 def test_delete_repositories_delete_local_only(
@@ -146,7 +157,9 @@ def test_delete_repositories_delete_local_only(
         path.mkdir(parents=True)
         (path / "marker.txt").write_text("x", encoding="utf-8")
 
-    def _unexpected_gh(_cwd: Path, _args: list[str]) -> subprocess.CompletedProcess[str]:
+    def _unexpected_gh(
+        _cwd: Path, _args: list[str]
+    ) -> subprocess.CompletedProcess[str]:
         raise AssertionError("gh should not be called in --delete-local mode")
 
     monkeypatch.setattr("repo_scaffold.delete_ops._run_gh", _unexpected_gh)
@@ -188,7 +201,9 @@ def test_delete_repositories_cleanup_remote_and_local_dry_run(
     monkeypatch.setenv("GITHUB_ORG", "acme")
     monkeypatch.delenv("GH_REPO", raising=False)
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
-    monkeypatch.setattr("repo_scaffold.delete_ops.shutil.which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(
+        "repo_scaffold.delete_ops.shutil.which", lambda _name: "/usr/bin/gh"
+    )
 
     local_root = tmp_path / "local-root"
     local_root.mkdir(parents=True)

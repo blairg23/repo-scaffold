@@ -48,7 +48,9 @@ def resolve_authenticated_login(repo_dir: Path) -> str:
 
     login = payload.get("login")
     if not isinstance(login, str) or not login.strip():
-        raise RuntimeError("GitHub auth check failed: could not resolve authenticated user login.")
+        raise RuntimeError(
+            "GitHub auth check failed: could not resolve authenticated user login."
+        )
     return login.strip()
 
 
@@ -93,7 +95,10 @@ def _parse_repo_owner(repo: str) -> str:
 
 
 def _list_projects(repo_dir: Path, owner: str) -> list[dict[str, object]]:
-    cp = _run_gh(repo_dir, ["project", "list", "--owner", owner, "--limit", "100", "--format", "json"])
+    cp = _run_gh(
+        repo_dir,
+        ["project", "list", "--owner", owner, "--limit", "100", "--format", "json"],
+    )
     if cp.returncode != 0:
         detail = cp.stderr.strip() or cp.stdout.strip() or "Failed listing projects."
         raise RuntimeError(_project_scope_hint(detail))
@@ -104,16 +109,26 @@ def _list_projects(repo_dir: Path, owner: str) -> list[dict[str, object]]:
 
 
 def _project_title_for_number(repo_dir: Path, owner: str, number: int) -> str:
-    cp = _run_gh(repo_dir, ["project", "view", str(number), "--owner", owner, "--format", "json"])
+    cp = _run_gh(
+        repo_dir, ["project", "view", str(number), "--owner", owner, "--format", "json"]
+    )
     if cp.returncode != 0:
-        detail = cp.stderr.strip() or cp.stdout.strip() or f"Failed viewing project #{number}."
+        detail = (
+            cp.stderr.strip()
+            or cp.stdout.strip()
+            or f"Failed viewing project #{number}."
+        )
         raise RuntimeError(_project_scope_hint(detail))
     try:
         payload = json.loads(cp.stdout or "{}")
     except json.JSONDecodeError:
         return f"Project #{number}"
     title = payload.get("title")
-    return title.strip() if isinstance(title, str) and title.strip() else f"Project #{number}"
+    return (
+        title.strip()
+        if isinstance(title, str) and title.strip()
+        else f"Project #{number}"
+    )
 
 
 def _resolve_project_target(
@@ -138,7 +153,9 @@ def _resolve_project_target(
     if project_number is not None:
         title = _project_title_for_number(repo_dir, owner, project_number)
         out(f"Using project: {owner}/#{project_number} ({title})")
-        return _ProjectTarget(owner=owner, number=project_number, title=title, created=False)
+        return _ProjectTarget(
+            owner=owner, number=project_number, title=title, created=False
+        )
 
     assert project_title is not None
     wanted_title = project_title.strip()
@@ -146,34 +163,61 @@ def _resolve_project_target(
         raise RuntimeError("--project-title must not be empty.")
 
     for item in _list_projects(repo_dir, owner):
-        title = item.get("title")
-        number = item.get("number")
-        if isinstance(title, str) and isinstance(number, int) and title == wanted_title:
-            out(f"Using project: {owner}/#{number} ({wanted_title})")
-            return _ProjectTarget(owner=owner, number=number, title=wanted_title, created=False)
+        item_title = item.get("title")
+        item_number = item.get("number")
+        if (
+            isinstance(item_title, str)
+            and isinstance(item_number, int)
+            and item_title == wanted_title
+        ):
+            out(f"Using project: {owner}/#{item_number} ({wanted_title})")
+            return _ProjectTarget(
+                owner=owner, number=item_number, title=wanted_title, created=False
+            )
 
     if dry_run:
         out(f"[dry-run] create project: {wanted_title} (owner: {owner})")
-        return _ProjectTarget(owner=owner, number=None, title=wanted_title, created=True)
+        return _ProjectTarget(
+            owner=owner, number=None, title=wanted_title, created=True
+        )
 
     cp = _run_gh(
         repo_dir,
-        ["project", "create", "--owner", owner, "--title", wanted_title, "--format", "json"],
+        [
+            "project",
+            "create",
+            "--owner",
+            owner,
+            "--title",
+            wanted_title,
+            "--format",
+            "json",
+        ],
     )
     if cp.returncode != 0:
-        detail = cp.stderr.strip() or cp.stdout.strip() or f"Failed creating project: {wanted_title}"
+        detail = (
+            cp.stderr.strip()
+            or cp.stdout.strip()
+            or f"Failed creating project: {wanted_title}"
+        )
         raise RuntimeError(_project_scope_hint(detail))
     payload = json.loads(cp.stdout or "{}")
     number = payload.get("number")
     if not isinstance(number, int):
         for item in _list_projects(repo_dir, owner):
-            title = item.get("title")
+            item_title = item.get("title")
             num = item.get("number")
-            if isinstance(title, str) and isinstance(num, int) and title == wanted_title:
+            if (
+                isinstance(item_title, str)
+                and isinstance(num, int)
+                and item_title == wanted_title
+            ):
                 number = num
                 break
     if not isinstance(number, int):
-        raise RuntimeError(f"Created project '{wanted_title}' but could not resolve project number.")
+        raise RuntimeError(
+            f"Created project '{wanted_title}' but could not resolve project number."
+        )
 
     out(f"Created project: {owner}/#{number} ({wanted_title})")
     return _ProjectTarget(owner=owner, number=number, title=wanted_title, created=True)
@@ -194,7 +238,9 @@ def _link_project_to_repo(
         return 0
 
     if dry_run:
-        out(f"[dry-run] link project to repo: {project.owner}/#{project.number} -> {repo}")
+        out(
+            f"[dry-run] link project to repo: {project.owner}/#{project.number} -> {repo}"
+        )
         return 0
 
     cp = _run_gh(
@@ -218,7 +264,11 @@ def _link_project_to_repo(
         out(f"Project already linked to repo: {project.owner}/#{project.number}")
         return 0
 
-    detail = cp.stderr.strip() or cp.stdout.strip() or f"Failed linking project #{project.number} to repo."
+    detail = (
+        cp.stderr.strip()
+        or cp.stdout.strip()
+        or f"Failed linking project #{project.number} to repo."
+    )
     emit_err(_project_scope_hint(detail))
     return 1
 
@@ -241,11 +291,15 @@ def _add_issue_to_project(
         return (0, 0, 1)
 
     if dry_run:
-        out(f"[dry-run] add issue to project: {issue_title} -> {project.owner}/#{project.number}")
+        out(
+            f"[dry-run] add issue to project: {issue_title} -> {project.owner}/#{project.number}"
+        )
         return (1, 0, 0)
 
     if issue_number is None:
-        emit_err(f"Failed to add issue to project (missing issue number): {issue_title}")
+        emit_err(
+            f"Failed to add issue to project (missing issue number): {issue_title}"
+        )
         return (0, 0, 1)
 
     issue_url = f"https://github.com/{repo}/issues/{issue_number}"
@@ -270,7 +324,11 @@ def _add_issue_to_project(
         out(f"Skip project item (exists): {issue_title}")
         return (0, 1, 0)
 
-    detail = cp.stderr.strip() or cp.stdout.strip() or f"Failed adding issue to project: {issue_title}"
+    detail = (
+        cp.stderr.strip()
+        or cp.stdout.strip()
+        or f"Failed adding issue to project: {issue_title}"
+    )
     emit_err(_project_scope_hint(detail))
     return (0, 0, 1)
 
@@ -369,10 +427,16 @@ def _find_issue_number(repo_dir: Path, repo: str, title: str) -> int | None:
         ],
     )
     if cp.returncode != 0:
-        raise RuntimeError(cp.stderr.strip() or f"Failed checking existing issue: {title}")
+        raise RuntimeError(
+            cp.stderr.strip() or f"Failed checking existing issue: {title}"
+        )
     data = json.loads(cp.stdout or "[]")
     for item in data:
-        if isinstance(item, dict) and item.get("title") == title and isinstance(item.get("number"), int):
+        if (
+            isinstance(item, dict)
+            and item.get("title") == title
+            and isinstance(item.get("number"), int)
+        ):
             return int(item["number"])
     return None
 
@@ -458,7 +522,10 @@ def _ensure_missing_labels(
             continue
 
         stderr = (cp.stderr or "").lower()
-        if "already_exists" in stderr or "name already exists on this repository" in stderr:
+        if (
+            "already_exists" in stderr
+            or "name already exists on this repository" in stderr
+        ):
             existing_labels.add(label)
             continue
 
@@ -507,7 +574,9 @@ def _create_issue(
                 return int(tail)
         number = _find_issue_number(repo_dir, repo, title)
         if number is None:
-            raise RuntimeError(f"Created issue but could not resolve its number: {title}")
+            raise RuntimeError(
+                f"Created issue but could not resolve its number: {title}"
+            )
         return number
     finally:
         body_file.unlink(missing_ok=True)
@@ -565,7 +634,10 @@ def apply_backlog(
         )
 
     existing_milestones: set[str] = set()
-    cp = _run_gh(repo_dir, ["api", "--paginate", f"/repos/{repo}/milestones?state=all&per_page=100"])
+    cp = _run_gh(
+        repo_dir,
+        ["api", "--paginate", f"/repos/{repo}/milestones?state=all&per_page=100"],
+    )
     if cp.returncode != 0:
         raise RuntimeError(cp.stderr.strip() or "Failed listing milestones.")
     for item in _parse_concatenated_json_arrays(cp.stdout):
@@ -589,7 +661,12 @@ def apply_backlog(
         epic_assignees = epic.get("assignees", [])
         tickets = epic.get("tickets", [])
 
-        if not epic_key or not epic_title or not epic_body or not isinstance(tickets, list):
+        if (
+            not epic_key
+            or not epic_title
+            or not epic_body
+            or not isinstance(tickets, list)
+        ):
             failures += 1
             emit_err(
                 "Invalid backlog JSON: epic.key, epic.title, epic.body are required and epic.tickets must be a list."
@@ -617,7 +694,15 @@ def apply_backlog(
                 out(f"[dry-run] create milestone: {epic_title}")
             else:
                 cp = _run_gh(
-                    repo_dir, ["api", "--method", "POST", f"/repos/{repo}/milestones", "-f", f"title={epic_title}"]
+                    repo_dir,
+                    [
+                        "api",
+                        "--method",
+                        "POST",
+                        f"/repos/{repo}/milestones",
+                        "-f",
+                        f"title={epic_title}",
+                    ],
                 )
                 if cp.returncode == 0:
                     milestones_created += 1
@@ -709,7 +794,9 @@ def apply_backlog(
             assignees = ticket.get("assignees", [])
             if not title or not body:
                 failures += 1
-                emit_err("Invalid backlog JSON: ticket.title and ticket.body are required.")
+                emit_err(
+                    "Invalid backlog JSON: ticket.title and ticket.body are required."
+                )
                 continue
 
             failures += _ensure_missing_labels(
