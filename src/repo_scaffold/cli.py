@@ -560,7 +560,7 @@ def main(argv: list[str] | None = None) -> int:
             create_repo_dir = Path(temp_create_dir.name)
 
         try:
-            summary: CreateSummary = create_repository(
+            create_summary: CreateSummary = create_repository(
                 repo_dir=create_repo_dir,
                 repo=ns.repo,
                 owner=ns.owner,
@@ -604,16 +604,16 @@ def main(argv: list[str] | None = None) -> int:
         print("Summary:")
         if ns.dry_run:
             print("  mode: dry-run")
-        print(f"  repo: {summary.repo}")
-        print(f"  repo created: {summary.repo_created}")
-        print(f"  pushed: {summary.pushed}")
-        print(f"  settings applied: {summary.settings_applied}")
-        print(f"  failures: {summary.failures}")
-        return 1 if summary.failures > 0 else 0
+        print(f"  repo: {create_summary.repo}")
+        print(f"  repo created: {create_summary.repo_created}")
+        print(f"  pushed: {create_summary.pushed}")
+        print(f"  settings applied: {create_summary.settings_applied}")
+        print(f"  failures: {create_summary.failures}")
+        return 1 if create_summary.failures > 0 else 0
 
     if ns.mode == "delete":
         try:
-            summary: DeleteSummary = delete_repositories(
+            delete_summary: DeleteSummary = delete_repositories(
                 owner=ns.owner,
                 prefix=ns.prefix,
                 exact_names=tuple(ns.exact or ()),
@@ -636,18 +636,18 @@ def main(argv: list[str] | None = None) -> int:
         print("Summary:")
         if not bool(getattr(ns, "do_apply", False)):
             print("  mode: dry-run")
-        if summary.owner is not None:
-            print(f"  owner: {summary.owner}")
-        print(f"  remote matched: {summary.remote_matched}")
-        print(f"  remote deleted: {summary.remote_deleted}")
-        print(f"  remote skipped: {summary.remote_skipped}")
-        print(f"  remote failures: {summary.remote_failures}")
-        print(f"  local matched: {summary.local_matched}")
-        print(f"  local deleted: {summary.local_deleted}")
-        print(f"  local skipped: {summary.local_skipped}")
-        print(f"  local failures: {summary.local_failures}")
-        print(f"  failures: {summary.failures}")
-        return 1 if summary.failures > 0 else 0
+        if delete_summary.owner is not None:
+            print(f"  owner: {delete_summary.owner}")
+        print(f"  remote matched: {delete_summary.remote_matched}")
+        print(f"  remote deleted: {delete_summary.remote_deleted}")
+        print(f"  remote skipped: {delete_summary.remote_skipped}")
+        print(f"  remote failures: {delete_summary.remote_failures}")
+        print(f"  local matched: {delete_summary.local_matched}")
+        print(f"  local deleted: {delete_summary.local_deleted}")
+        print(f"  local skipped: {delete_summary.local_skipped}")
+        print(f"  local failures: {delete_summary.local_failures}")
+        print(f"  failures: {delete_summary.failures}")
+        return 1 if delete_summary.failures > 0 else 0
 
     if ns.mode == "init":
         init_name = (ns.name or "").strip() or _default_init_name()
@@ -787,7 +787,7 @@ def main(argv: list[str] | None = None) -> int:
         if not backlog_file.is_absolute():
             backlog_file = repo_dir / backlog_file
         try:
-            summary: BacklogApplySummary = apply_backlog(
+            backlog_summary: BacklogApplySummary = apply_backlog(
                 repo_dir=repo_dir,
                 repo=target_repo,
                 backlog_file=backlog_file,
@@ -806,16 +806,16 @@ def main(argv: list[str] | None = None) -> int:
         print("Summary:")
         if ns.dry_run:
             print("  mode: dry-run")
-        print(f"  milestones created: {summary.milestones_created}")
-        print(f"  milestones skipped: {summary.milestones_skipped}")
-        print(f"  issues created: {summary.issues_created}")
-        print(f"  issues skipped: {summary.issues_skipped}")
+        print(f"  milestones created: {backlog_summary.milestones_created}")
+        print(f"  milestones skipped: {backlog_summary.milestones_skipped}")
+        print(f"  issues created: {backlog_summary.issues_created}")
+        print(f"  issues skipped: {backlog_summary.issues_skipped}")
         if effective_project_number is not None or effective_project_title:
-            print(f"  project created: {summary.project_created}")
-            print(f"  project items added: {summary.project_items_added}")
-            print(f"  project items skipped: {summary.project_items_skipped}")
-        print(f"  failures: {summary.failures}")
-        return 1 if summary.failures > 0 else 0
+            print(f"  project created: {backlog_summary.project_created}")
+            print(f"  project items added: {backlog_summary.project_items_added}")
+            print(f"  project items skipped: {backlog_summary.project_items_skipped}")
+        print(f"  failures: {backlog_summary.failures}")
+        return 1 if backlog_summary.failures > 0 else 0
 
     if ns.mode == "apply" and ns.apply_command == "rules":
         target_repo, repo_error = _resolve_repo_from_args_or_env(

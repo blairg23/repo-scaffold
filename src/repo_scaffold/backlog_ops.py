@@ -163,12 +163,16 @@ def _resolve_project_target(
         raise RuntimeError("--project-title must not be empty.")
 
     for item in _list_projects(repo_dir, owner):
-        title = item.get("title")
-        number = item.get("number")
-        if isinstance(title, str) and isinstance(number, int) and title == wanted_title:
-            out(f"Using project: {owner}/#{number} ({wanted_title})")
+        item_title = item.get("title")
+        item_number = item.get("number")
+        if (
+            isinstance(item_title, str)
+            and isinstance(item_number, int)
+            and item_title == wanted_title
+        ):
+            out(f"Using project: {owner}/#{item_number} ({wanted_title})")
             return _ProjectTarget(
-                owner=owner, number=number, title=wanted_title, created=False
+                owner=owner, number=item_number, title=wanted_title, created=False
             )
 
     if dry_run:
@@ -201,12 +205,12 @@ def _resolve_project_target(
     number = payload.get("number")
     if not isinstance(number, int):
         for item in _list_projects(repo_dir, owner):
-            title = item.get("title")
+            item_title = item.get("title")
             num = item.get("number")
             if (
-                isinstance(title, str)
+                isinstance(item_title, str)
                 and isinstance(num, int)
-                and title == wanted_title
+                and item_title == wanted_title
             ):
                 number = num
                 break
