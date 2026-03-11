@@ -181,10 +181,7 @@ def _render_ci_yaml(languages: Iterable[str]) -> str:
     joined = ",".join(languages)
     return f"""name: CI
 
-on:
-  pull_request:
-  push:
-    branches: [main]
+on: [push, pull_request]
 
 permissions:
   contents: read
