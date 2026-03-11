@@ -581,6 +581,7 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
                 "### Python",
                 "",
                 "```bash",
+                "tox -e format",
                 "ruff check .",
                 "black --check .",
                 "mypy src",
@@ -2195,8 +2196,14 @@ setenv =
 [testenv:lint]
 deps = -e .[dev]
 commands =
+    black --check src tests
+    ruff check src tests
+
+[testenv:format]
+deps = -e .[dev]
+commands =
     black src tests
-    ruff check src tests --fix --exit-non-zero-on-fix
+    ruff check src tests --fix
 
 [testenv:type]
 deps = -e .[dev]

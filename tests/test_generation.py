@@ -102,6 +102,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "mypy src" in generated_readme
     assert "go test ./..." in generated_readme
     assert "npm run build" in generated_readme
+    assert "tox -e format" in generated_readme
     assert "tox -e lint,type,test" in generated_readme
     assert "make typecheck" in generated_readme
     assert "## Backlog bootstrap" not in generated_readme
@@ -122,8 +123,11 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "[tool.tox]" not in pyproject
     tox_ini = (out_dir / "tox.ini").read_text(encoding="utf-8")
     assert "envlist = lint,type,test" in tox_ini
+    assert "black --check src tests" in tox_ini
+    assert "ruff check src tests" in tox_ini
+    assert "[testenv:format]" in tox_ini
     assert "black src tests" in tox_ini
-    assert "ruff check src tests --fix --exit-non-zero-on-fix" in tox_ini
+    assert "ruff check src tests --fix" in tox_ini
     assert "pytest -q {posargs:tests}" in tox_ini
     web_package = (out_dir / "web/package.json").read_text(encoding="utf-8")
     assert '"lint": "eslint ."' in web_package

@@ -345,6 +345,12 @@ Tox workflow (lint, type, test):
 tox -e lint,type,test
 ```
 
+Auto-fix Python formatting/lint issues:
+
+```bash
+tox -e format
+```
+
 If `tox` is not installed locally:
 
 ```bash
