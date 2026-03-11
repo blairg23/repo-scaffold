@@ -1,0 +1,35 @@
+{
+  "epics": [
+    {
+      "key": "A",
+      "title": "Epic A - Platform foundation",
+      "body": "## Summary\nEstablish baseline repository workflows, quality gates, and release hygiene.\n\n## Goals\n- Standardize contributor workflow\n- Ensure CI checks run reliably\n- Provide clear release and rollback paths\n\n## Definition of Done\n- Core CI and linting checks are stable\n- Branch/rules defaults are documented\n- Team can ship a tagged release end-to-end\n",
+      "labels": [
+        "epic"
+      ],
+      "assignees": [],
+      "tickets": [
+        {
+          "title": "A1: Add CI pipeline",
+          "body": "## Summary\nImplement baseline CI for formatting, linting, and tests.\n\n## Scope\n- Add CI workflow file\n- Run tests for enabled languages\n- Document local parity commands in README\n\n## Acceptance Criteria\n- CI runs on push and pull request\n- Failing checks block merge by policy\n- README includes local test/lint commands\n",
+          "labels": [
+            "ticket",
+            "epic:A"
+          ],
+          "assignees": [],
+          "priority": "P1"
+        },
+        {
+          "title": "A2: Document release checklist",
+          "body": "## Summary\nCreate a lightweight release checklist for maintainers.\n\n## Scope\n- Define versioning and tagging steps\n- Add smoke-test steps before release\n- Add rollback and hotfix guidance\n\n## Acceptance Criteria\n- Checklist exists in repo docs\n- Tag-and-release flow is reproducible by a new maintainer\n",
+          "labels": [
+            "ticket",
+            "epic:A"
+          ],
+          "assignees": [],
+          "priority": "P2"
+        }
+      ]
+    }
+  ]
+}

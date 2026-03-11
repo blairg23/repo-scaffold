@@ -1,12 +1,20 @@
 # repo-scaffold
 
-`repo-scaffold` is a repo operations toolkit with three modes:
+`repo-scaffold` is a repo operations toolkit with four modes:
 
 - `create`: create/push a GitHub repo from a local folder and apply baseline settings
-- `init`: generate a new GitHub-ready repository scaffold
+- `init`: generate a new language-first repository scaffold
 - `apply`: apply capabilities safely to an existing repository
+- `delete`: safely clean up GitHub test repositories by prefix or exact name
 
 Supported languages: `go`, `python`, `react`.
+
+Workflow model:
+
+- run `init` to generate local repo content
+- run `create` to create/push the remote repository + baseline settings
+- run `apply ...` from this toolkit repo to manage templates/CI/dependabot/backlog/rules for any target repo
+- run `delete` from this toolkit repo to clean up test repositories
 
 ## Install
 
@@ -24,11 +32,23 @@ Generate a new repository skeleton.
 poetry run repo-scaffold init --name payments-api --languages go,python --owner acme
 ```
 
+Defaults:
+
+- `--name` defaults to `GITHUB_REPO` (if set), otherwise `repo-scaffold-e2e-<UTC timestamp>`
+- `--languages` defaults to `go,python,react`
+- output defaults to `./out/<name>`
+
+Fast path (no required flags):
+
+```bash
+poetry run repo-scaffold init
+```
+
 Legacy compatibility: running without an explicit mode maps to `init`.
 
 ### `create`
 
-Create/push a remote repository from an existing local folder.
+Create/push a remote repository from a local folder.
 
 ```bash
 poetry run repo-scaffold create --path /tmp/payments-api --repo acme/payments-api
@@ -36,11 +56,19 @@ poetry run repo-scaffold create --path /tmp/payments-api --repo acme/payments-ap
 
 Defaults:
 
+- if `--path` is omitted, defaults to `./out/<repo-name>` and auto-runs `init` when the folder is missing or empty
+- `<repo-name>` defaults in this order: `--repo` name part, then `GITHUB_REPO` (or `GH_REPO`/`GITHUB_REPOSITORY`), then `repo-scaffold-e2e-<UTC timestamp>`
+- `--repo` is the primary target selector (`owner/repo`)
+- `--name` is a fallback name only when `--repo` is omitted
 - if `--repo` is omitted, resolve from env (`GH_REPO` or `GITHUB_ORG` + `GITHUB_REPO`)
 - visibility defaults to `public` (override with `--visibility private|internal`)
 - applies merge/branch protection settings unless `--skip-settings`
+- pushes `HEAD` to remote `main` (`HEAD:main`) and does not rename/switch your local branch
 - also attempts to enable Dependabot alerts and automated security updates (best-effort; warnings only if plan/policy blocks them)
 - supports `--dry-run`
+
+Tip: avoid shell-expanding possibly-unset vars in `--repo` (for example `--repo "$GITHUB_ORG/$TEST_REPO"`).  
+If you keep repo metadata in `.env`, omit `--repo` and let `repo-scaffold` resolve it.
 
 ### `apply`
 
@@ -55,8 +83,28 @@ Subcommands:
 - `templates`: apply `.github` PR/issue templates, issue config, and `CODEOWNERS`
 - `ci --languages <list>`: apply `.github/workflows/ci.yml`
 - `dependabot [--low-noise]`: apply `.github/dependabot.yml`
-- `backlog --repo owner/repo [--file backlog/issues.json] [--dry-run] [--auth-check] [--project-number N | --project-title T] [--project-owner O]`: bulk-create milestones/issues using `gh`
-- `rules --repo owner/repo [--apply]`: print or apply recommended `gh api` repo rules
+- `backlog --repo owner/repo [--file backlog/issues.json] [--dry-run] [--auth-check] [--with-project] [--project-number N | --project-title T] [--project-owner O]`: bulk-create milestones/issues using `gh`
+- `rules [--repo owner/repo] [--apply]`: print or apply recommended `gh api` repo rules
+
+### `delete`
+
+Delete matching GitHub repositories (safe default: preview only).
+
+```bash
+poetry run repo-scaffold delete --owner OWNER --dry-run
+```
+
+Behavior:
+
+- default is dry-run preview (no deletions)
+- `--apply` performs deletion
+- `--yes` skips confirmation prompt when `--apply` is used
+- if `--owner` is omitted, resolve from env/`.env` (`GITHUB_ORG` or `GH_REPO`)
+- if `--exact` is provided, delete only those exact names
+- if `--exact` is not provided, delete repositories matching `--prefix` (`NAME` and `NAME-*`)
+- `--cleanup` also deletes matching local directories
+- `--local-only` deletes matching local directories only (no remote deletion)
+- `--local-root` controls local search roots (repeatable; defaults to `/tmp` and `./out`)
 
 ## Overwrite policy
 
@@ -87,10 +135,14 @@ Per-file output labels:
 
 - idempotent by exact issue title and milestone title
 - supports `.env` loading (`GH_TOKEN`, `GITHUB_ORG`, `GITHUB_REPO`, `GH_REPO`; legacy lowercase aliases still work)
+- if `--repo` is omitted, resolves from `GH_REPO` or `GITHUB_ORG` + `GITHUB_REPO` from env/`.env`
 - includes `.env.example` so you can run `cp .env.example .env` and fill credentials safely
 - falls back to `gh auth status` / `gh auth login`
 - supports `--auth-check` to validate token/session (`gh api /user`) before writing anything
-- ticket bodies include a `Parent epic: #<number>` link when the epic issue exists/was created
+- ticket bodies prepend an `Epic: #<number>` link to the created/found epic issue
+- `--with-project` enables project integration with zero extra args
+  if no project is specified, default project title is `<repo-name> Roadmap`
+  optional env override: `GITHUB_PROJECT_TITLE` or `GITHUB_PROJECT_TITLE_TEMPLATE` (supports `{repo}`)
 - optionally adds issues to GitHub Projects (`--project-number` or `--project-title`)
 - with `--project-title`, creates the project if it does not exist
 - attempts to link the project to the repository
@@ -134,14 +186,69 @@ Use or create a project by title:
 poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --project-title "Roadmap" --project-owner OWNER
 ```
 
-Equivalent generated-repo script:
+Use default project title from repo name (or env override) with one flag:
 
 ```bash
-./scripts/create-issues.sh --repo OWNER/REPO --auth-check
-./scripts/create-issues.sh --repo OWNER/REPO --dry-run
-./scripts/create-issues.sh --repo OWNER/REPO
-./scripts/create-issues.sh --repo OWNER/REPO --project-title "Roadmap" --project-owner OWNER
+poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --with-project
 ```
+
+## Backlog JSON format
+
+Backlog input is JSON only. Default path: `backlog/issues.json`.
+Completed sample file: `examples/backlog/issues.sample.json`.
+Workspace-local private path in this repo: `local/backlog/issues.json` (git-ignored).
+
+If you apply backlog to a different `--path` repo, pass an absolute `--file` path:
+
+```bash
+poetry run repo-scaffold apply backlog \
+  --path /path/to/target/repo \
+  --repo OWNER/REPO \
+  --file "$(pwd)/local/backlog/issues.json"
+```
+
+```json
+{
+  "epics": [
+    {
+      "key": "A",
+      "title": "Epic A - Example",
+      "body": "## Summary\\nEpic issue body markdown (required).",
+      "labels": ["platform"],
+      "assignees": [],
+      "tickets": [
+        {
+          "title": "A1: Example ticket",
+          "body": "## Summary\\nTicket body markdown (required).",
+          "labels": ["ticket", "epic:A"],
+          "assignees": [],
+          "priority": "P1"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Validation/behavior:
+
+- Top-level `epics` is required and must be a list.
+- Epic fields:
+  - `key` required
+  - `title` required
+  - `body` required (full markdown body used to create the epic issue)
+  - `labels` optional (additional labels; epic labels always include `epic` and `epic:<key>`)
+  - `assignees` optional (default `[]`)
+  - `tickets` required list
+- Ticket fields:
+  - `title` required
+  - `body` required
+  - `labels` optional (default `[]`)
+  - `assignees` optional (default `[]`)
+  - `priority` optional metadata (currently not used by GitHub API calls)
+- Issue bodies are posted as-is (markdown).
+- Ticket bodies are posted with a prepended epic link line: `Epic: #<epic_issue_number>`.
+- Idempotency key is exact issue title and exact milestone title.
 
 ## GitHub token permissions
 
@@ -173,7 +280,7 @@ Edit these source templates to customize generated `.github` markdown:
 - `src/repo_scaffold/templates/github/ISSUE_TEMPLATE/epic.md`
 - `src/repo_scaffold/templates/github/ISSUE_TEMPLATE/ticket.md`
 
-`backlog/issues.json` starts empty by default; add your own epic/ticket entries (you can base bodies on these templates).
+`init` does not create a backlog file by default. Keep backlog JSON in this toolkit repo (for example `local/backlog/issues.json`) and pass it with `apply backlog --file`.
 
 ## PR Creation Workflow
 
@@ -206,15 +313,9 @@ gh pr create --base main --head <branch> --body-file .github/pull_request_templa
       ci.yml
       codeql.yml
     dependabot.yml
-  backlog/
-    issues.json
   docs/
     requirements.md
     api-v1.md
-  scripts/
-    create-issues.sh
-    gh-apply-settings.sh
-    gh-create-project.sh
   .env.example
 ```
 
@@ -238,3 +339,40 @@ Optional env toggles:
 - `GITHUB_E2E_SKIP_SETTINGS_ASSERTS=1` to skip repository settings assertions
 
 Note: automatic cleanup (`gh repo delete`) needs `delete_repo` scope; without it, the test warns and leaves the repo.
+
+## E2E Repo Cleanup
+
+Use the CLI `delete` mode to clean up test repos matching the protected prefix (`repo-scaffold-e2e`).
+
+Preview only:
+
+```bash
+poetry run repo-scaffold delete --owner OWNER --dry-run
+```
+
+Delete all matches (`repo-scaffold-e2e` and `repo-scaffold-e2e-*`):
+
+```bash
+poetry run repo-scaffold delete --owner OWNER --apply --yes
+```
+
+Delete remote + local in one command:
+
+```bash
+poetry run repo-scaffold delete --owner OWNER --cleanup --apply --yes
+```
+
+Delete local only (leave remote repos untouched):
+
+```bash
+poetry run repo-scaffold delete --local-only --local-root /tmp --apply --yes
+```
+
+Delete specific exact names:
+
+```bash
+poetry run repo-scaffold delete --owner OWNER \
+  --exact repo-scaffold-e2e \
+  --exact repo-scaffold-e2e-20260311001924 \
+  --apply --yes
+```

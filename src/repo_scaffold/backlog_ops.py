@@ -303,7 +303,8 @@ def _ensure_gh_auth(repo_dir: Path) -> None:
     if shutil.which("gh") is None:
         raise RuntimeError("GitHub CLI (gh) is required.")
 
-    _load_token_from_env_file(repo_dir / ".env")
+    for env_file in (Path.cwd() / ".env", repo_dir / ".env"):
+        _load_token_from_env_file(env_file)
     if not os.environ.get("GH_TOKEN") and os.environ.get("GITHUB_TOKEN"):
         os.environ["GH_TOKEN"] = os.environ["GITHUB_TOKEN"]
 
@@ -399,6 +400,19 @@ def _normalize_labels(raw: object) -> list[str]:
             if label:
                 normalized.append(label)
     return normalized
+
+
+def _merge_labels(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for label in group:
+            normalized = label.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            merged.append(normalized)
+    return merged
 
 
 def _label_color(label: str) -> str:
@@ -568,16 +582,21 @@ def apply_backlog(
             emit_err("Invalid backlog JSON: epic must be an object.")
             continue
 
+        epic_key = str(epic.get("key", "")).strip()
         epic_title = str(epic.get("title", "")).strip()
         epic_body = str(epic.get("body", "")).strip()
-        epic_labels = _normalize_labels(epic.get("labels", ["epic"]))
+        epic_labels_raw = _normalize_labels(epic.get("labels", []))
         epic_assignees = epic.get("assignees", [])
         tickets = epic.get("tickets", [])
 
-        if not epic_title or not isinstance(tickets, list):
+        if not epic_key or not epic_title or not epic_body or not isinstance(tickets, list):
             failures += 1
-            emit_err("Invalid backlog JSON: epic.title is required and epic.tickets must be a list.")
+            emit_err(
+                "Invalid backlog JSON: epic.key, epic.title, epic.body are required and epic.tickets must be a list."
+            )
             continue
+
+        epic_labels = _merge_labels(["epic", f"epic:{epic_key}"], epic_labels_raw)
 
         failures += _ensure_missing_labels(
             repo_dir,
@@ -608,19 +627,37 @@ def apply_backlog(
                     failures += 1
                     emit_err(f"Failed to create milestone: {epic_title}")
 
-        if epic_body:
-            number = _find_issue_number(repo_dir, repo, epic_title)
-            if number is not None:
-                issues_skipped += 1
-                epic_numbers[epic_title] = number
-                out(f"Skip issue (exists): {epic_title}")
+        number = _find_issue_number(repo_dir, repo, epic_title)
+        if number is not None:
+            issues_skipped += 1
+            epic_numbers[epic_title] = number
+            out(f"Skip issue (exists): {epic_title}")
+            if project is not None:
+                added, skipped, failed = _add_issue_to_project(
+                    repo_dir=repo_dir,
+                    repo=repo,
+                    project=project,
+                    issue_title=epic_title,
+                    issue_number=number,
+                    dry_run=dry_run,
+                    out=out,
+                    emit_err=emit_err,
+                )
+                project_items_added += added
+                project_items_skipped += skipped
+                failures += failed
+        else:
+            if dry_run:
+                issues_created += 1
+                epic_numbers[epic_title] = None
+                out(f"[dry-run] create issue: {epic_title}")
                 if project is not None:
                     added, skipped, failed = _add_issue_to_project(
                         repo_dir=repo_dir,
                         repo=repo,
                         project=project,
                         issue_title=epic_title,
-                        issue_number=number,
+                        issue_number=None,
                         dry_run=dry_run,
                         out=out,
                         emit_err=emit_err,
@@ -629,17 +666,26 @@ def apply_backlog(
                     project_items_skipped += skipped
                     failures += failed
             else:
-                if dry_run:
+                try:
+                    number = _create_issue(
+                        repo_dir,
+                        repo,
+                        epic_title,
+                        epic_body,
+                        epic_labels,
+                        epic_assignees if isinstance(epic_assignees, list) else [],
+                        None,
+                    )
+                    epic_numbers[epic_title] = number
                     issues_created += 1
-                    epic_numbers[epic_title] = None
-                    out(f"[dry-run] create issue: {epic_title}")
+                    out(f"Created issue: {epic_title}")
                     if project is not None:
                         added, skipped, failed = _add_issue_to_project(
                             repo_dir=repo_dir,
                             repo=repo,
                             project=project,
                             issue_title=epic_title,
-                            issue_number=None,
+                            issue_number=number,
                             dry_run=dry_run,
                             out=out,
                             emit_err=emit_err,
@@ -647,37 +693,9 @@ def apply_backlog(
                         project_items_added += added
                         project_items_skipped += skipped
                         failures += failed
-                else:
-                    try:
-                        number = _create_issue(
-                            repo_dir,
-                            repo,
-                            epic_title,
-                            epic_body,
-                            epic_labels,
-                            epic_assignees if isinstance(epic_assignees, list) else [],
-                            None,
-                        )
-                        epic_numbers[epic_title] = number
-                        issues_created += 1
-                        out(f"Created issue: {epic_title}")
-                        if project is not None:
-                            added, skipped, failed = _add_issue_to_project(
-                                repo_dir=repo_dir,
-                                repo=repo,
-                                project=project,
-                                issue_title=epic_title,
-                                issue_number=number,
-                                dry_run=dry_run,
-                                out=out,
-                                emit_err=emit_err,
-                            )
-                            project_items_added += added
-                            project_items_skipped += skipped
-                            failures += failed
-                    except RuntimeError as exc:
-                        failures += 1
-                        emit_err(str(exc))
+                except RuntimeError as exc:
+                    failures += 1
+                    emit_err(str(exc))
 
         for ticket in tickets:
             if not isinstance(ticket, dict):
@@ -725,11 +743,17 @@ def apply_backlog(
                 continue
 
             parent_number = epic_numbers.get(epic_title)
-            if parent_number is None and epic_body:
+            if parent_number is None:
                 parent_number = _find_issue_number(repo_dir, repo, epic_title)
             ticket_body = body
             if parent_number is not None:
-                ticket_body = f"{ticket_body}\n\nParent epic: #{parent_number}\n"
+                ticket_body = f"Epic: #{parent_number}\n\n{ticket_body}"
+            elif dry_run:
+                ticket_body = f"Epic: #<epic_issue_number>\n\n{ticket_body}"
+            else:
+                failures += 1
+                emit_err(f"Failed to resolve epic issue number for ticket: {title}")
+                continue
 
             if dry_run:
                 issues_created += 1

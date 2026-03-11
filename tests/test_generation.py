@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 import pytest
@@ -44,12 +43,8 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
         ".github/workflows/ci.yml",
         ".github/workflows/codeql.yml",
         ".github/dependabot.yml",
-        "backlog/issues.json",
         "docs/requirements.md",
         "docs/api-v1.md",
-        "scripts/create-issues.sh",
-        "scripts/gh-apply-settings.sh",
-        "scripts/gh-create-project.sh",
         "README.md",
         ".env.example",
         "LICENSE",
@@ -62,6 +57,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
         "pyproject.toml",
         "src/demo/__init__.py",
         "web/package.json",
+        "web/eslint.config.js",
         "web/index.html",
         "web/src/main.jsx",
         "web/src/App.jsx",
@@ -82,68 +78,42 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "package-ecosystem: \"npm\"" in (out_dir / ".github/dependabot.yml").read_text(
         encoding="utf-8"
     )
+    ci_yaml = (out_dir / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "- name: Black" in ci_yaml
+    assert "- name: Mypy" in ci_yaml
+    assert "- name: Lint" in ci_yaml
     assert "language:" in (out_dir / ".github/workflows/codeql.yml").read_text(encoding="utf-8")
-    apply_settings_script = (out_dir / "scripts/gh-apply-settings.sh").read_text(encoding="utf-8")
-    assert '"is_template": true' in apply_settings_script
-    assert ".env" in apply_settings_script
-    assert "github_token" in apply_settings_script
-    assert "/vulnerability-alerts" in apply_settings_script
-    assert "/automated-security-fixes" in apply_settings_script
-
-    create_project_script = (out_dir / "scripts/gh-create-project.sh").read_text(encoding="utf-8")
-    assert ".env" in create_project_script
-    assert "github_token" in create_project_script
-    assert 'VISIBILITY="${3:-public}"' in create_project_script
-    assert "git rev-parse --is-inside-work-tree" in create_project_script
-    assert "git init" in create_project_script
-    assert "--push" in create_project_script
     generated_readme = (out_dir / "README.md").read_text(encoding="utf-8")
-    assert "## Backlog bootstrap" in generated_readme
-    assert "./scripts/create-issues.sh" in generated_readme
-    assert "--auth-check" in generated_readme
-    assert "Optional project integration" in generated_readme
-    assert "--project-title" in generated_readme
-    assert "## PR workflow" in generated_readme
-    assert "gh pr create" in generated_readme
-    assert ".env.example" in generated_readme
-    assert "--dry-run" in generated_readme
-    assert "Dependabot alerts + automated security updates" in generated_readme
+    assert "Created by [repo-scaffold]" in generated_readme
+    assert "## Setup" in generated_readme
+    assert "## Day-to-day commands" in generated_readme
+    assert "pip install -e .[dev]" in generated_readme
+    assert "black --check ." in generated_readme
+    assert "mypy src" in generated_readme
+    assert "go test ./..." in generated_readme
+    assert "npm run build" in generated_readme
+    assert "make typecheck" in generated_readme
+    assert "## Backlog bootstrap" not in generated_readme
+    assert "## GitHub token permissions" not in generated_readme
+    assert "./scripts/create-issues.sh" not in generated_readme
     env_example = (out_dir / ".env.example").read_text(encoding="utf-8")
     assert "GH_TOKEN=" in env_example
     assert "GITHUB_ORG=" in env_example
     assert "GH_REPO=" in env_example
-
-    create_issues_script = (out_dir / "scripts/create-issues.sh").read_text(encoding="utf-8")
-    assert "--repo owner/repo" in create_issues_script
-    assert "--dry-run" in create_issues_script
-    assert "--auth-check" in create_issues_script
-    assert "--project-number" in create_issues_script
-    assert "--project-title" in create_issues_script
-    assert "--project-owner" in create_issues_script
-    assert "gh project item-add" in create_issues_script
-    assert "gh project create" in create_issues_script
-    assert "gh auth status" in create_issues_script
-    assert "gh api /user" in create_issues_script
-    assert "python3" in create_issues_script
-    assert "--search" in create_issues_script
-    assert "--body-file" in create_issues_script
-    assert ".env" in create_issues_script
-    assert "github_token" in create_issues_script
-    assert "issue_number_exact" in create_issues_script
-    assert "ensure_labels_exist" in create_issues_script
-    assert "/labels?per_page=100" in create_issues_script
-    assert "Parent epic: #" in create_issues_script
-
-    backlog = json.loads((out_dir / "backlog/issues.json").read_text(encoding="utf-8"))
-    assert backlog == {"epics": []}
+    assert "GITHUB_PROJECT_TITLE=" in env_example
+    assert "GITHUB_PROJECT_TITLE_TEMPLATE=" in env_example
+    pyproject = (out_dir / "pyproject.toml").read_text(encoding="utf-8")
+    assert "black>=" in pyproject
+    assert "mypy>=" in pyproject
+    assert "tox>=" in pyproject
+    assert "[tool.mypy]" in pyproject
+    assert "[tool.tox]" in pyproject
+    web_package = (out_dir / "web/package.json").read_text(encoding="utf-8")
+    assert '"lint": "eslint ."' in web_package
+    assert '"eslint": "^9.21.0"' in web_package
     assert "!.env.example" in (out_dir / ".gitignore").read_text(encoding="utf-8")
-
-    apply_mode = (out_dir / "scripts/gh-apply-settings.sh").stat().st_mode & 0o111
-    create_mode = (out_dir / "scripts/gh-create-project.sh").stat().st_mode & 0o111
-    backlog_mode = (out_dir / "scripts/create-issues.sh").stat().st_mode & 0o111
-    assert apply_mode != 0
-    assert create_mode != 0
-    assert backlog_mode != 0
+    assert not (out_dir / "backlog").exists()
+    assert not (out_dir / "scripts").exists()
 
 
 def test_generation_is_deterministic(tmp_path: Path) -> None:

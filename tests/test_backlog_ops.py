@@ -66,6 +66,7 @@ def test_apply_backlog_creates_missing_labels(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(backlog_ops, "_run_gh", _fake_run_gh)
 
     created_issue_numbers = [1, 2]
+    created_issues: list[dict[str, object]] = []
 
     def _fake_create_issue(
         repo_dir: Path,
@@ -76,6 +77,15 @@ def test_apply_backlog_creates_missing_labels(tmp_path: Path, monkeypatch: pytes
         assignees: list[str],
         milestone: str | None,
     ) -> int:
+        created_issues.append(
+            {
+                "title": title,
+                "body": body,
+                "labels": labels,
+                "assignees": assignees,
+                "milestone": milestone,
+            }
+        )
         return created_issue_numbers.pop(0)
 
     monkeypatch.setattr(backlog_ops, "_create_issue", _fake_create_issue)
@@ -93,6 +103,13 @@ def test_apply_backlog_creates_missing_labels(tmp_path: Path, monkeypatch: pytes
     assert summary.milestones_created == 1
     assert summary.issues_created == 2
     assert set(created_labels) == {"epic", "ticket", "epic:E2E"}
+    assert len(created_issues) == 2
+    assert created_issues[0]["title"] == "Epic e2e"
+    assert created_issues[0]["labels"] == ["epic", "epic:E2E"]
+    assert created_issues[0]["milestone"] is None
+    assert created_issues[1]["title"] == "Ticket e2e"
+    assert str(created_issues[1]["body"]).startswith("Epic: #1\n\n")
+    assert created_issues[1]["milestone"] == "Epic e2e"
 
 
 def test_ensure_missing_labels_dry_run_updates_cache(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -176,6 +193,8 @@ def test_apply_backlog_project_title_creates_and_adds_items(
             return _cp_ok("[]")
         if args[:3] == ["api", "--method", "POST"] and args[3].endswith("/milestones"):
             return _cp_ok("{}")
+        if args[:3] == ["api", "--method", "POST"] and args[3].endswith("/labels"):
+            return _cp_ok("{}")
         if args[:5] == ["project", "list", "--owner", "acme", "--limit"]:
             return _cp_ok("[]")
         if args[:4] == ["project", "create", "--owner", "acme"]:
@@ -205,3 +224,51 @@ def test_apply_backlog_project_title_creates_and_adds_items(
     assert summary.project_items_skipped == 0
     assert summary.milestones_created == 1
     assert summary.issues_skipped == 2
+
+
+def test_apply_backlog_requires_epic_body_and_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    backlog_file = repo_dir / "backlog.json"
+    backlog_file.write_text(
+        json.dumps(
+            {
+                "epics": [
+                    {
+                        "key": "",
+                        "title": "Epic Missing Fields",
+                        "body": "",
+                        "tickets": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda _: None)
+
+    def _fake_run_gh(_repo_dir: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args == ["api", "/user"]:
+            return _cp_ok('{"login":"octocat"}')
+        if args[:2] == ["api", "--paginate"] and "milestones" in args[2]:
+            return _cp_ok("[]")
+        if args[:2] == ["api", "--paginate"] and "labels" in args[2]:
+            return _cp_ok("[]")
+        raise AssertionError(f"Unexpected gh invocation: {args}")
+
+    monkeypatch.setattr(backlog_ops, "_run_gh", _fake_run_gh)
+
+    errors: list[str] = []
+    summary = backlog_ops.apply_backlog(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        backlog_file=backlog_file,
+        dry_run=False,
+        out=lambda _: None,
+        err=errors.append,
+    )
+
+    assert summary.failures == 1
+    assert errors
+    assert "epic.key, epic.title, epic.body are required" in errors[0]

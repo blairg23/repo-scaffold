@@ -149,26 +149,49 @@ def _resolve_repo(
     name: str | None,
 ) -> str:
     if repo:
-        if "/" not in repo:
+        candidate = repo.strip()
+        if "/" not in candidate:
             raise RuntimeError("--repo must be in owner/repo format.")
-        return repo
+        repo_owner, repo_name = candidate.split("/", 1)
+        if not repo_owner.strip() or not repo_name.strip():
+            raise RuntimeError(
+                "--repo must be in owner/repo format with non-empty owner and repo. "
+                "If you used shell vars, ensure they are set; or omit --repo to resolve from .env."
+            )
+        return candidate
 
     full_repo = env.get("GH_REPO") or env.get("GITHUB_REPOSITORY")
     owner_value = owner or env.get("GITHUB_ORG")
-    name_value = name or env.get("GITHUB_REPO") or repo_dir.name
+    name_value = name or env.get("GITHUB_REPO")
 
-    if full_repo and "/" in full_repo:
-        full_owner, full_name = full_repo.split("/", 1)
-        if not owner_value:
-            owner_value = full_owner
+    if full_repo:
+        parts = [part.strip() for part in full_repo.split("/") if part.strip()]
+        if len(parts) >= 2:
+            full_owner = parts[-2]
+            full_name = parts[-1]
+            if not owner_value:
+                owner_value = full_owner
+            if not name_value:
+                name_value = full_name
+
+    if not owner_value or not name_value:
         if not name_value:
-            name_value = full_name
-
+            name_value = repo_dir.name
     if not owner_value or not name_value:
         raise RuntimeError(
             "Could not resolve target repository. Pass --repo owner/repo or set GH_REPO (or GITHUB_ORG + GITHUB_REPO)."
         )
     return f"{owner_value}/{name_value}"
+
+
+def _is_git_repo_root(*, repo_dir: Path, env: dict[str, str]) -> bool:
+    cp = _run(["git", "rev-parse", "--show-toplevel"], cwd=repo_dir, env=env)
+    if cp.returncode != 0:
+        return False
+    top_level_raw = (cp.stdout or "").strip()
+    if not top_level_raw:
+        return False
+    return Path(top_level_raw).resolve() == repo_dir.resolve()
 
 
 def _ensure_git_repo(
@@ -178,27 +201,29 @@ def _ensure_git_repo(
     dry_run: bool,
     out: Callable[[str], None],
 ) -> None:
-    in_repo = _run(["git", "rev-parse", "--is-inside-work-tree"], cwd=repo_dir, env=env)
-    if in_repo.returncode != 0:
+    is_repo_root = _is_git_repo_root(repo_dir=repo_dir, env=env)
+    if not is_repo_root:
         out(f"{'[dry-run] ' if dry_run else ''}init git repo: {repo_dir}")
         if not dry_run:
             cp = _run(["git", "init"], cwd=repo_dir, env=env)
             if cp.returncode != 0:
                 raise RuntimeError(cp.stderr.strip() or "Failed to initialize git repository.")
+            is_repo_root = True
 
-    has_commit = _run(["git", "rev-parse", "--verify", "HEAD"], cwd=repo_dir, env=env).returncode == 0
+    has_commit = False
+    if is_repo_root:
+        has_commit = _run(["git", "rev-parse", "--verify", "HEAD"], cwd=repo_dir, env=env).returncode == 0
     if not has_commit:
-        user_name = _run(["git", "config", "user.name"], cwd=repo_dir, env=env)
-        user_email = _run(["git", "config", "user.email"], cwd=repo_dir, env=env)
-        if user_name.returncode != 0 or user_email.returncode != 0:
-            raise RuntimeError(
-                "Git user.name and user.email are required for the initial commit. "
-                "Set them with: git config --global user.name 'Your Name' and "
-                "git config --global user.email 'you@example.com'."
-            )
-
         out(f"{'[dry-run] ' if dry_run else ''}create initial commit")
         if not dry_run:
+            user_name = _run(["git", "config", "user.name"], cwd=repo_dir, env=env)
+            user_email = _run(["git", "config", "user.email"], cwd=repo_dir, env=env)
+            if user_name.returncode != 0 or user_email.returncode != 0:
+                raise RuntimeError(
+                    "Git user.name and user.email are required for the initial commit. "
+                    "Set them with: git config --global user.name 'Your Name' and "
+                    "git config --global user.email 'you@example.com'."
+                )
             add_cp = _run(["git", "add", "-A"], cwd=repo_dir, env=env)
             if add_cp.returncode != 0:
                 raise RuntimeError(add_cp.stderr.strip() or "Failed staging files for initial commit.")
@@ -210,11 +235,7 @@ def _ensure_git_repo(
             if commit_cp.returncode != 0:
                 raise RuntimeError(commit_cp.stderr.strip() or "Failed creating initial commit.")
 
-    out(f"{'[dry-run] ' if dry_run else ''}ensure main branch")
-    if not dry_run:
-        branch_cp = _run(["git", "branch", "-M", "main"], cwd=repo_dir, env=env)
-        if branch_cp.returncode != 0:
-            raise RuntimeError(branch_cp.stderr.strip() or "Failed switching to main branch.")
+    out(f"{'[dry-run] ' if dry_run else ''}prepare remote main push")
 
 
 def _repo_exists(*, repo_dir: Path, env: dict[str, str], repo: str) -> bool:
@@ -290,13 +311,13 @@ def _push_main(*, repo_dir: Path, env: dict[str, str]) -> tuple[bool, str | None
                 "push",
                 "-u",
                 "origin",
-                "main",
+                "HEAD:main",
             ],
             cwd=repo_dir,
             env=push_env,
         )
     else:
-        cp = _run(["git", "push", "-u", "origin", "main"], cwd=repo_dir, env=push_env)
+        cp = _run(["git", "push", "-u", "origin", "HEAD:main"], cwd=repo_dir, env=push_env)
 
     if cp.returncode == 0:
         return True, None
@@ -336,6 +357,7 @@ def _create_or_push_repo(
     dry_run: bool,
     out: Callable[[str], None],
 ) -> tuple[bool, bool, str | None]:
+    repo_dir = repo_dir.resolve()
     exists = _repo_exists(repo_dir=repo_dir, env=env, repo=repo)
 
     if exists:
@@ -434,6 +456,7 @@ def create_repository(
     out: Callable[[str], None] = print,
     err: Callable[[str], None] | None = None,
 ) -> CreateSummary:
+    repo_dir = repo_dir.resolve()
     emit_err = err if err is not None else out
     _ensure_tools()
     env = _build_env(repo_dir)

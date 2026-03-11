@@ -287,7 +287,7 @@ def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
                 "--search",
                 f"{ticket_title} in:title",
                 "--json",
-                "title,milestone",
+                "title,milestone,body",
             ],
             cwd=local_repo,
         )
@@ -300,6 +300,9 @@ def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         milestone = match.get("milestone")
         assert isinstance(milestone, dict)
         assert milestone.get("title") == epic_title
+        body = match.get("body")
+        assert isinstance(body, str)
+        assert body.startswith("Epic: #")
     finally:
         if created_remote and not keep_repo:
             delete_cp = _run_gh(["repo", "delete", target_repo, "--yes"], cwd=project_root)
