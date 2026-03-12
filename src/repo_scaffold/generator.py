@@ -2210,12 +2210,19 @@ commands =
 
 [testenv:precommit]
 skip_install = true
-depends =
-    lint
-    type
-    test-fast
+setenv =
+    {[testenv]setenv}
+    PYTHONPATH={toxinidir}/src
+deps =
+    {[testenv:format]deps}
+    {[testenv:lint]deps}
+    {[testenv:type]deps}
+    {[testenv:test-fast]deps}
 commands =
-    python -c "print('tox precommit suite complete')"
+    {[testenv:format]commands}
+    {[testenv:lint]commands}
+    {[testenv:type]commands}
+    {[testenv:test-fast]commands}
 """
 
 
@@ -2242,7 +2249,7 @@ def _render_pre_commit_config(languages: Iterable[str]) -> str:
                 "        entry: poetry run tox",
                 "        language: system",
                 "        pass_filenames: false",
-                "        args: [\"-e\", \"precommit\", \"-vv\"]",
+                '        args: ["-e", "precommit", "-vv"]',
                 "        verbose: true",
             ]
         )

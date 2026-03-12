@@ -129,8 +129,13 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "[testenv:test-fast]" in tox_ini
     assert 'pytest -q -m "not e2e_github" {posargs:tests}' in tox_ini
     assert "[testenv:precommit]" in tox_ini
-    assert "depends =" in tox_ini
-    assert "test-fast" in tox_ini
+    assert "skip_install = true" in tox_ini
+    assert "PYTHONPATH={toxinidir}/src" in tox_ini
+    assert "deps =" in tox_ini
+    assert "{[testenv:format]commands}" in tox_ini
+    assert "{[testenv:lint]commands}" in tox_ini
+    assert "{[testenv:type]commands}" in tox_ini
+    assert "{[testenv:test-fast]commands}" in tox_ini
     assert "black src tests" in tox_ini
     assert "ruff check src tests --fix" in tox_ini
     assert "pytest -q {posargs:tests}" in tox_ini

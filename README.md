@@ -343,7 +343,7 @@ poetry run pre-commit install
 poetry run pre-commit run --all-files
 ```
 
-`pre-commit` runs a local tox gate (`lint`, `type`, `test-fast`) via the `tox-suite` hook.
+`pre-commit` runs a local tox gate via the `tox-suite` hook: auto-format first, then `lint`, `type`, and `test-fast`.
 
 Tox workflow (lint, type, test):
 
