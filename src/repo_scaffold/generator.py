@@ -190,6 +190,23 @@ env:
   LANGUAGES: "{joined}"
 
 jobs:
+  pre-commit-hooks:
+    if: hashFiles('.pre-commit-config.yaml') != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pre-commit
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pre-commit
+      - name: Run non-tox pre-commit hooks
+        env:
+          SKIP: tox-suite
+        run: pre-commit run --all-files --show-diff-on-failure
+
   go:
     if: contains(env.LANGUAGES, 'go') && hashFiles('go.mod') != ''
     runs-on: ubuntu-latest
@@ -2246,8 +2263,10 @@ def _render_pre_commit_config(languages: Iterable[str]) -> str:
                 "    hooks:",
                 "      - id: tox-suite",
                 "        name: run tox suite (lint, type, test-fast)",
-                "        entry: poetry run tox",
-                "        language: system",
+                "        entry: tox",
+                "        language: python",
+                "        additional_dependencies:",
+                "          - tox>=4.20.0",
                 "        pass_filenames: false",
                 '        args: ["-e", "precommit", "-vv"]',
                 "        verbose: true",

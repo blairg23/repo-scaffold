@@ -12,8 +12,10 @@ repos:
     hooks:
       - id: tox-suite
         name: run tox suite (format, lint, type, test-fast)
-        entry: poetry run tox
-        language: system
+        entry: tox
+        language: python
+        additional_dependencies:
+          - tox>=4.20.0
         pass_filenames: false
         args: ["-e", "precommit", "-vv"]
         verbose: true
