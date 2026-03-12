@@ -83,8 +83,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
         encoding="utf-8"
     )
     ci_yaml = (out_dir / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "name: Install pre-commit" in ci_yaml
-    assert "pre-commit run --all-files --show-diff-on-failure" in ci_yaml
+    assert "pre-commit:" not in ci_yaml
     assert "tox-env: [lint, type, test]" in ci_yaml
     assert "- name: Install tox" in ci_yaml
     assert "run: tox -e ${{ matrix.tox-env }}" in ci_yaml
@@ -103,6 +102,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "go test ./..." in generated_readme
     assert "npm run build" in generated_readme
     assert "tox -e format" in generated_readme
+    assert "tox -e precommit" in generated_readme
     assert "tox -e lint,type,test" in generated_readme
     assert "make typecheck" in generated_readme
     assert "## Backlog bootstrap" not in generated_readme
@@ -126,9 +126,17 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "black --check src tests" in tox_ini
     assert "ruff check src tests" in tox_ini
     assert "[testenv:format]" in tox_ini
+    assert "[testenv:test-fast]" in tox_ini
+    assert 'pytest -q -m "not e2e_github" {posargs:tests}' in tox_ini
+    assert "[testenv:precommit]" in tox_ini
+    assert "depends =" in tox_ini
+    assert "test-fast" in tox_ini
     assert "black src tests" in tox_ini
     assert "ruff check src tests --fix" in tox_ini
     assert "pytest -q {posargs:tests}" in tox_ini
+    pre_commit = (out_dir / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    assert "id: tox-suite" in pre_commit
+    assert 'args: ["-e", "precommit", "-vv"]' in pre_commit
     web_package = (out_dir / "web/package.json").read_text(encoding="utf-8")
     assert '"lint": "eslint ."' in web_package
     assert '"eslint": "^9.21.0"' in web_package

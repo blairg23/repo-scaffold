@@ -343,10 +343,18 @@ poetry run pre-commit install
 poetry run pre-commit run --all-files
 ```
 
+`pre-commit` runs a local tox gate (`lint`, `type`, `test-fast`) via the `tox-suite` hook.
+
 Tox workflow (lint, type, test):
 
 ```bash
 tox -e lint,type,test
+```
+
+Fast tox gate used by pre-commit:
+
+```bash
+tox -e precommit
 ```
 
 Auto-fix Python formatting/lint issues:

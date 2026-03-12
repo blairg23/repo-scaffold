@@ -107,19 +107,21 @@ def _list_projects(repo_dir: Path, owner: str) -> list[dict[str, object]]:
         detail = cp.stderr.strip() or cp.stdout.strip() or "Failed listing projects."
         raise RuntimeError(_project_scope_hint(detail))
     data = json.loads(cp.stdout or "[]")
+    projects_obj: object
     if isinstance(data, list):
-        projects = data
+        projects_obj = data
     elif isinstance(data, dict):
-        projects = data.get("projects")
-        if not isinstance(projects, list):
-            projects = data.get("items")
-        if not isinstance(projects, list):
-            projects = data.get("nodes")
-        if not isinstance(projects, list):
+        projects_obj = data.get("projects")
+        if not isinstance(projects_obj, list):
+            projects_obj = data.get("items")
+        if not isinstance(projects_obj, list):
+            projects_obj = data.get("nodes")
+        if not isinstance(projects_obj, list):
             raise RuntimeError("Unexpected response from gh project list.")
     else:
         raise RuntimeError("Unexpected response from gh project list.")
-    return [item for item in projects if isinstance(item, dict)]
+
+    return [item for item in projects_obj if isinstance(item, dict)]
 
 
 def _project_title_for_number(repo_dir: Path, owner: str, number: int) -> str:

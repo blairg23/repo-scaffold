@@ -190,21 +190,6 @@ env:
   LANGUAGES: "{joined}"
 
 jobs:
-  pre-commit:
-    if: hashFiles('.pre-commit-config.yaml') != ''
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install pre-commit
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pre-commit
-      - name: Run pre-commit
-        run: pre-commit run --all-files --show-diff-on-failure
-
   go:
     if: contains(env.LANGUAGES, 'go') && hashFiles('go.mod') != ''
     runs-on: ubuntu-latest
@@ -570,6 +555,8 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
             "pre-commit run --all-files",
             "```",
             "",
+            "For parity with CI quality gates, pre-commit also runs `tox -e precommit`.",
+            "",
         ]
     )
 
@@ -587,6 +574,7 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
                 "mypy src",
                 "pytest",
                 "tox -e lint,type,test",
+                "tox -e precommit",
                 "```",
                 "",
                 "CI runs the same Python quality matrix via tox (`lint`, `type`, `test`).",
@@ -2214,6 +2202,20 @@ commands =
 deps = -e .[dev]
 commands =
     pytest -q {posargs:tests}
+
+[testenv:test-fast]
+deps = -e .[dev]
+commands =
+    pytest -q -m "not e2e_github" {posargs:tests}
+
+[testenv:precommit]
+skip_install = true
+depends =
+    lint
+    type
+    test-fast
+commands =
+    python -c "print('tox precommit suite complete')"
 """
 
 
@@ -2233,12 +2235,15 @@ def _render_pre_commit_config(languages: Iterable[str]) -> str:
     if "python" in selected:
         lines.extend(
             [
-                "  - repo: https://github.com/astral-sh/ruff-pre-commit",
-                "    rev: v0.6.9",
+                "  - repo: local",
                 "    hooks:",
-                "      - id: ruff",
-                "        args: [--fix]",
-                "      - id: ruff-format",
+                "      - id: tox-suite",
+                "        name: run tox suite (lint, type, test-fast)",
+                "        entry: poetry run tox",
+                "        language: system",
+                "        pass_filenames: false",
+                "        args: [\"-e\", \"precommit\", \"-vv\"]",
+                "        verbose: true",
             ]
         )
     return "\n".join(lines) + "\n"
