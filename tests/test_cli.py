@@ -172,7 +172,9 @@ def test_apply_dependabot_infers_languages_from_repo(tmp_path: Path) -> None:
 
 
 def test_apply_backlog_subcommand_delegates_to_backlog_ops(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
@@ -207,6 +209,10 @@ def test_apply_backlog_subcommand_delegates_to_backlog_ops(
             issues_created=3,
             issues_skipped=4,
             failures=0,
+            epic_issues_created=1,
+            epic_issues_skipped=1,
+            ticket_issues_created=2,
+            ticket_issues_skipped=3,
         )
 
     monkeypatch.setattr("repo_scaffold.cli.apply_backlog", _fake_apply_backlog)
@@ -232,6 +238,131 @@ def test_apply_backlog_subcommand_delegates_to_backlog_ops(
     assert called["project_number"] is None
     assert called["project_title"] is None
     assert called["project_owner"] is None
+    stdout = capsys.readouterr().out
+    assert "epic issues created: 1" in stdout
+    assert "epic issues skipped: 1" in stdout
+    assert "ticket issues created: 2" in stdout
+    assert "ticket issues skipped: 3" in stdout
+    assert "issues created (total): 3" in stdout
+    assert "issues skipped (total): 4" in stdout
+
+
+def test_apply_backlog_defaults_to_local_backlog_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    local_backlog = workspace / "local" / "backlog"
+    local_backlog.mkdir(parents=True)
+    (local_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+
+    repo_dir = workspace / "repo"
+    repo_dir.mkdir(parents=True)
+    (repo_dir / "backlog").mkdir(parents=True)
+    (repo_dir / "backlog" / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+
+    monkeypatch.chdir(workspace)
+
+    called: dict[str, object] = {}
+
+    def _fake_apply_backlog(
+        *,
+        repo_dir: Path,
+        repo: str,
+        backlog_file: Path,
+        dry_run: bool,
+        project_number,
+        project_title,
+        project_owner,
+        out,
+        err,
+    ):
+        called["repo_dir"] = repo_dir
+        called["repo"] = repo
+        called["backlog_file"] = backlog_file
+        return BacklogApplySummary(
+            milestones_created=0,
+            milestones_skipped=0,
+            issues_created=0,
+            issues_skipped=0,
+            failures=0,
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_backlog", _fake_apply_backlog)
+
+    rc = main(
+        [
+            "apply",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--repo",
+            "acme/repo",
+            "--dry-run",
+        ]
+    )
+    assert rc == 0
+    assert called["repo_dir"] == repo_dir
+    assert called["repo"] == "acme/repo"
+    assert called["backlog_file"] == local_backlog / "issues.json"
+
+
+def test_apply_backlog_defaults_to_repo_backlog_when_local_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+
+    repo_dir = workspace / "repo"
+    repo_dir.mkdir(parents=True)
+    repo_backlog = repo_dir / "backlog"
+    repo_backlog.mkdir(parents=True)
+    (repo_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+
+    monkeypatch.chdir(workspace)
+
+    called: dict[str, object] = {}
+
+    def _fake_apply_backlog(
+        *,
+        repo_dir: Path,
+        repo: str,
+        backlog_file: Path,
+        dry_run: bool,
+        project_number,
+        project_title,
+        project_owner,
+        out,
+        err,
+    ):
+        called["repo_dir"] = repo_dir
+        called["repo"] = repo
+        called["backlog_file"] = backlog_file
+        return BacklogApplySummary(
+            milestones_created=0,
+            milestones_skipped=0,
+            issues_created=0,
+            issues_skipped=0,
+            failures=0,
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_backlog", _fake_apply_backlog)
+
+    rc = main(
+        [
+            "apply",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--repo",
+            "acme/repo",
+            "--dry-run",
+        ]
+    )
+    assert rc == 0
+    assert called["repo_dir"] == repo_dir
+    assert called["repo"] == "acme/repo"
+    assert called["backlog_file"] == repo_backlog / "issues.json"
 
 
 def test_apply_backlog_auth_check(

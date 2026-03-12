@@ -114,6 +114,10 @@ def test_apply_backlog_creates_missing_labels(
     assert summary.failures == 0
     assert summary.milestones_created == 1
     assert summary.issues_created == 2
+    assert summary.epic_issues_created == 1
+    assert summary.ticket_issues_created == 1
+    assert summary.epic_issues_skipped == 0
+    assert summary.ticket_issues_skipped == 0
     assert set(created_labels) == {"epic", "ticket", "epic:E2E"}
     assert len(created_issues) == 2
     assert created_issues[0]["title"] == "Epic e2e"
@@ -250,6 +254,26 @@ def test_apply_backlog_project_title_creates_and_adds_items(
     assert summary.project_items_skipped == 0
     assert summary.milestones_created == 1
     assert summary.issues_skipped == 2
+    assert summary.epic_issues_skipped == 1
+    assert summary.ticket_issues_skipped == 1
+
+
+def test_list_projects_supports_wrapped_json_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        backlog_ops,
+        "_run_gh",
+        lambda _repo_dir, _args: _cp_ok(
+            '{"projects":[{"number":1,"title":"Roadmap"}]}'
+        ),
+    )
+
+    projects = backlog_ops._list_projects(repo_dir, "acme")
+    assert projects == [{"number": 1, "title": "Roadmap"}]
 
 
 def test_apply_backlog_requires_epic_body_and_key(

@@ -18,6 +18,10 @@ class BacklogApplySummary:
     issues_created: int
     issues_skipped: int
     failures: int
+    epic_issues_created: int = 0
+    epic_issues_skipped: int = 0
+    ticket_issues_created: int = 0
+    ticket_issues_skipped: int = 0
     project_created: bool = False
     project_items_added: int = 0
     project_items_skipped: int = 0
@@ -103,9 +107,19 @@ def _list_projects(repo_dir: Path, owner: str) -> list[dict[str, object]]:
         detail = cp.stderr.strip() or cp.stdout.strip() or "Failed listing projects."
         raise RuntimeError(_project_scope_hint(detail))
     data = json.loads(cp.stdout or "[]")
-    if not isinstance(data, list):
+    if isinstance(data, list):
+        projects = data
+    elif isinstance(data, dict):
+        projects = data.get("projects")
+        if not isinstance(projects, list):
+            projects = data.get("items")
+        if not isinstance(projects, list):
+            projects = data.get("nodes")
+        if not isinstance(projects, list):
+            raise RuntimeError("Unexpected response from gh project list.")
+    else:
         raise RuntimeError("Unexpected response from gh project list.")
-    return [item for item in data if isinstance(item, dict)]
+    return [item for item in projects if isinstance(item, dict)]
 
 
 def _project_title_for_number(repo_dir: Path, owner: str, number: int) -> str:
@@ -610,6 +624,10 @@ def apply_backlog(
     issues_created = 0
     issues_skipped = 0
     failures = 0
+    epic_issues_created = 0
+    epic_issues_skipped = 0
+    ticket_issues_created = 0
+    ticket_issues_skipped = 0
     project_items_added = 0
     project_items_skipped = 0
 
@@ -715,6 +733,7 @@ def apply_backlog(
         number = _find_issue_number(repo_dir, repo, epic_title)
         if number is not None:
             issues_skipped += 1
+            epic_issues_skipped += 1
             epic_numbers[epic_title] = number
             out(f"Skip issue (exists): {epic_title}")
             if project is not None:
@@ -734,6 +753,7 @@ def apply_backlog(
         else:
             if dry_run:
                 issues_created += 1
+                epic_issues_created += 1
                 epic_numbers[epic_title] = None
                 out(f"[dry-run] create issue: {epic_title}")
                 if project is not None:
@@ -763,6 +783,7 @@ def apply_backlog(
                     )
                     epic_numbers[epic_title] = number
                     issues_created += 1
+                    epic_issues_created += 1
                     out(f"Created issue: {epic_title}")
                     if project is not None:
                         added, skipped, failed = _add_issue_to_project(
@@ -812,6 +833,7 @@ def apply_backlog(
             existing_number = _find_issue_number(repo_dir, repo, title)
             if existing_number is not None:
                 issues_skipped += 1
+                ticket_issues_skipped += 1
                 out(f"Skip issue (exists): {title}")
                 if project is not None:
                     added, skipped, failed = _add_issue_to_project(
@@ -844,6 +866,7 @@ def apply_backlog(
 
             if dry_run:
                 issues_created += 1
+                ticket_issues_created += 1
                 out(f"[dry-run] create issue: {title}")
                 if project is not None:
                     added, skipped, failed = _add_issue_to_project(
@@ -872,6 +895,7 @@ def apply_backlog(
                     epic_title,
                 )
                 issues_created += 1
+                ticket_issues_created += 1
                 out(f"Created issue: {title}")
                 if project is not None:
                     added, skipped, failed = _add_issue_to_project(
@@ -897,6 +921,10 @@ def apply_backlog(
         issues_created=issues_created,
         issues_skipped=issues_skipped,
         failures=failures,
+        epic_issues_created=epic_issues_created,
+        epic_issues_skipped=epic_issues_skipped,
+        ticket_issues_created=ticket_issues_created,
+        ticket_issues_skipped=ticket_issues_skipped,
         project_created=project_created,
         project_items_added=project_items_added,
         project_items_skipped=project_items_skipped,

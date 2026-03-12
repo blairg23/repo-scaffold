@@ -85,7 +85,7 @@ Subcommands:
 - `templates`: apply `.github` PR/issue templates, issue config, and `CODEOWNERS`
 - `ci --languages <list>`: apply `.github/workflows/ci.yml`
 - `dependabot [--low-noise]`: apply `.github/dependabot.yml`
-- `backlog --repo owner/repo [--file backlog/issues.json] [--dry-run] [--auth-check] [--with-project] [--project-number N | --project-title T] [--project-owner O]`: bulk-create milestones/issues using `gh`
+- `backlog --repo owner/repo [--file PATH] [--dry-run] [--auth-check] [--with-project] [--project-number N | --project-title T] [--project-owner O]`: bulk-create milestones/issues using `gh`
 - `rules [--repo owner/repo] [--apply]`: print or apply recommended `gh api` repo rules
 
 ### `delete`
@@ -142,6 +142,7 @@ Per-file output labels:
 - falls back to `gh auth status` / `gh auth login`
 - supports `--auth-check` to validate token/session (`gh api /user`) before writing anything
 - ticket bodies prepend an `Epic: #<number>` link to the created/found epic issue
+- summary output splits epic issue counts and ticket issue counts (plus total issue counts)
 - `--with-project` enables project integration with zero extra args
   if no project is specified, default project title is `<repo-name> Roadmap`
   optional env override: `GITHUB_PROJECT_TITLE` or `GITHUB_PROJECT_TITLE_TEMPLATE` (supports `{repo}`)
@@ -196,7 +197,10 @@ poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --
 
 ## Backlog JSON format
 
-Backlog input is JSON only. Default path: `backlog/issues.json`.
+Backlog input is JSON only. If `--file` is omitted, fallback order is:
+1. `local/backlog/issues.json` (when present in the current working directory)
+2. `<repo-path>/backlog/issues.json` (where `--path` defaults to `.`)
+
 Completed sample file: `examples/backlog/issues.sample.json`.
 Workspace-local private path in this repo: `local/backlog/issues.json` (git-ignored).
 
@@ -282,7 +286,7 @@ Edit these source templates to customize generated `.github` markdown:
 - `src/repo_scaffold/templates/github/ISSUE_TEMPLATE/epic.md`
 - `src/repo_scaffold/templates/github/ISSUE_TEMPLATE/ticket.md`
 
-`init` does not create a backlog file by default. Keep backlog JSON in this toolkit repo (for example `local/backlog/issues.json`) and pass it with `apply backlog --file`.
+`init` does not create a backlog file by default. Keep backlog JSON in this toolkit repo (for example `local/backlog/issues.json`); `apply backlog` now picks it up automatically when `--file` is omitted.
 
 ## PR Creation Workflow
 
