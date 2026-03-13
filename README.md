@@ -19,7 +19,7 @@ Workflow model:
 ## Install
 
 ```bash
-poetry install --with dev
+poetry install
 ```
 
 ## Commands

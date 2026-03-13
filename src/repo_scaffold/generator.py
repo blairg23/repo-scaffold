@@ -2191,7 +2191,6 @@ no_implicit_optional = true
 def _render_tox_ini() -> str:
     return """[tox]
 envlist = lint,type,test
-isolated_build = true
 
 [testenv]
 deps = -e .[dev]
