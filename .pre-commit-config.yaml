@@ -3,13 +3,19 @@ repos:
     rev: v4.6.0
     hooks:
       - id: check-merge-conflict
+      - id: check-added-large-files
       - id: check-yaml
       - id: check-toml
       - id: end-of-file-fixer
       - id: trailing-whitespace
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+  - repo: local
     hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
+      - id: tox-suite
+        name: run tox suite (format, lint, type, test-fast)
+        entry: tox
+        language: python
+        additional_dependencies:
+          - tox>=4.20.0
+        pass_filenames: false
+        args: ["-e", "precommit", "-vv"]
+        verbose: true

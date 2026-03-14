@@ -31,6 +31,8 @@ from .overwrite_policy import ApplySummary, OverwritePolicy, apply_files
 
 DEFAULT_INIT_NAME_PREFIX = "repo-scaffold-e2e"
 DEFAULT_INIT_LANGUAGES = "go,python,react"
+DEFAULT_BACKLOG_REL_PATH = "backlog/issues.json"
+DEFAULT_LOCAL_BACKLOG_REL_PATH = "local/backlog/issues.json"
 
 
 def _repo_name_from_repo_ref(raw: str | None) -> str | None:
@@ -144,6 +146,17 @@ def _resolve_repo_from_args_or_env(
         None,
         "Error: could not resolve target repo. Pass --repo owner/repo or set GH_REPO (or GITHUB_ORG + GITHUB_REPO) in .env.",
     )
+
+
+def _resolve_backlog_file_path(*, repo_dir: Path, file_arg: str | None) -> Path:
+    if file_arg:
+        backlog_file = Path(file_arg)
+        return backlog_file if backlog_file.is_absolute() else (repo_dir / backlog_file)
+
+    local_backlog = Path.cwd() / DEFAULT_LOCAL_BACKLOG_REL_PATH
+    if local_backlog.exists():
+        return local_backlog
+    return repo_dir / DEFAULT_BACKLOG_REL_PATH
 
 
 def _seed_env_for_parsed_mode(ns: argparse.Namespace) -> None:
@@ -356,8 +369,10 @@ def build_parser() -> argparse.ArgumentParser:
     apply_backlog_cmd.add_argument("--repo", help="Target GitHub repo (owner/repo)")
     apply_backlog_cmd.add_argument(
         "--file",
-        default="backlog/issues.json",
-        help="Backlog JSON path (default: backlog/issues.json)",
+        help=(
+            "Backlog JSON path. If omitted, uses ./local/backlog/issues.json when present, "
+            "otherwise <repo-path>/backlog/issues.json"
+        ),
     )
     apply_backlog_cmd.add_argument(
         "--with-project",
@@ -783,9 +798,7 @@ def main(argv: list[str] | None = None) -> int:
             if project_target is not None:
                 print(f"GitHub project access OK: {project_target}")
             return 0
-        backlog_file = Path(ns.file)
-        if not backlog_file.is_absolute():
-            backlog_file = repo_dir / backlog_file
+        backlog_file = _resolve_backlog_file_path(repo_dir=repo_dir, file_arg=ns.file)
         try:
             backlog_summary: BacklogApplySummary = apply_backlog(
                 repo_dir=repo_dir,
@@ -808,8 +821,12 @@ def main(argv: list[str] | None = None) -> int:
             print("  mode: dry-run")
         print(f"  milestones created: {backlog_summary.milestones_created}")
         print(f"  milestones skipped: {backlog_summary.milestones_skipped}")
-        print(f"  issues created: {backlog_summary.issues_created}")
-        print(f"  issues skipped: {backlog_summary.issues_skipped}")
+        print(f"  epic issues created: {backlog_summary.epic_issues_created}")
+        print(f"  epic issues skipped: {backlog_summary.epic_issues_skipped}")
+        print(f"  ticket issues created: {backlog_summary.ticket_issues_created}")
+        print(f"  ticket issues skipped: {backlog_summary.ticket_issues_skipped}")
+        print(f"  issues created (total): {backlog_summary.issues_created}")
+        print(f"  issues skipped (total): {backlog_summary.issues_skipped}")
         if effective_project_number is not None or effective_project_title:
             print(f"  project created: {backlog_summary.project_created}")
             print(f"  project items added: {backlog_summary.project_items_added}")

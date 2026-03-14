@@ -190,7 +190,7 @@ env:
   LANGUAGES: "{joined}"
 
 jobs:
-  pre-commit:
+  pre-commit-hooks:
     if: hashFiles('.pre-commit-config.yaml') != ''
     runs-on: ubuntu-latest
     steps:
@@ -202,7 +202,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pre-commit
-      - name: Run pre-commit
+      - name: Run non-tox pre-commit hooks
+        env:
+          SKIP: tox-suite
         run: pre-commit run --all-files --show-diff-on-failure
 
   go:
@@ -570,6 +572,8 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
             "pre-commit run --all-files",
             "```",
             "",
+            "For parity with CI quality gates, pre-commit also runs `tox -e precommit`.",
+            "",
         ]
     )
 
@@ -587,6 +591,7 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
                 "mypy src",
                 "pytest",
                 "tox -e lint,type,test",
+                "tox -e precommit",
                 "```",
                 "",
                 "CI runs the same Python quality matrix via tox (`lint`, `type`, `test`).",
@@ -2186,7 +2191,6 @@ no_implicit_optional = true
 def _render_tox_ini() -> str:
     return """[tox]
 envlist = lint,type,test
-isolated_build = true
 
 [testenv]
 deps = -e .[dev]
@@ -2214,6 +2218,27 @@ commands =
 deps = -e .[dev]
 commands =
     pytest -q {posargs:tests}
+
+[testenv:test-fast]
+deps = -e .[dev]
+commands =
+    pytest -q -m "not e2e_github" {posargs:tests}
+
+[testenv:precommit]
+skip_install = true
+setenv =
+    {[testenv]setenv}
+    PYTHONPATH={toxinidir}/src
+deps =
+    {[testenv:format]deps}
+    {[testenv:lint]deps}
+    {[testenv:type]deps}
+    {[testenv:test-fast]deps}
+commands =
+    {[testenv:format]commands}
+    {[testenv:lint]commands}
+    {[testenv:type]commands}
+    {[testenv:test-fast]commands}
 """
 
 
@@ -2233,12 +2258,17 @@ def _render_pre_commit_config(languages: Iterable[str]) -> str:
     if "python" in selected:
         lines.extend(
             [
-                "  - repo: https://github.com/astral-sh/ruff-pre-commit",
-                "    rev: v0.6.9",
+                "  - repo: local",
                 "    hooks:",
-                "      - id: ruff",
-                "        args: [--fix]",
-                "      - id: ruff-format",
+                "      - id: tox-suite",
+                "        name: run tox suite (lint, type, test-fast)",
+                "        entry: tox",
+                "        language: python",
+                "        additional_dependencies:",
+                "          - tox>=4.20.0",
+                "        pass_filenames: false",
+                '        args: ["-e", "precommit", "-vv"]',
+                "        verbose: true",
             ]
         )
     return "\n".join(lines) + "\n"
