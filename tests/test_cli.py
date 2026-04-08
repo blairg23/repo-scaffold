@@ -674,29 +674,47 @@ def test_apply_rules_resolves_repo_from_dotenv(
         monkeypatch.delenv(key, raising=False)
     monkeypatch.chdir(workspace)
 
+    called: dict[str, object] = {}
+
+    def _fake_apply_repository_settings(*, repo_dir: Path, repo: str, dry_run: bool, out, warn):
+        called["repo_dir"] = repo_dir
+        called["repo"] = repo
+        called["dry_run"] = dry_run
+        out(f"{'[dry-run] ' if dry_run else ''}apply repository settings: {repo}")
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.apply_repository_settings", _fake_apply_repository_settings
+    )
+
     rc = main(["apply", "rules"])
     assert rc == 0
+    assert called["repo_dir"] == workspace
+    assert called["repo"] == "acme/rules-repo"
+    assert called["dry_run"] is True
     stdout = capsys.readouterr().out
-    assert "/repos/acme/rules-repo" in stdout
+    assert "apply repository settings: acme/rules-repo" in stdout
+    assert "settings planned: True" in stdout
 
 
 def test_apply_rules_dry_run_does_not_execute(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    called: dict[str, object] = {"applied": False}
+    called: dict[str, object] = {}
 
-    def _fake_apply_rules(repo: str) -> int:
-        called["applied"] = True
+    def _fake_apply_repository_settings(*, repo_dir: Path, repo: str, dry_run: bool, out, warn):
         called["repo"] = repo
-        return 0
+        called["dry_run"] = dry_run
 
-    monkeypatch.setattr("repo_scaffold.cli._apply_rules", _fake_apply_rules)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.apply_repository_settings", _fake_apply_repository_settings
+    )
 
     rc = main(["apply", "rules", "--repo", "acme/repo", "--apply", "--dry-run"])
     assert rc == 0
-    assert called["applied"] is False
+    assert called["repo"] == "acme/repo"
+    assert called["dry_run"] is True
     stdout = capsys.readouterr().out
-    assert "Recommended gh api commands:" in stdout
+    assert "settings planned: True" in stdout
 
 
 def test_create_subcommand_delegates_to_create_ops(

@@ -990,36 +990,61 @@ gh api \
   "allow_rebase_merge": false,
   "delete_branch_on_merge": true,
   "allow_auto_merge": true,
-  "is_template": true
+  "is_template": false
 }
 JSON
 
-echo "Applying main branch protection..."
+DEFAULT_BRANCH="$(gh api "/repos/$OWNER/$REPO" --jq .default_branch)"
+
+echo "Removing legacy branch protection if present..."
 gh api \
-  --method PUT \
+  --method DELETE \
   -H "Accept: application/vnd.github+json" \
-  "/repos/$OWNER/$REPO/branches/main/protection" \
+  "/repos/$OWNER/$REPO/branches/$DEFAULT_BRANCH/protection" >/dev/null 2>&1 || true
+
+RULESET_NAME="repo-scaffold default-branch ruleset"
+RULESET_ID="$(gh api "/repos/$OWNER/$REPO/rulesets?includes_parents=false&targets=branch" --jq ".[] | select(.name == \\\"$RULESET_NAME\\\") | .id" 2>/dev/null | head -n 1)"
+
+echo "Syncing managed default-branch ruleset..."
+if [ -n "$RULESET_ID" ]; then
+  RULESET_METHOD="PUT"
+  RULESET_ENDPOINT="/repos/$OWNER/$REPO/rulesets/$RULESET_ID"
+else
+  RULESET_METHOD="POST"
+  RULESET_ENDPOINT="/repos/$OWNER/$REPO/rulesets"
+fi
+
+gh api \
+  --method "$RULESET_METHOD" \
+  -H "Accept: application/vnd.github+json" \
+  "$RULESET_ENDPOINT" \
   --input - >/dev/null <<'JSON'
 {
-  "required_status_checks": {
-    "strict": false,
-    "contexts": []
+  "name": "repo-scaffold default-branch ruleset",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["~DEFAULT_BRANCH"],
+      "exclude": []
+    }
   },
-  "enforce_admins": true,
-  "required_pull_request_reviews": {
-    "dismiss_stale_reviews": false,
-    "require_code_owner_reviews": false,
-    "required_approving_review_count": 1,
-    "require_last_push_approval": false
-  },
-  "restrictions": null,
-  "required_linear_history": true,
-  "allow_force_pushes": false,
-  "allow_deletions": false,
-  "block_creations": false,
-  "required_conversation_resolution": true,
-  "lock_branch": false,
-  "allow_fork_syncing": true
+  "rules": [
+    {"type": "deletion"},
+    {"type": "non_fast_forward"},
+    {"type": "required_linear_history"},
+    {
+      "type": "pull_request",
+      "parameters": {
+        "allowed_merge_methods": ["squash"],
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0,
+        "required_review_thread_resolution": true
+      }
+    }
+  ]
 }
 JSON
 
@@ -1036,9 +1061,40 @@ enable_optional_feature() {
   return 0
 }
 
+enable_security_and_analysis_feature() {
+  local label="$1"
+  local feature_key="$2"
+
+  if gh api \
+    --method PATCH \
+    -H "Accept: application/vnd.github+json" \
+    "/repos/$OWNER/$REPO" \
+    --input - >/dev/null 2>&1 <<JSON
+{
+  "security_and_analysis": {
+    "$feature_key": {
+      "status": "enabled"
+    }
+  }
+}
+JSON
+  then
+    echo "Enabled $label."
+    return 0
+  fi
+
+  echo "Warning: could not enable $label (continuing)." >&2
+  return 0
+}
+
 echo "Enabling optional security defaults..."
+enable_security_and_analysis_feature "Secret scanning" "secret_scanning"
+enable_security_and_analysis_feature "Secret scanning push protection" "secret_scanning_push_protection"
 enable_optional_feature "Dependabot alerts" "/repos/$OWNER/$REPO/vulnerability-alerts"
 enable_optional_feature "Dependabot security updates" "/repos/$OWNER/$REPO/automated-security-fixes"
+if [ "$(gh api "/repos/$OWNER/$REPO" --jq .visibility)" = "public" ]; then
+  enable_optional_feature "Private vulnerability reporting" "/repos/$OWNER/$REPO/private-vulnerability-reporting"
+fi
 
 echo "Repository settings applied for $OWNER/$REPO"
 """

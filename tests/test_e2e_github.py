@@ -75,13 +75,13 @@ def _run_gh_json(args: list[str], *, cwd: Path) -> object:
 
 @pytest.mark.e2e_github
 def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    _seed_env_from_dotenv(project_root, monkeypatch)
+
     if os.environ.get("RUN_GITHUB_E2E") != "1":
         pytest.skip("Set RUN_GITHUB_E2E=1 to run real GitHub E2E.")
     if shutil.which("gh") is None:
         pytest.skip("GitHub CLI (gh) is not installed.")
-
-    project_root = Path(__file__).resolve().parents[1]
-    _seed_env_from_dotenv(project_root, monkeypatch)
 
     owner = os.environ.get("GITHUB_ORG")
     assert owner, "Set GITHUB_ORG in env/.env."
@@ -215,21 +215,40 @@ def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             assert repo_api["allow_rebase_merge"] is False
             assert repo_api["delete_branch_on_merge"] is True
 
-            protection = _run_gh_json(
-                ["api", f"/repos/{target_repo}/branches/main/protection"],
+            active_rules = _run_gh_json(
+                ["api", f"/repos/{target_repo}/rules/branches/main"],
                 cwd=local_repo,
             )
-            assert isinstance(protection, dict)
-            assert (
-                protection["required_pull_request_reviews"][
-                    "required_approving_review_count"
-                ]
-                == 1
+            assert isinstance(active_rules, list)
+            pull_request_rule = next(
+                (
+                    rule
+                    for rule in active_rules
+                    if isinstance(rule, dict) and rule.get("type") == "pull_request"
+                ),
+                None,
             )
-            assert protection["required_linear_history"]["enabled"] is True
-            assert protection["required_conversation_resolution"]["enabled"] is True
-            assert protection["allow_force_pushes"]["enabled"] is False
-            assert protection["allow_deletions"]["enabled"] is False
+            assert isinstance(pull_request_rule, dict)
+            assert pull_request_rule["parameters"]["required_approving_review_count"] == 0
+            assert (
+                pull_request_rule["parameters"]["required_review_thread_resolution"]
+                is True
+            )
+            assert pull_request_rule["parameters"]["allowed_merge_methods"] == [
+                "squash"
+            ]
+            assert any(
+                isinstance(rule, dict) and rule.get("type") == "required_linear_history"
+                for rule in active_rules
+            )
+            assert any(
+                isinstance(rule, dict) and rule.get("type") == "non_fast_forward"
+                for rule in active_rules
+            )
+            assert any(
+                isinstance(rule, dict) and rule.get("type") == "deletion"
+                for rule in active_rules
+            )
 
         epic_title = f"[E2E] Epic - {timestamp}-{suffix}"
         ticket_title = f"[E2E] Ticket - {timestamp}-{suffix}"

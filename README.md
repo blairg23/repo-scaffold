@@ -64,9 +64,10 @@ Defaults:
 - `--name` is a fallback name only when `--repo` is omitted
 - if `--repo` is omitted, resolve from env (`GH_REPO` or `GITHUB_ORG` + `GITHUB_REPO`)
 - visibility defaults to `public` (override with `--visibility private|internal`)
-- applies merge/branch protection settings unless `--skip-settings`
+- applies merge settings, a managed default-branch ruleset, and security defaults unless `--skip-settings`
 - pushes `HEAD` to remote `main` (`HEAD:main`) and does not rename/switch your local branch
-- also attempts to enable Dependabot alerts and automated security updates (best-effort; warnings only if plan/policy blocks them)
+- default branch policy uses a ruleset baseline: PR required, `0` approvals, conversation resolution, squash-only, linear history, no force-push, no delete
+- also attempts to enable secret scanning, push protection, Dependabot alerts, automated security updates, and public-repo private vulnerability reporting (best-effort; warnings only if plan/policy blocks them)
 - supports `--dry-run`
 
 Tip: avoid shell-expanding possibly-unset vars in `--repo` (for example `--repo "$GITHUB_ORG/$TEST_REPO"`).
@@ -86,7 +87,7 @@ Subcommands:
 - `ci --languages <list>`: apply `.github/workflows/ci.yml`
 - `dependabot [--low-noise]`: apply `.github/dependabot.yml`
 - `backlog --repo owner/repo [--file PATH] [--dry-run] [--auth-check] [--with-project] [--project-number N | --project-title T] [--project-owner O]`: bulk-create milestones/issues using `gh`
-- `rules [--repo owner/repo] [--apply]`: print or apply recommended `gh api` repo rules
+- `rules [--repo owner/repo] [--apply]`: preview or apply merge settings, the managed default-branch ruleset, and security defaults
 
 ### `delete`
 
@@ -273,7 +274,7 @@ Fine-grained PAT guidance:
 - grant access to each target repository (or org-approved repository set)
 - `Contents`: Read and write
 - `Issues`: Read and write
-- `Administration`: Read and write (settings + branch protection endpoints)
+- `Administration`: Read and write (settings + rulesets + legacy branch-protection cleanup endpoints)
 - `Workflows`: Read and write (workflow file pushes)
 
 Note: if your org policy blocks some operations for fine-grained PATs (especially repo creation), use a classic PAT or `gh auth login`.
@@ -373,6 +374,12 @@ Real GitHub E2E (creates a temporary remote repo and deletes it by default):
 
 ```bash
 RUN_GITHUB_E2E=1 poetry run pytest -m e2e_github
+```
+
+You can also set `RUN_GITHUB_E2E=1` in `.env` and then run:
+
+```bash
+poetry run pytest -m e2e_github
 ```
 
 Optional env toggles:

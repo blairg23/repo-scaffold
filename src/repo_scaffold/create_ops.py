@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import shutil
 import subprocess
@@ -18,41 +19,76 @@ class CreateSummary:
     failures: int
 
 
-_REPO_PATCH_PAYLOAD = """{
-  "allow_squash_merge": true,
-  "allow_merge_commit": false,
-  "allow_rebase_merge": false,
-  "delete_branch_on_merge": true,
-  "allow_auto_merge": true,
-  "is_template": true
-}"""
-
-_PROTECTION_PAYLOAD = """{
-  "required_status_checks": {
-    "strict": false,
-    "contexts": []
-  },
-  "enforce_admins": true,
-  "required_pull_request_reviews": {
-    "dismiss_stale_reviews": false,
-    "require_code_owner_reviews": false,
-    "required_approving_review_count": 1,
-    "require_last_push_approval": false
-  },
-  "restrictions": null,
-  "required_linear_history": true,
-  "allow_force_pushes": false,
-  "allow_deletions": false,
-  "block_creations": false,
-  "required_conversation_resolution": true,
-  "lock_branch": false,
-  "allow_fork_syncing": true
-}"""
+_API_VERSION = "2026-03-10"
+_SETTINGS_RULESET_NAME = "repo-scaffold default-branch ruleset"
 
 _BEST_EFFORT_SECURITY_FEATURES: tuple[tuple[str, str], ...] = (
     ("Dependabot alerts", "/repos/{repo}/vulnerability-alerts"),
     ("Dependabot security updates", "/repos/{repo}/automated-security-fixes"),
 )
+
+
+def _api_headers() -> list[str]:
+    return [
+        "-H",
+        "Accept: application/vnd.github+json",
+        "-H",
+        f"X-GitHub-Api-Version: {_API_VERSION}",
+    ]
+
+
+def _repo_patch_payload() -> str:
+    return json.dumps(
+        {
+            "allow_squash_merge": True,
+            "allow_merge_commit": False,
+            "allow_rebase_merge": False,
+            "delete_branch_on_merge": True,
+            "allow_auto_merge": True,
+            "is_template": False,
+        },
+        indent=2,
+    )
+
+
+def _default_branch_ruleset_payload() -> str:
+    return json.dumps(
+        {
+            "name": _SETTINGS_RULESET_NAME,
+            "target": "branch",
+            "enforcement": "active",
+            "conditions": {
+                "ref_name": {
+                    "include": ["~DEFAULT_BRANCH"],
+                    "exclude": [],
+                }
+            },
+            "rules": [
+                {"type": "deletion"},
+                {"type": "non_fast_forward"},
+                {"type": "required_linear_history"},
+                {
+                    "type": "pull_request",
+                    "parameters": {
+                        "allowed_merge_methods": ["squash"],
+                        "dismiss_stale_reviews_on_push": False,
+                        "require_code_owner_review": False,
+                        "require_last_push_approval": False,
+                        "required_approving_review_count": 0,
+                        "required_review_thread_resolution": True,
+                    },
+                },
+            ],
+        },
+        indent=2,
+    )
+
+
+def _security_and_analysis_payload(feature: str) -> str:
+    return json.dumps(
+        {"security_and_analysis": {feature: {"status": "enabled"}}},
+        indent=2,
+    )
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -120,6 +156,178 @@ def _run(
         capture_output=True,
         check=False,
     )
+
+
+def _api(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    method: str,
+    endpoint: str,
+    stdin_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    args = ["gh", "api", "--method", method, *_api_headers(), endpoint]
+    if stdin_text is not None:
+        args.extend(["--input", "-"])
+    return _run(args, cwd=repo_dir, env=env, stdin_text=stdin_text)
+
+
+def _load_json(text: str, *, error_message: str) -> object:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(error_message) from exc
+
+
+def _get_repo_info(
+    *, repo_dir: Path, env: dict[str, str], repo: str
+) -> dict[str, object]:
+    cp = _api(repo_dir=repo_dir, env=env, method="GET", endpoint=f"/repos/{repo}")
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr.strip() or f"Failed loading repository: {repo}")
+    payload = _load_json(
+        cp.stdout,
+        error_message=f"Unexpected repository metadata response for {repo}.",
+    )
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Unexpected repository metadata response for {repo}.")
+    return payload
+
+
+def _list_repo_rulesets(
+    *, repo_dir: Path, env: dict[str, str], repo: str
+) -> list[dict[str, object]]:
+    cp = _api(
+        repo_dir=repo_dir,
+        env=env,
+        method="GET",
+        endpoint=f"/repos/{repo}/rulesets?includes_parents=false&targets=branch",
+    )
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr.strip() or f"Failed listing rulesets for {repo}.")
+    payload = _load_json(
+        cp.stdout,
+        error_message=f"Unexpected rulesets response for {repo}.",
+    )
+    if not isinstance(payload, list):
+        raise RuntimeError(f"Unexpected rulesets response for {repo}.")
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _clear_legacy_branch_protection(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    default_branch: str,
+    out: Callable[[str], None],
+) -> None:
+    cp = _api(
+        repo_dir=repo_dir,
+        env=env,
+        method="DELETE",
+        endpoint=f"/repos/{repo}/branches/{default_branch}/protection",
+    )
+    if cp.returncode == 0:
+        out(f"Removed legacy branch protection from {default_branch}.")
+        return
+
+    message = (cp.stderr or cp.stdout or "").strip().lower()
+    not_found_markers = (
+        "branch not protected",
+        "not found",
+        "http 404",
+    )
+    if any(marker in message for marker in not_found_markers):
+        return
+
+    raise RuntimeError(
+        cp.stderr.strip()
+        or f"Failed removing legacy branch protection from {default_branch}."
+    )
+
+
+def _sync_default_branch_ruleset(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    out: Callable[[str], None],
+) -> None:
+    managed_rulesets = [
+        item
+        for item in _list_repo_rulesets(repo_dir=repo_dir, env=env, repo=repo)
+        if item.get("name") == _SETTINGS_RULESET_NAME
+    ]
+    payload = _default_branch_ruleset_payload()
+
+    if managed_rulesets:
+        ruleset_id = managed_rulesets[0].get("id")
+        if not isinstance(ruleset_id, int):
+            raise RuntimeError("Managed ruleset exists but is missing a numeric id.")
+        cp = _api(
+            repo_dir=repo_dir,
+            env=env,
+            method="PUT",
+            endpoint=f"/repos/{repo}/rulesets/{ruleset_id}",
+            stdin_text=payload,
+        )
+        if cp.returncode != 0:
+            raise RuntimeError(cp.stderr.strip() or "Failed updating managed ruleset.")
+        out(f"Updated ruleset '{_SETTINGS_RULESET_NAME}'.")
+        return
+
+    cp = _api(
+        repo_dir=repo_dir,
+        env=env,
+        method="POST",
+        endpoint=f"/repos/{repo}/rulesets",
+        stdin_text=payload,
+    )
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr.strip() or "Failed creating managed ruleset.")
+    out(f"Created ruleset '{_SETTINGS_RULESET_NAME}'.")
+
+
+def _enable_security_and_analysis_feature(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    feature_name: str,
+    feature_key: str,
+    out: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> None:
+    cp = _api(
+        repo_dir=repo_dir,
+        env=env,
+        method="PATCH",
+        endpoint=f"/repos/{repo}",
+        stdin_text=_security_and_analysis_payload(feature_key),
+    )
+    if cp.returncode == 0:
+        out(f"Enabled {feature_name.lower()}.")
+        return
+    feature_err = cp.stderr.strip() or cp.stdout.strip() or "unknown error"
+    warn(f"Warning: could not enable {feature_name.lower()}: {feature_err}")
+
+
+def _enable_optional_endpoint_feature(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    endpoint: str,
+    feature_name: str,
+    out: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> None:
+    cp = _api(repo_dir=repo_dir, env=env, method="PUT", endpoint=endpoint)
+    if cp.returncode == 0:
+        out(f"Enabled {feature_name.lower()}.")
+        return
+    feature_err = cp.stderr.strip() or cp.stdout.strip() or "unknown error"
+    warn(f"Warning: could not enable {feature_name.lower()}: {feature_err}")
 
 
 def _ensure_tools() -> None:
@@ -387,6 +595,29 @@ def _format_push_failure(raw: str) -> str:
     return message
 
 
+def apply_repository_settings(
+    *,
+    repo_dir: Path,
+    repo: str,
+    dry_run: bool,
+    out: Callable[[str], None] = print,
+    warn: Callable[[str], None] | None = None,
+) -> None:
+    _ensure_tools()
+    env = _build_env(repo_dir)
+    if not dry_run:
+        _ensure_gh_auth(repo_dir, env)
+    emit_warn = warn if warn is not None else out
+    _apply_settings(
+        repo_dir=repo_dir.resolve(),
+        env=env,
+        repo=repo,
+        dry_run=dry_run,
+        out=out,
+        warn=emit_warn,
+    )
+
+
 def _create_or_push_repo(
     *,
     repo_dir: Path,
@@ -453,54 +684,85 @@ def _apply_settings(
 ) -> None:
     out(f"{'[dry-run] ' if dry_run else ''}apply repository settings: {repo}")
     if dry_run:
+        out("[dry-run] sync repository merge settings")
+        out("[dry-run] remove legacy default-branch protection if present")
+        out(
+            "[dry-run] sync managed default-branch ruleset "
+            "(pull request required, 0 approvals, squash-only, no force-push, no delete)"
+        )
+        out("[dry-run] enable secret scanning")
+        out("[dry-run] enable secret scanning push protection")
         for feature_name, _ in _BEST_EFFORT_SECURITY_FEATURES:
             out(f"[dry-run] enable {feature_name.lower()}")
+        out("[dry-run] enable private vulnerability reporting when supported")
         return
 
-    patch_cp = _run(
-        ["gh", "api", "--method", "PATCH", f"/repos/{repo}", "--input", "-"],
-        cwd=repo_dir,
+    repo_info = _get_repo_info(repo_dir=repo_dir, env=env, repo=repo)
+    default_branch = str(repo_info.get("default_branch") or "main")
+    visibility = str(repo_info.get("visibility") or "")
+
+    patch_cp = _api(
+        repo_dir=repo_dir,
         env=env,
-        stdin_text=_REPO_PATCH_PAYLOAD,
+        method="PATCH",
+        endpoint=f"/repos/{repo}",
+        stdin_text=_repo_patch_payload(),
     )
     if patch_cp.returncode != 0:
         raise RuntimeError(
             patch_cp.stderr.strip() or "Failed applying repository merge settings."
         )
+    out("Applied repository merge settings.")
 
-    protect_cp = _run(
-        [
-            "gh",
-            "api",
-            "--method",
-            "PUT",
-            f"/repos/{repo}/branches/main/protection",
-            "--input",
-            "-",
-        ],
-        cwd=repo_dir,
+    _clear_legacy_branch_protection(
+        repo_dir=repo_dir,
         env=env,
-        stdin_text=_PROTECTION_PAYLOAD,
+        repo=repo,
+        default_branch=default_branch,
+        out=out,
     )
-    if protect_cp.returncode != 0:
-        raise RuntimeError(
-            protect_cp.stderr.strip() or "Failed applying main branch protection."
-        )
+
+    _sync_default_branch_ruleset(repo_dir=repo_dir, env=env, repo=repo, out=out)
+
+    _enable_security_and_analysis_feature(
+        repo_dir=repo_dir,
+        env=env,
+        repo=repo,
+        feature_name="Secret scanning",
+        feature_key="secret_scanning",
+        out=out,
+        warn=warn,
+    )
+    _enable_security_and_analysis_feature(
+        repo_dir=repo_dir,
+        env=env,
+        repo=repo,
+        feature_name="Secret scanning push protection",
+        feature_key="secret_scanning_push_protection",
+        out=out,
+        warn=warn,
+    )
 
     for feature_name, endpoint_template in _BEST_EFFORT_SECURITY_FEATURES:
         endpoint = endpoint_template.format(repo=repo)
-        feature_cp = _run(
-            ["gh", "api", "--method", "PUT", endpoint],
-            cwd=repo_dir,
+        _enable_optional_endpoint_feature(
+            repo_dir=repo_dir,
             env=env,
+            endpoint=endpoint,
+            feature_name=feature_name,
+            out=out,
+            warn=warn,
         )
-        if feature_cp.returncode == 0:
-            out(f"Enabled {feature_name.lower()}.")
-            continue
-        feature_err = (
-            feature_cp.stderr.strip() or feature_cp.stdout.strip() or "unknown error"
+
+    if visibility == "public":
+        _enable_optional_endpoint_feature(
+            repo_dir=repo_dir,
+            env=env,
+            endpoint=f"/repos/{repo}/private-vulnerability-reporting",
+            feature_name="Private vulnerability reporting",
+            out=out,
+            warn=warn,
         )
-        warn(f"Warning: could not enable {feature_name.lower()}: {feature_err}")
 
 
 def create_repository(
