@@ -110,7 +110,9 @@ def test_apply_settings_uses_ruleset_and_public_security_defaults(
     monkeypatch.setattr(create_ops, "_get_repo_info", _fake_get_repo_info)
     monkeypatch.setattr(create_ops, "_api", _fake_api)
     monkeypatch.setattr(
-        create_ops, "_clear_legacy_branch_protection", _fake_clear_legacy_branch_protection
+        create_ops,
+        "_clear_legacy_branch_protection",
+        _fake_clear_legacy_branch_protection,
     )
     monkeypatch.setattr(
         create_ops, "_sync_default_branch_ruleset", _fake_sync_default_branch_ruleset

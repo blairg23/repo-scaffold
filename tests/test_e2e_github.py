@@ -229,7 +229,9 @@ def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
                 None,
             )
             assert isinstance(pull_request_rule, dict)
-            assert pull_request_rule["parameters"]["required_approving_review_count"] == 0
+            assert (
+                pull_request_rule["parameters"]["required_approving_review_count"] == 0
+            )
             assert (
                 pull_request_rule["parameters"]["required_review_thread_resolution"]
                 is True
@@ -271,6 +273,7 @@ def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
                 }
             ]
         }
+        backlog_file.parent.mkdir(parents=True, exist_ok=True)
         backlog_file.write_text(json.dumps(backlog_data, indent=2), encoding="utf-8")
 
         dry_backlog_logs: list[str] = []

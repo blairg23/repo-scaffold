@@ -1,0 +1,30 @@
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "repo-scaffold"
+version = "0.1.0"
+description = "Generate an OS-agnostic GitHub repository scaffold for Go, Python, and React projects"
+readme = "README.md"
+authors = ["repo-scaffold"]
+packages = [{ include = "repo_scaffold", from = "src" }]
+include = ["src/repo_scaffold/templates/**/*"]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<4.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0.0"
+pre-commit = ">=3.8.0"
+tox = ">=4.20.0"
+
+[tool.poetry.scripts]
+repo-scaffold = "repo_scaffold.cli:main"
+
+[tool.pytest.ini_options]
+addopts = "-q -s"
+testpaths = ["tests"]
+markers = [
+  "e2e_github: runs live GitHub end-to-end validation (opt-in, remote side effects)",
+]

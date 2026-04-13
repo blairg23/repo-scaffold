@@ -676,7 +676,9 @@ def test_apply_rules_resolves_repo_from_dotenv(
 
     called: dict[str, object] = {}
 
-    def _fake_apply_repository_settings(*, repo_dir: Path, repo: str, dry_run: bool, out, warn):
+    def _fake_apply_repository_settings(
+        *, repo_dir: Path, repo: str, dry_run: bool, out, warn
+    ):
         called["repo_dir"] = repo_dir
         called["repo"] = repo
         called["dry_run"] = dry_run
@@ -701,7 +703,9 @@ def test_apply_rules_dry_run_does_not_execute(
 ) -> None:
     called: dict[str, object] = {}
 
-    def _fake_apply_repository_settings(*, repo_dir: Path, repo: str, dry_run: bool, out, warn):
+    def _fake_apply_repository_settings(
+        *, repo_dir: Path, repo: str, dry_run: bool, out, warn
+    ):
         called["repo"] = repo
         called["dry_run"] = dry_run
 

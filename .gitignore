@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Build artifacts
+dist/
+build/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Local-only backlog data (do not commit)
+local/backlog/issues.json
+
+# Local generated artifacts (do not commit)
+artifacts/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+.codex
+.codex/
+
+# tox
+.tox/
+
+# pre-commit
+.pre-commit-cache/
