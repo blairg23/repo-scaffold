@@ -106,6 +106,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "npm run build" in generated_readme
     assert "tox -e format" in generated_readme
     assert "tox -e precommit" in generated_readme
+    assert "the hook exits non-zero" in generated_readme
     assert "tox -e lint,type,test" in generated_readme
     assert "make typecheck" in generated_readme
     assert "## Backlog bootstrap" not in generated_readme
@@ -133,12 +134,15 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert 'pytest -q -m "not e2e_github" {posargs:tests}' in tox_ini
     assert "[testenv:precommit]" in tox_ini
     assert "skip_install = true" in tox_ini
+    assert "allowlist_externals =" in tox_ini
+    assert "git" in tox_ini
     assert "PYTHONPATH={toxinidir}/src" in tox_ini
     assert "deps =" in tox_ini
     assert "{[testenv:format]commands}" in tox_ini
     assert "{[testenv:lint]commands}" in tox_ini
     assert "{[testenv:type]commands}" in tox_ini
     assert "{[testenv:test-fast]commands}" in tox_ini
+    assert "git diff --exit-code -- src tests" in tox_ini
     assert "black src tests" in tox_ini
     assert "ruff check src tests --fix" in tox_ini
     assert "pytest -q {posargs:tests}" in tox_ini

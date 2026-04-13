@@ -367,6 +367,7 @@ poetry run pre-commit run --all-files
 ```
 
 `pre-commit` runs a local tox gate via the `tox-suite` hook: auto-format first, then `lint`, `type`, and `test-fast`.
+If formatting or fixers changed tracked files, the hook exits non-zero so you can review, re-stage, and rerun the commit intentionally.
 
 Tox workflow (lint, type, test):
 

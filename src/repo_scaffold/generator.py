@@ -573,6 +573,7 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
             "```",
             "",
             "For parity with CI quality gates, pre-commit also runs `tox -e precommit`.",
+            "If formatters or fixers change tracked files, the hook exits non-zero so you can re-stage and rerun the commit intentionally.",
             "",
         ]
     )
@@ -2282,6 +2283,8 @@ commands =
 
 [testenv:precommit]
 skip_install = true
+allowlist_externals =
+    git
 setenv =
     {[testenv]setenv}
     PYTHONPATH={toxinidir}/src
@@ -2295,6 +2298,7 @@ commands =
     {[testenv:lint]commands}
     {[testenv:type]commands}
     {[testenv:test-fast]commands}
+    git diff --exit-code -- src tests
 """
 
 
