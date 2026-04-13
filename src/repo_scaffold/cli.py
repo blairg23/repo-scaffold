@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -14,7 +13,7 @@ from .backlog_ops import (
     resolve_authenticated_login,
     resolve_project_target_for_auth_check,
 )
-from .create_ops import CreateSummary, create_repository
+from .create_ops import CreateSummary, apply_repository_settings, create_repository
 from .delete_ops import DeleteSummary, delete_repositories
 from .generator import (
     SUPPORTED_LICENSE,
@@ -467,59 +466,6 @@ def _run_file_apply(files: list, policy: OverwritePolicy) -> int:
     return 1 if summary.failures > 0 else 0
 
 
-def _render_rules_commands(repo: str) -> list[str]:
-    patch_payload = """{
-  "allow_squash_merge": true,
-  "allow_merge_commit": false,
-  "allow_rebase_merge": false,
-  "delete_branch_on_merge": true
-}"""
-    protection_payload = """{
-  "required_status_checks": {
-    "strict": false,
-    "contexts": []
-  },
-  "enforce_admins": true,
-  "required_pull_request_reviews": {
-    "dismiss_stale_reviews": false,
-    "require_code_owner_reviews": false,
-    "required_approving_review_count": 1,
-    "require_last_push_approval": false
-  },
-  "restrictions": null,
-  "required_linear_history": true,
-  "allow_force_pushes": false,
-  "allow_deletions": false,
-  "block_creations": false,
-  "required_conversation_resolution": true,
-  "lock_branch": false,
-  "allow_fork_syncing": true
-}"""
-    return [
-        f"gh api --method PATCH '/repos/{repo}' --input - <<'JSON'\n{patch_payload}\nJSON",
-        (
-            f"gh api --method PUT '/repos/{repo}/branches/main/protection' --input - <<'JSON'\n"
-            f"{protection_payload}\nJSON"
-        ),
-        f"gh api --method PUT '/repos/{repo}/vulnerability-alerts'",
-        f"gh api --method PUT '/repos/{repo}/automated-security-fixes'",
-    ]
-
-
-def _apply_rules(repo: str) -> int:
-    commands = _render_rules_commands(repo)
-    failures = 0
-    for command in commands:
-        cp = subprocess.run(
-            ["bash", "-lc", command], text=True, capture_output=True, check=False
-        )
-        if cp.returncode != 0:
-            failures += 1
-            if cp.stderr.strip():
-                print(cp.stderr.strip(), file=sys.stderr)
-    return failures
-
-
 def main(argv: list[str] | None = None) -> int:
     _seed_env_from_dotenv(Path.cwd() / ".env")
     parser = build_parser()
@@ -842,17 +788,27 @@ def main(argv: list[str] | None = None) -> int:
             print(repo_error, file=sys.stderr)
             return 2
         assert target_repo is not None
-        commands = _render_rules_commands(target_repo)
-        if not ns.do_apply or getattr(ns, "dry_run", False):
-            print("Recommended gh api commands:")
-            for cmd in commands:
-                print("")
-                print(cmd)
-            return 0
+        preview_only = not ns.do_apply or getattr(ns, "dry_run", False)
+        try:
+            apply_repository_settings(
+                repo_dir=Path.cwd(),
+                repo=target_repo,
+                dry_run=preview_only,
+                out=print,
+                warn=lambda line: print(line, file=sys.stderr),
+            )
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
 
-        failures = _apply_rules(target_repo)
-        print(f"Applied rules commands with {failures} failure(s).")
-        return 1 if failures > 0 else 0
+        print("")
+        print("Summary:")
+        if preview_only:
+            print("  mode: dry-run")
+            print("  settings planned: True")
+        else:
+            print("  settings applied: True")
+        return 0
 
     parser.error("Unsupported command.")
     return 2

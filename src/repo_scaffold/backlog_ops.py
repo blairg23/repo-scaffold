@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -425,36 +426,52 @@ def _parse_concatenated_json_arrays(raw: str) -> list[dict[str, object]]:
 
 
 def _find_issue_number(repo_dir: Path, repo: str, title: str) -> int | None:
+    for item in _list_repo_issues(repo_dir, repo):
+        if not isinstance(item, dict) or "pull_request" in item:
+            continue
+
+        number = item.get("number")
+        if item.get("title") == title and isinstance(number, int):
+            return number
+    return None
+
+
+def _list_repo_issues(repo_dir: Path, repo: str) -> list[dict[str, object]]:
     cp = _run_gh(
         repo_dir,
-        [
-            "issue",
-            "list",
-            "--repo",
-            repo,
-            "--state",
-            "all",
-            "--limit",
-            "100",
-            "--search",
-            f"{title} in:title",
-            "--json",
-            "title,number",
-        ],
+        ["api", "--paginate", f"/repos/{repo}/issues?state=all&per_page=100"],
     )
     if cp.returncode != 0:
         raise RuntimeError(
-            cp.stderr.strip() or f"Failed checking existing issue: {title}"
+            cp.stderr.strip() or f"Failed listing issues for repo: {repo}"
         )
-    data = json.loads(cp.stdout or "[]")
-    for item in data:
-        if (
-            isinstance(item, dict)
-            and item.get("title") == title
-            and isinstance(item.get("number"), int)
-        ):
-            return int(item["number"])
-    return None
+    return _parse_concatenated_json_arrays(cp.stdout)
+
+
+def _wait_for_issue_titles_visible(
+    repo_dir: Path,
+    repo: str,
+    titles: list[str],
+) -> None:
+    pending = {title for title in titles if title.strip()}
+    if not pending:
+        return
+
+    for delay in (0.0, 0.25, 0.5, 1.0, 2.0):
+        if delay > 0:
+            time.sleep(delay)
+
+        visible_titles = {
+            item.get("title")
+            for item in _list_repo_issues(repo_dir, repo)
+            if isinstance(item, dict)
+            and "pull_request" not in item
+            and isinstance(item.get("title"), str)
+        }
+        still_missing = {title for title in pending if title not in visible_titles}
+        if not still_missing:
+            return
+        pending = still_missing
 
 
 def _list_existing_labels(repo_dir: Path, repo: str) -> set[str]:
@@ -632,6 +649,7 @@ def apply_backlog(
     ticket_issues_skipped = 0
     project_items_added = 0
     project_items_skipped = 0
+    created_issue_titles: list[str] = []
 
     project = _resolve_project_target(
         repo_dir=repo_dir,
@@ -786,6 +804,7 @@ def apply_backlog(
                     epic_numbers[epic_title] = number
                     issues_created += 1
                     epic_issues_created += 1
+                    created_issue_titles.append(epic_title)
                     out(f"Created issue: {epic_title}")
                     if project is not None:
                         added, skipped, failed = _add_issue_to_project(
@@ -898,6 +917,7 @@ def apply_backlog(
                 )
                 issues_created += 1
                 ticket_issues_created += 1
+                created_issue_titles.append(title)
                 out(f"Created issue: {title}")
                 if project is not None:
                     added, skipped, failed = _add_issue_to_project(
@@ -916,6 +936,9 @@ def apply_backlog(
             except RuntimeError as exc:
                 failures += 1
                 emit_err(str(exc))
+
+    if not dry_run and created_issue_titles:
+        _wait_for_issue_titles_visible(repo_dir, repo, created_issue_titles)
 
     return BacklogApplySummary(
         milestones_created=milestones_created,

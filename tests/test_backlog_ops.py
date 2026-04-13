@@ -61,6 +61,15 @@ def test_apply_backlog_creates_missing_labels(
             return _cp_ok("[]")
         if args[:2] == ["api", "--paginate"] and "labels" in args[2]:
             return _cp_ok("[]")
+        if args[:2] == ["api", "--paginate"] and "issues" in args[2]:
+            return _cp_ok(
+                json.dumps(
+                    [
+                        {"number": 1, "title": "Epic e2e"},
+                        {"number": 2, "title": "Ticket e2e"},
+                    ]
+                )
+            )
         if args[:3] == ["api", "--method", "POST"] and args[3].endswith("/milestones"):
             return _cp_ok("{}")
         if args[:3] == ["api", "--method", "POST"] and args[3].endswith("/labels"):
@@ -167,6 +176,64 @@ def test_resolve_authenticated_login_returns_login(
     )
 
     assert backlog_ops.resolve_authenticated_login(repo_dir) == "octocat"
+
+
+def test_find_issue_number_uses_repo_issues_api_exact_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    def _fake_run_gh(
+        _repo_dir: Path, args: list[str]
+    ) -> subprocess.CompletedProcess[str]:
+        assert args == [
+            "api",
+            "--paginate",
+            "/repos/acme/repo/issues?state=all&per_page=100",
+        ]
+        return _cp_ok(
+            json.dumps(
+                [
+                    {"number": 10, "title": "Some other issue"},
+                    {
+                        "number": 11,
+                        "title": "Same title, but PR",
+                        "pull_request": {"url": "https://example.test/pr"},
+                    },
+                    {"number": 12, "title": "Wanted issue"},
+                ]
+            )
+        )
+
+    monkeypatch.setattr(backlog_ops, "_run_gh", _fake_run_gh)
+
+    assert backlog_ops._find_issue_number(repo_dir, "acme/repo", "Wanted issue") == 12
+    assert (
+        backlog_ops._find_issue_number(repo_dir, "acme/repo", "Missing issue") is None
+    )
+
+
+def test_wait_for_issue_titles_visible_retries_until_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    scans: list[int] = []
+
+    def _fake_list_repo_issues(_repo_dir: Path, _repo: str) -> list[dict[str, object]]:
+        scans.append(len(scans))
+        if len(scans) < 3:
+            return [{"number": 10, "title": "Epic A"}]
+        return [{"number": 10, "title": "Epic A"}, {"number": 11, "title": "A1"}]
+
+    monkeypatch.setattr(backlog_ops, "_list_repo_issues", _fake_list_repo_issues)
+    monkeypatch.setattr(backlog_ops.time, "sleep", lambda _seconds: None)
+
+    backlog_ops._wait_for_issue_titles_visible(repo_dir, "acme/repo", ["Epic A", "A1"])
+
+    assert len(scans) == 3
 
 
 def test_apply_backlog_project_title_creates_and_adds_items(

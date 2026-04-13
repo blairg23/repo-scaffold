@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -37,6 +38,129 @@ def test_resolve_repo_accepts_host_owner_repo_from_env() -> None:
         name=None,
     )
     assert resolved == "acme/demo"
+
+
+def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
+    payload = json.loads(create_ops._default_branch_ruleset_payload())
+    assert payload["name"] == "repo-scaffold default-branch ruleset"
+    assert payload["conditions"]["ref_name"]["include"] == ["~DEFAULT_BRANCH"]
+    pull_request_rule = next(
+        rule for rule in payload["rules"] if rule["type"] == "pull_request"
+    )
+    assert pull_request_rule["parameters"]["required_approving_review_count"] == 0
+    assert pull_request_rule["parameters"]["allowed_merge_methods"] == ["squash"]
+    assert pull_request_rule["parameters"]["required_review_thread_resolution"] is True
+
+
+def test_apply_settings_dry_run_previews_ruleset_and_security_defaults() -> None:
+    lines: list[str] = []
+
+    create_ops._apply_settings(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        dry_run=True,
+        out=lines.append,
+        warn=lines.append,
+    )
+
+    assert "sync managed default-branch ruleset" in "\n".join(lines)
+    assert "0 approvals" in "\n".join(lines)
+    assert "[dry-run] enable secret scanning" in lines
+    assert "[dry-run] enable secret scanning push protection" in lines
+
+
+def test_apply_settings_uses_ruleset_and_public_security_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, object] = {}
+    call_order: list[str] = []
+    optional_features: list[tuple[str, str]] = []
+    security_features: list[tuple[str, str]] = []
+
+    def _fake_get_repo_info(*, repo_dir: Path, env: dict[str, str], repo: str):
+        return {"default_branch": "main", "visibility": "public"}
+
+    def _fake_api(
+        *,
+        repo_dir: Path,
+        env: dict[str, str],
+        method: str,
+        endpoint: str,
+        stdin_text: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        calls["method"] = method
+        calls["endpoint"] = endpoint
+        calls["payload"] = stdin_text
+        return subprocess.CompletedProcess(
+            args=["gh", "api"], returncode=0, stdout="", stderr=""
+        )
+
+    def _fake_clear_legacy_branch_protection(**kwargs):
+        call_order.append("clear_legacy")
+        calls["default_branch"] = kwargs["default_branch"]
+
+    def _fake_sync_default_branch_ruleset(**kwargs):
+        call_order.append("sync_ruleset")
+        calls["ruleset_repo"] = kwargs["repo"]
+
+    def _fake_enable_security_and_analysis_feature(**kwargs):
+        security_features.append((kwargs["feature_name"], kwargs["feature_key"]))
+
+    def _fake_enable_optional_endpoint_feature(**kwargs):
+        optional_features.append((kwargs["feature_name"], kwargs["endpoint"]))
+
+    monkeypatch.setattr(create_ops, "_get_repo_info", _fake_get_repo_info)
+    monkeypatch.setattr(create_ops, "_api", _fake_api)
+    monkeypatch.setattr(
+        create_ops,
+        "_clear_legacy_branch_protection",
+        _fake_clear_legacy_branch_protection,
+    )
+    monkeypatch.setattr(
+        create_ops, "_sync_default_branch_ruleset", _fake_sync_default_branch_ruleset
+    )
+    monkeypatch.setattr(
+        create_ops,
+        "_enable_security_and_analysis_feature",
+        _fake_enable_security_and_analysis_feature,
+    )
+    monkeypatch.setattr(
+        create_ops,
+        "_enable_optional_endpoint_feature",
+        _fake_enable_optional_endpoint_feature,
+    )
+
+    create_ops._apply_settings(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        dry_run=False,
+        out=lambda _: None,
+        warn=lambda _: None,
+    )
+
+    assert calls["method"] == "PATCH"
+    assert calls["endpoint"] == "/repos/acme/repo"
+    payload = json.loads(str(calls["payload"]))
+    assert payload["allow_merge_commit"] is False
+    assert payload["allow_rebase_merge"] is False
+    assert payload["allow_squash_merge"] is True
+    assert payload["delete_branch_on_merge"] is True
+    assert payload["allow_auto_merge"] is True
+    assert payload["is_template"] is False
+    assert calls["default_branch"] == "main"
+    assert calls["ruleset_repo"] == "acme/repo"
+    assert call_order == ["sync_ruleset", "clear_legacy"]
+    assert ("Secret scanning", "secret_scanning") in security_features
+    assert (
+        "Secret scanning push protection",
+        "secret_scanning_push_protection",
+    ) in security_features
+    assert (
+        "Private vulnerability reporting",
+        "/repos/acme/repo/private-vulnerability-reporting",
+    ) in optional_features
 
 
 def test_create_or_push_repo_uses_absolute_source_path(
