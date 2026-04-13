@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from repo_scaffold.backlog_ops import BacklogApplySummary
-from repo_scaffold.create_ops import CreateSummary
+from repo_scaffold.create_ops import CreateSummary, SettingsCheckSummary
 from repo_scaffold.cli import main
 from repo_scaffold.delete_ops import DeleteSummary
 
@@ -36,6 +36,7 @@ def test_root_help_shows_all_modes(capsys: pytest.CaptureFixture[str]) -> None:
     assert "create" in stdout
     assert "init" in stdout
     assert "apply" in stdout
+    assert "check" in stdout
     assert "delete" in stdout
 
 
@@ -719,6 +720,72 @@ def test_apply_rules_dry_run_does_not_execute(
     assert called["dry_run"] is True
     stdout = capsys.readouterr().out
     assert "settings planned: True" in stdout
+
+
+def test_check_rules_resolves_repo_from_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / ".env").write_text("GH_REPO=acme/check-repo\n", encoding="utf-8")
+
+    for key in ("GH_REPO", "GITHUB_REPOSITORY", "GITHUB_ORG", "GITHUB_REPO"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.chdir(workspace)
+
+    called: dict[str, object] = {}
+
+    def _fake_check_repository_settings(*, repo_dir: Path, repo: str, out):
+        called["repo_dir"] = repo_dir
+        called["repo"] = repo
+        out(f"check repository settings: {repo}")
+        return SettingsCheckSummary(
+            repo=repo,
+            passed=8,
+            failed=0,
+            skipped=0,
+            drifts=(),
+        )
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.check_repository_settings", _fake_check_repository_settings
+    )
+
+    rc = main(["check", "rules"])
+    assert rc == 0
+    assert called["repo_dir"] == workspace
+    assert called["repo"] == "acme/check-repo"
+    stdout = capsys.readouterr().out
+    assert "check repository settings: acme/check-repo" in stdout
+    assert "checks passed: 8" in stdout
+    assert "checks failed: 0" in stdout
+
+
+def test_check_rules_returns_nonzero_when_drift_found(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def _fake_check_repository_settings(*, repo_dir: Path, repo: str, out):
+        out("DRIFT merge settings: allow_merge_commit expected False got True")
+        return SettingsCheckSummary(
+            repo=repo,
+            passed=5,
+            failed=2,
+            skipped=1,
+            drifts=(
+                "merge settings: allow_merge_commit expected False got True",
+                "managed default-branch ruleset: managed default-branch ruleset missing",
+            ),
+        )
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.check_repository_settings", _fake_check_repository_settings
+    )
+
+    rc = main(["check", "rules", "--repo", "acme/repo"])
+    assert rc == 1
+    stdout = capsys.readouterr().out
+    assert "checks failed: 2" in stdout
+    assert "drift items: 2" in stdout
 
 
 def test_create_subcommand_delegates_to_create_ops(

@@ -1,10 +1,11 @@
 # repo-scaffold
 
-`repo-scaffold` is a repo operations toolkit with four modes:
+`repo-scaffold` is a repo operations toolkit with five modes:
 
 - `create`: create/push a GitHub repo from a local folder and apply baseline settings
 - `init`: generate a new language-first repository scaffold
 - `apply`: apply capabilities safely to an existing repository
+- `check`: verify GitHub settings drift against the repo-scaffold baseline
 - `delete`: safely clean up GitHub test repositories by prefix or exact name
 
 Supported languages: `go`, `python`, `react`.
@@ -14,6 +15,7 @@ Workflow model:
 - run `init` to generate local repo content
 - run `create` to create/push the remote repository + baseline settings
 - run `apply ...` from this toolkit repo to manage templates/CI/dependabot/backlog/rules for any target repo
+- run `check ...` from this toolkit repo to verify current GitHub settings against the repo-scaffold baseline
 - run `delete` from this toolkit repo to clean up test repositories
 
 ## Install
@@ -88,6 +90,26 @@ Subcommands:
 - `dependabot [--low-noise]`: apply `.github/dependabot.yml`
 - `backlog --repo owner/repo [--file PATH] [--dry-run] [--auth-check] [--with-project] [--project-number N | --project-title T] [--project-owner O]`: bulk-create milestones/issues using `gh`
 - `rules [--repo owner/repo] [--apply]`: preview or apply merge settings, the managed default-branch ruleset, and security defaults
+
+### `check`
+
+Verify current GitHub settings against the repo-scaffold baseline.
+
+```bash
+poetry run repo-scaffold check rules --repo acme/payments-api
+```
+
+Behavior:
+
+- checks current merge settings
+- checks the managed default-branch ruleset
+- checks that legacy branch protection has been cleared
+- checks secret scanning and push protection
+- checks Dependabot alerts and Dependabot security updates
+- checks private vulnerability reporting for public repos
+- returns non-zero when drift is found
+
+If `--repo` is omitted, resolves from `GH_REPO` or `GITHUB_ORG` + `GITHUB_REPO` from env/`.env`.
 
 ### `delete`
 

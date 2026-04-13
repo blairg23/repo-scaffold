@@ -13,7 +13,13 @@ from .backlog_ops import (
     resolve_authenticated_login,
     resolve_project_target_for_auth_check,
 )
-from .create_ops import CreateSummary, apply_repository_settings, create_repository
+from .create_ops import (
+    CreateSummary,
+    SettingsCheckSummary,
+    apply_repository_settings,
+    check_repository_settings,
+    create_repository,
+)
 from .delete_ops import DeleteSummary, delete_repositories
 from .generator import (
     SUPPORTED_LICENSE,
@@ -401,7 +407,7 @@ def build_parser() -> argparse.ArgumentParser:
     apply_rules = apply_sub.add_parser(
         "rules",
         parents=[apply_parent],
-        help="Print recommended gh api commands for repository rules/settings",
+        help="Preview or apply GitHub repository settings",
     )
     apply_rules.add_argument("--repo", help="Target GitHub repo (owner/repo)")
     apply_rules.add_argument(
@@ -411,6 +417,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Execute commands instead of only printing them",
     )
 
+    check = subparsers.add_parser(
+        "check",
+        help="Check GitHub settings/capabilities for drift",
+    )
+    check_sub = check.add_subparsers(dest="check_command", required=True)
+    check_rules = check_sub.add_parser(
+        "rules",
+        help="Check merge settings, managed ruleset, and security defaults",
+    )
+    check_rules.add_argument("--repo", help="Target GitHub repo (owner/repo)")
+
     return parser
 
 
@@ -418,7 +435,7 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
     raw = list(sys.argv[1:] if argv is None else argv)
     if raw and raw[0] in {"-h", "--help"}:
         return raw
-    if raw and raw[0] in {"create", "init", "apply", "delete"}:
+    if raw and raw[0] in {"create", "init", "apply", "check", "delete"}:
         return raw
     # Backward-compatible behavior: previous root command maps to init.
     return ["init", *raw]
@@ -809,6 +826,33 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("  settings applied: True")
         return 0
+
+    if ns.mode == "check" and ns.check_command == "rules":
+        target_repo, repo_error = _resolve_repo_from_args_or_env(
+            repo=ns.repo, fallback_name=None
+        )
+        if repo_error:
+            print(repo_error, file=sys.stderr)
+            return 2
+        assert target_repo is not None
+        try:
+            check_summary: SettingsCheckSummary = check_repository_settings(
+                repo_dir=Path.cwd(),
+                repo=target_repo,
+                out=print,
+            )
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+        print("")
+        print("Summary:")
+        print(f"  repo: {check_summary.repo}")
+        print(f"  checks passed: {check_summary.passed}")
+        print(f"  checks failed: {check_summary.failed}")
+        print(f"  checks skipped: {check_summary.skipped}")
+        print(f"  drift items: {len(check_summary.drifts)}")
+        return 1 if check_summary.failed > 0 else 0
 
     parser.error("Unsupported command.")
     return 2
