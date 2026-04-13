@@ -15,7 +15,7 @@ include = ["src/repo_scaffold/templates/**/*"]
 python = ">=3.10,<4.0"
 
 [tool.poetry.group.dev.dependencies]
-pytest = ">=8.0.0"
+pytest = ">=9.0.3"
 pre-commit = ">=3.8.0"
 tox = ">=4.20.0"
 
