@@ -714,6 +714,8 @@ def _apply_settings(
         )
     out("Applied repository merge settings.")
 
+    _sync_default_branch_ruleset(repo_dir=repo_dir, env=env, repo=repo, out=out)
+
     _clear_legacy_branch_protection(
         repo_dir=repo_dir,
         env=env,
@@ -721,8 +723,6 @@ def _apply_settings(
         default_branch=default_branch,
         out=out,
     )
-
-    _sync_default_branch_ruleset(repo_dir=repo_dir, env=env, repo=repo, out=out)
 
     _enable_security_and_analysis_feature(
         repo_dir=repo_dir,

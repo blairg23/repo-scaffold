@@ -426,15 +426,7 @@ def _parse_concatenated_json_arrays(raw: str) -> list[dict[str, object]]:
 
 
 def _find_issue_number(repo_dir: Path, repo: str, title: str) -> int | None:
-    cp = _run_gh(
-        repo_dir,
-        ["api", "--paginate", f"/repos/{repo}/issues?state=all&per_page=100"],
-    )
-    if cp.returncode != 0:
-        raise RuntimeError(
-            cp.stderr.strip() or f"Failed checking existing issue: {title}"
-        )
-    for item in _parse_concatenated_json_arrays(cp.stdout):
+    for item in _list_repo_issues(repo_dir, repo):
         if not isinstance(item, dict) or "pull_request" in item:
             continue
 
@@ -442,6 +434,18 @@ def _find_issue_number(repo_dir: Path, repo: str, title: str) -> int | None:
         if item.get("title") == title and isinstance(number, int):
             return number
     return None
+
+
+def _list_repo_issues(repo_dir: Path, repo: str) -> list[dict[str, object]]:
+    cp = _run_gh(
+        repo_dir,
+        ["api", "--paginate", f"/repos/{repo}/issues?state=all&per_page=100"],
+    )
+    if cp.returncode != 0:
+        raise RuntimeError(
+            cp.stderr.strip() or f"Failed listing issues for repo: {repo}"
+        )
+    return _parse_concatenated_json_arrays(cp.stdout)
 
 
 def _wait_for_issue_titles_visible(
@@ -457,11 +461,14 @@ def _wait_for_issue_titles_visible(
         if delay > 0:
             time.sleep(delay)
 
-        still_missing = {
-            title
-            for title in pending
-            if _find_issue_number(repo_dir, repo, title) is None
+        visible_titles = {
+            item.get("title")
+            for item in _list_repo_issues(repo_dir, repo)
+            if isinstance(item, dict)
+            and "pull_request" not in item
+            and isinstance(item.get("title"), str)
         }
+        still_missing = {title for title in pending if title not in visible_titles}
         if not still_missing:
             return
         pending = still_missing

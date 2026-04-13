@@ -74,6 +74,7 @@ def test_apply_settings_uses_ruleset_and_public_security_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: dict[str, object] = {}
+    call_order: list[str] = []
     optional_features: list[tuple[str, str]] = []
     security_features: list[tuple[str, str]] = []
 
@@ -96,9 +97,11 @@ def test_apply_settings_uses_ruleset_and_public_security_defaults(
         )
 
     def _fake_clear_legacy_branch_protection(**kwargs):
+        call_order.append("clear_legacy")
         calls["default_branch"] = kwargs["default_branch"]
 
     def _fake_sync_default_branch_ruleset(**kwargs):
+        call_order.append("sync_ruleset")
         calls["ruleset_repo"] = kwargs["repo"]
 
     def _fake_enable_security_and_analysis_feature(**kwargs):
@@ -148,6 +151,7 @@ def test_apply_settings_uses_ruleset_and_public_security_defaults(
     assert payload["is_template"] is False
     assert calls["default_branch"] == "main"
     assert calls["ruleset_repo"] == "acme/repo"
+    assert call_order == ["sync_ruleset", "clear_legacy"]
     assert ("Secret scanning", "secret_scanning") in security_features
     assert (
         "Secret scanning push protection",

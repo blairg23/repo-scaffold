@@ -61,6 +61,15 @@ def test_apply_backlog_creates_missing_labels(
             return _cp_ok("[]")
         if args[:2] == ["api", "--paginate"] and "labels" in args[2]:
             return _cp_ok("[]")
+        if args[:2] == ["api", "--paginate"] and "issues" in args[2]:
+            return _cp_ok(
+                json.dumps(
+                    [
+                        {"number": 1, "title": "Epic e2e"},
+                        {"number": 2, "title": "Ticket e2e"},
+                    ]
+                )
+            )
         if args[:3] == ["api", "--method", "POST"] and args[3].endswith("/milestones"):
             return _cp_ok("{}")
         if args[:3] == ["api", "--method", "POST"] and args[3].endswith("/labels"):
@@ -211,23 +220,20 @@ def test_wait_for_issue_titles_visible_retries_until_present(
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
 
-    seen: dict[str, int] = {"Epic A": 0, "A1": 0}
+    scans: list[int] = []
 
-    def _fake_find_issue_number(_repo_dir: Path, _repo: str, title: str) -> int | None:
-        seen[title] += 1
-        if title == "Epic A":
-            return 10
-        if title == "A1" and seen[title] >= 3:
-            return 11
-        return None
+    def _fake_list_repo_issues(_repo_dir: Path, _repo: str) -> list[dict[str, object]]:
+        scans.append(len(scans))
+        if len(scans) < 3:
+            return [{"number": 10, "title": "Epic A"}]
+        return [{"number": 10, "title": "Epic A"}, {"number": 11, "title": "A1"}]
 
-    monkeypatch.setattr(backlog_ops, "_find_issue_number", _fake_find_issue_number)
+    monkeypatch.setattr(backlog_ops, "_list_repo_issues", _fake_list_repo_issues)
     monkeypatch.setattr(backlog_ops.time, "sleep", lambda _seconds: None)
 
     backlog_ops._wait_for_issue_titles_visible(repo_dir, "acme/repo", ["Epic A", "A1"])
 
-    assert seen["Epic A"] >= 1
-    assert seen["A1"] >= 3
+    assert len(scans) == 3
 
 
 def test_apply_backlog_project_title_creates_and_adds_items(
