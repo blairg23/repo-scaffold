@@ -52,6 +52,16 @@ def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
     assert pull_request_rule["parameters"]["required_review_thread_resolution"] is True
 
 
+def test_branch_protection_endpoint_url_encodes_branch_name() -> None:
+    assert (
+        create_ops._branch_protection_endpoint(
+            repo="acme/repo",
+            branch="release/2026",
+        )
+        == "/repos/acme/repo/branches/release%2F2026/protection"
+    )
+
+
 def test_apply_settings_dry_run_previews_ruleset_and_security_defaults() -> None:
     lines: list[str] = []
 

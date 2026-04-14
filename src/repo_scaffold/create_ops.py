@@ -8,6 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from urllib.parse import quote
 
 
 @dataclass(frozen=True)
@@ -245,6 +246,10 @@ def _get_repo_ruleset(
     return payload
 
 
+def _branch_protection_endpoint(*, repo: str, branch: str) -> str:
+    return f"/repos/{repo}/branches/{quote(branch, safe='')}/protection"
+
+
 def _clear_legacy_branch_protection(
     *,
     repo_dir: Path,
@@ -257,7 +262,7 @@ def _clear_legacy_branch_protection(
         repo_dir=repo_dir,
         env=env,
         method="DELETE",
-        endpoint=f"/repos/{repo}/branches/{default_branch}/protection",
+        endpoint=_branch_protection_endpoint(repo=repo, branch=default_branch),
     )
     if cp.returncode == 0:
         out(f"Removed legacy branch protection from {default_branch}.")
@@ -372,7 +377,7 @@ def _legacy_branch_protection_exists(
         repo_dir=repo_dir,
         env=env,
         method="GET",
-        endpoint=f"/repos/{repo}/branches/{default_branch}/protection",
+        endpoint=_branch_protection_endpoint(repo=repo, branch=default_branch),
     )
     if cp.returncode == 0:
         return True
