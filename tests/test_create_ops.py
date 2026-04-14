@@ -52,6 +52,16 @@ def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
     assert pull_request_rule["parameters"]["required_review_thread_resolution"] is True
 
 
+def test_branch_protection_endpoint_url_encodes_branch_name() -> None:
+    assert (
+        create_ops._branch_protection_endpoint(
+            repo="acme/repo",
+            branch="release/2026",
+        )
+        == "/repos/acme/repo/branches/release%2F2026/protection"
+    )
+
+
 def test_apply_settings_dry_run_previews_ruleset_and_security_defaults() -> None:
     lines: list[str] = []
 
@@ -161,6 +171,150 @@ def test_apply_settings_uses_ruleset_and_public_security_defaults(
         "Private vulnerability reporting",
         "/repos/acme/repo/private-vulnerability-reporting",
     ) in optional_features
+
+
+def test_check_settings_reports_clean_public_repo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines: list[str] = []
+    ruleset = json.loads(create_ops._default_branch_ruleset_payload())
+    ruleset["id"] = 123
+
+    monkeypatch.setattr(
+        create_ops,
+        "_get_repo_info",
+        lambda **_: {
+            **json.loads(create_ops._repo_patch_payload()),
+            "default_branch": "main",
+            "visibility": "public",
+            "security_and_analysis": {
+                "secret_scanning": {"status": "enabled"},
+                "secret_scanning_push_protection": {"status": "enabled"},
+            },
+        },
+    )
+    monkeypatch.setattr(create_ops, "_list_repo_rulesets", lambda **_: [ruleset])
+    monkeypatch.setattr(
+        create_ops, "_legacy_branch_protection_exists", lambda **_: False
+    )
+    monkeypatch.setattr(
+        create_ops, "_optional_endpoint_feature_enabled", lambda **_: (True, "enabled")
+    )
+
+    summary = create_ops._check_settings(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=lines.append,
+    )
+
+    assert summary.repo == "acme/repo"
+    assert summary.passed == 8
+    assert summary.failed == 0
+    assert summary.skipped == 0
+    assert summary.drifts == ()
+    assert "check repository settings: acme/repo" in lines
+    assert "PASS  managed default-branch ruleset" in lines
+
+
+def test_check_settings_fetches_ruleset_details_and_accepts_expanded_default_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines: list[str] = []
+    detailed_ruleset = json.loads(create_ops._default_branch_ruleset_payload())
+    detailed_ruleset["id"] = 123
+    detailed_ruleset["conditions"]["ref_name"]["include"] = ["refs/heads/main"]
+
+    monkeypatch.setattr(
+        create_ops,
+        "_get_repo_info",
+        lambda **_: {
+            **json.loads(create_ops._repo_patch_payload()),
+            "default_branch": "main",
+            "visibility": "public",
+            "security_and_analysis": {
+                "secret_scanning": {"status": "enabled"},
+                "secret_scanning_push_protection": {"status": "enabled"},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        create_ops,
+        "_list_repo_rulesets",
+        lambda **_: [
+            {
+                "id": 123,
+                "name": "repo-scaffold default-branch ruleset",
+                "target": "branch",
+                "enforcement": "active",
+            }
+        ],
+    )
+    monkeypatch.setattr(create_ops, "_get_repo_ruleset", lambda **_: detailed_ruleset)
+    monkeypatch.setattr(
+        create_ops, "_legacy_branch_protection_exists", lambda **_: False
+    )
+    monkeypatch.setattr(
+        create_ops, "_optional_endpoint_feature_enabled", lambda **_: (True, "enabled")
+    )
+
+    summary = create_ops._check_settings(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=lines.append,
+    )
+
+    assert summary.failed == 0
+    assert summary.passed == 8
+    assert "PASS  managed default-branch ruleset" in lines
+
+
+def test_check_settings_reports_drift_and_skips_private_repo_only_feature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines: list[str] = []
+
+    monkeypatch.setattr(
+        create_ops,
+        "_get_repo_info",
+        lambda **_: {
+            "allow_squash_merge": True,
+            "allow_merge_commit": True,
+            "allow_rebase_merge": False,
+            "delete_branch_on_merge": False,
+            "allow_auto_merge": False,
+            "is_template": False,
+            "default_branch": "main",
+            "visibility": "private",
+            "security_and_analysis": {
+                "secret_scanning": {"status": "disabled"},
+            },
+        },
+    )
+    monkeypatch.setattr(create_ops, "_list_repo_rulesets", lambda **_: [])
+    monkeypatch.setattr(
+        create_ops, "_legacy_branch_protection_exists", lambda **_: True
+    )
+    monkeypatch.setattr(
+        create_ops,
+        "_optional_endpoint_feature_enabled",
+        lambda **_: (False, "HTTP 404"),
+    )
+
+    summary = create_ops._check_settings(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=lines.append,
+    )
+
+    assert summary.failed == 7
+    assert summary.passed == 0
+    assert summary.skipped == 1
+    assert any("merge settings" in drift for drift in summary.drifts)
+    assert any("managed default-branch ruleset" in drift for drift in summary.drifts)
+    assert "SKIP  private vulnerability reporting (repo is not public)" in lines
 
 
 def test_create_or_push_repo_uses_absolute_source_path(

@@ -8,6 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from urllib.parse import quote
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,15 @@ class CreateSummary:
     pushed: bool
     settings_applied: bool
     failures: int
+
+
+@dataclass(frozen=True)
+class SettingsCheckSummary:
+    repo: str
+    passed: int
+    failed: int
+    skipped: int
+    drifts: tuple[str, ...]
 
 
 _API_VERSION = "2026-03-10"
@@ -214,6 +224,32 @@ def _list_repo_rulesets(
     return [item for item in payload if isinstance(item, dict)]
 
 
+def _get_repo_ruleset(
+    *, repo_dir: Path, env: dict[str, str], repo: str, ruleset_id: int
+) -> dict[str, object]:
+    cp = _api(
+        repo_dir=repo_dir,
+        env=env,
+        method="GET",
+        endpoint=f"/repos/{repo}/rulesets/{ruleset_id}",
+    )
+    if cp.returncode != 0:
+        raise RuntimeError(
+            cp.stderr.strip() or f"Failed loading ruleset {ruleset_id} for {repo}."
+        )
+    payload = _load_json(
+        cp.stdout,
+        error_message=f"Unexpected ruleset response for {repo}#{ruleset_id}.",
+    )
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Unexpected ruleset response for {repo}#{ruleset_id}.")
+    return payload
+
+
+def _branch_protection_endpoint(*, repo: str, branch: str) -> str:
+    return f"/repos/{repo}/branches/{quote(branch, safe='')}/protection"
+
+
 def _clear_legacy_branch_protection(
     *,
     repo_dir: Path,
@@ -226,7 +262,7 @@ def _clear_legacy_branch_protection(
         repo_dir=repo_dir,
         env=env,
         method="DELETE",
-        endpoint=f"/repos/{repo}/branches/{default_branch}/protection",
+        endpoint=_branch_protection_endpoint(repo=repo, branch=default_branch),
     )
     if cp.returncode == 0:
         out(f"Removed legacy branch protection from {default_branch}.")
@@ -328,6 +364,165 @@ def _enable_optional_endpoint_feature(
         return
     feature_err = cp.stderr.strip() or cp.stdout.strip() or "unknown error"
     warn(f"Warning: could not enable {feature_name.lower()}: {feature_err}")
+
+
+def _legacy_branch_protection_exists(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    default_branch: str,
+) -> bool:
+    cp = _api(
+        repo_dir=repo_dir,
+        env=env,
+        method="GET",
+        endpoint=_branch_protection_endpoint(repo=repo, branch=default_branch),
+    )
+    if cp.returncode == 0:
+        return True
+
+    message = (cp.stderr or cp.stdout or "").strip().lower()
+    not_found_markers = (
+        "branch not protected",
+        "not found",
+        "http 404",
+    )
+    if any(marker in message for marker in not_found_markers):
+        return False
+
+    raise RuntimeError(
+        cp.stderr.strip()
+        or f"Failed checking legacy branch protection on {default_branch}."
+    )
+
+
+def _optional_endpoint_feature_enabled(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    endpoint: str,
+) -> tuple[bool, str]:
+    cp = _api(repo_dir=repo_dir, env=env, method="GET", endpoint=endpoint)
+    if cp.returncode == 0:
+        return True, "enabled"
+    message = cp.stderr.strip() or cp.stdout.strip() or "unknown error"
+    return False, message
+
+
+def _security_feature_status(
+    repo_info: dict[str, object], feature_key: str
+) -> str | None:
+    raw = repo_info.get("security_and_analysis")
+    if not isinstance(raw, dict):
+        return None
+    feature = raw.get(feature_key)
+    if not isinstance(feature, dict):
+        return None
+    status = feature.get("status")
+    if isinstance(status, str):
+        return status.strip().lower()
+    return None
+
+
+def _compare_ruleset_against_baseline(
+    rulesets: list[dict[str, object]],
+    *,
+    default_branch: str,
+) -> list[str]:
+    drifts: list[str] = []
+    managed_rulesets = [
+        item for item in rulesets if item.get("name") == _SETTINGS_RULESET_NAME
+    ]
+    if not managed_rulesets:
+        return ["managed default-branch ruleset missing"]
+
+    if len(managed_rulesets) > 1:
+        drifts.append("multiple managed default-branch rulesets found")
+
+    ruleset = managed_rulesets[0]
+    if ruleset.get("target") != "branch":
+        drifts.append(f"target expected 'branch' got {ruleset.get('target')!r}")
+    if ruleset.get("enforcement") != "active":
+        drifts.append(
+            f"enforcement expected 'active' got {ruleset.get('enforcement')!r}"
+        )
+
+    conditions = ruleset.get("conditions")
+    if not isinstance(conditions, dict):
+        drifts.append("conditions missing or invalid")
+        return drifts
+
+    ref_name = conditions.get("ref_name")
+    if not isinstance(ref_name, dict):
+        drifts.append("conditions.ref_name missing or invalid")
+        return drifts
+
+    include = ref_name.get("include")
+    exclude = ref_name.get("exclude")
+    accepted_include_values = (
+        ["~DEFAULT_BRANCH"],
+        [default_branch],
+        [f"refs/heads/{default_branch}"],
+    )
+    if include not in accepted_include_values:
+        drifts.append(
+            "conditions.ref_name.include expected one of "
+            f"{accepted_include_values!r} got {include!r}"
+        )
+    if exclude != []:
+        drifts.append(f"conditions.ref_name.exclude expected [] got {exclude!r}")
+
+    raw_rules = ruleset.get("rules")
+    if not isinstance(raw_rules, list):
+        drifts.append("rules missing or invalid")
+        return drifts
+
+    rule_map: dict[str, dict[str, object]] = {}
+    for item in raw_rules:
+        if not isinstance(item, dict):
+            continue
+        rule_type = item.get("type")
+        if isinstance(rule_type, str):
+            rule_map[rule_type] = item
+
+    for required_rule in (
+        "deletion",
+        "non_fast_forward",
+        "required_linear_history",
+        "pull_request",
+    ):
+        if required_rule not in rule_map:
+            drifts.append(f"missing rule: {required_rule}")
+
+    pull_request_rule = rule_map.get("pull_request")
+    if not isinstance(pull_request_rule, dict):
+        return drifts
+
+    parameters = pull_request_rule.get("parameters")
+    if not isinstance(parameters, dict):
+        drifts.append("pull_request rule parameters missing or invalid")
+        return drifts
+
+    expected_params = {
+        "dismiss_stale_reviews_on_push": False,
+        "require_code_owner_review": False,
+        "require_last_push_approval": False,
+        "required_approving_review_count": 0,
+        "required_review_thread_resolution": True,
+    }
+    for key, expected in expected_params.items():
+        actual = parameters.get(key)
+        if actual != expected:
+            drifts.append(f"pull_request.{key} expected {expected!r} got {actual!r}")
+
+    actual_methods = parameters.get("allowed_merge_methods")
+    if not isinstance(actual_methods, list) or sorted(actual_methods) != ["squash"]:
+        drifts.append(
+            f"pull_request.allowed_merge_methods expected ['squash'] got {actual_methods!r}"
+        )
+
+    return drifts
 
 
 def _ensure_tools() -> None:
@@ -618,6 +813,18 @@ def apply_repository_settings(
     )
 
 
+def check_repository_settings(
+    *,
+    repo_dir: Path,
+    repo: str,
+    out: Callable[[str], None] = print,
+) -> SettingsCheckSummary:
+    _ensure_tools()
+    env = _build_env(repo_dir)
+    _ensure_gh_auth(repo_dir, env)
+    return _check_settings(repo_dir=repo_dir.resolve(), env=env, repo=repo, out=out)
+
+
 def _create_or_push_repo(
     *,
     repo_dir: Path,
@@ -685,11 +892,11 @@ def _apply_settings(
     out(f"{'[dry-run] ' if dry_run else ''}apply repository settings: {repo}")
     if dry_run:
         out("[dry-run] sync repository merge settings")
-        out("[dry-run] remove legacy default-branch protection if present")
         out(
             "[dry-run] sync managed default-branch ruleset "
             "(pull request required, 0 approvals, squash-only, no force-push, no delete)"
         )
+        out("[dry-run] remove legacy default-branch protection if present")
         out("[dry-run] enable secret scanning")
         out("[dry-run] enable secret scanning push protection")
         for feature_name, _ in _BEST_EFFORT_SECURITY_FEATURES:
@@ -763,6 +970,145 @@ def _apply_settings(
             out=out,
             warn=warn,
         )
+
+
+def _check_settings(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    out: Callable[[str], None],
+) -> SettingsCheckSummary:
+    out(f"check repository settings: {repo}")
+    repo_info = _get_repo_info(repo_dir=repo_dir, env=env, repo=repo)
+    default_branch = str(repo_info.get("default_branch") or "main")
+    visibility = str(repo_info.get("visibility") or "")
+
+    passed = 0
+    failed = 0
+    skipped = 0
+    drifts: list[str] = []
+
+    expected_repo_settings = json.loads(_repo_patch_payload())
+    merge_drifts: list[str] = []
+    for key, expected in expected_repo_settings.items():
+        actual = repo_info.get(key)
+        if actual != expected:
+            merge_drifts.append(f"{key} expected {expected!r} got {actual!r}")
+    if merge_drifts:
+        failed += 1
+        for detail in merge_drifts:
+            drifts.append(f"merge settings: {detail}")
+            out(f"DRIFT merge settings: {detail}")
+    else:
+        passed += 1
+        out("PASS  merge settings")
+
+    rulesets = _list_repo_rulesets(repo_dir=repo_dir, env=env, repo=repo)
+    detailed_rulesets: list[dict[str, object]] = []
+    for ruleset in rulesets:
+        if ruleset.get("name") == _SETTINGS_RULESET_NAME and (
+            not isinstance(ruleset.get("conditions"), dict)
+            or not isinstance(ruleset.get("rules"), list)
+        ):
+            ruleset_id = ruleset.get("id")
+            if isinstance(ruleset_id, int):
+                detailed_rulesets.append(
+                    _get_repo_ruleset(
+                        repo_dir=repo_dir,
+                        env=env,
+                        repo=repo,
+                        ruleset_id=ruleset_id,
+                    )
+                )
+                continue
+        detailed_rulesets.append(ruleset)
+
+    ruleset_drifts = _compare_ruleset_against_baseline(
+        detailed_rulesets,
+        default_branch=default_branch,
+    )
+    if ruleset_drifts:
+        failed += 1
+        for detail in ruleset_drifts:
+            drifts.append(f"managed default-branch ruleset: {detail}")
+            out(f"DRIFT managed default-branch ruleset: {detail}")
+    else:
+        passed += 1
+        out("PASS  managed default-branch ruleset")
+
+    legacy_protection_exists = _legacy_branch_protection_exists(
+        repo_dir=repo_dir,
+        env=env,
+        repo=repo,
+        default_branch=default_branch,
+    )
+    if legacy_protection_exists:
+        failed += 1
+        detail = f"legacy branch protection still present on {default_branch}"
+        drifts.append(detail)
+        out(f"DRIFT legacy branch protection: still present on {default_branch}")
+    else:
+        passed += 1
+        out("PASS  legacy branch protection cleared")
+
+    for label, feature_key in (
+        ("secret scanning", "secret_scanning"),
+        ("secret scanning push protection", "secret_scanning_push_protection"),
+    ):
+        status = _security_feature_status(repo_info, feature_key)
+        if status == "enabled":
+            passed += 1
+            out(f"PASS  {label}")
+        else:
+            failed += 1
+            detail = f"{label} expected 'enabled' got {status!r}"
+            drifts.append(detail)
+            out(f"DRIFT {label}: expected 'enabled' got {status!r}")
+
+    for label, endpoint in (
+        ("dependabot alerts", "/repos/{repo}/vulnerability-alerts"),
+        ("dependabot security updates", "/repos/{repo}/automated-security-fixes"),
+    ):
+        enabled, detail = _optional_endpoint_feature_enabled(
+            repo_dir=repo_dir,
+            env=env,
+            endpoint=endpoint.format(repo=repo),
+        )
+        if enabled:
+            passed += 1
+            out(f"PASS  {label}")
+        else:
+            failed += 1
+            drift = f"{label} expected enabled got {detail}"
+            drifts.append(drift)
+            out(f"DRIFT {label}: {detail}")
+
+    if visibility == "public":
+        enabled, detail = _optional_endpoint_feature_enabled(
+            repo_dir=repo_dir,
+            env=env,
+            endpoint=f"/repos/{repo}/private-vulnerability-reporting",
+        )
+        if enabled:
+            passed += 1
+            out("PASS  private vulnerability reporting")
+        else:
+            failed += 1
+            drift = f"private vulnerability reporting expected enabled got {detail}"
+            drifts.append(drift)
+            out(f"DRIFT private vulnerability reporting: {detail}")
+    else:
+        skipped += 1
+        out("SKIP  private vulnerability reporting (repo is not public)")
+
+    return SettingsCheckSummary(
+        repo=repo,
+        passed=passed,
+        failed=failed,
+        skipped=skipped,
+        drifts=tuple(drifts),
+    )
 
 
 def create_repository(
