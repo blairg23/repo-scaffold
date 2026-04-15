@@ -1,5 +1,7 @@
 # repo-scaffold
 
+[![codecov](https://codecov.io/gh/blairg23/repo-scaffold/graph/badge.svg)](https://codecov.io/gh/blairg23/repo-scaffold)
+
 `repo-scaffold` is a repo operations toolkit with five modes:
 
 - `create`: create/push a GitHub repo from a local folder and apply baseline settings
@@ -40,7 +42,7 @@ Defaults:
 - `--languages` defaults to `go,python,react`
 - output defaults to `./out/<name>`
 - scaffolds include `.pre-commit-config.yaml`
-- Python scaffolds include `tox.ini`; generated CI runs `tox` (`lint`, `type`, `test`)
+- Python scaffolds include `tox.ini`; generated CI runs `tox` (`lint`, `type`, `coverage`)
 
 Fast path (no required flags):
 
@@ -366,26 +368,50 @@ poetry run pre-commit install
 poetry run pre-commit run --all-files
 ```
 
-`pre-commit` runs a local tox gate via the `tox-suite` hook: auto-format first, then `lint`, `type`, and `test-fast`.
+`pre-commit` runs a local tox gate via the `tox-suite` hook: auto-format first, then `lint`, `type`, and a fast branch-coverage gate.
 If formatting or fixers changed tracked files, the hook exits non-zero so you can review, re-stage, and rerun the commit intentionally.
 
-Tox workflow (lint, type, test):
+Tox workflow (lint, type, coverage):
 
 ```bash
-tox -e lint,type,test
+poetry run tox
+```
+
+Generate coverage reports locally (`coverage.xml` + `htmlcov/`) and enforce the 70% threshold:
+
+```bash
+poetry run tox -e coverage
 ```
 
 Fast tox gate used by pre-commit:
 
 ```bash
-tox -e precommit
+poetry run tox -e precommit
 ```
 
 Auto-fix Python formatting/lint issues:
 
 ```bash
-tox -e format
+poetry run tox -e format
 ```
+
+Optional local Codecov upload after generating `coverage.xml`:
+
+If `CODECOV_TOKEN` is already in `.env`, this is enough:
+
+```bash
+poetry run tox -e codecov-upload
+```
+
+If you prefer an explicit shell export:
+
+```bash
+export CODECOV_TOKEN=your_codecov_token
+poetry run tox -e codecov-upload
+```
+
+CI uploads `coverage.xml` as an artifact and attempts a Codecov upload when `CODECOV_TOKEN` is configured in GitHub Actions secrets.
+The current minimum coverage gate is 70%.
 
 If `tox` is not installed locally:
 

@@ -87,13 +87,17 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "name: Install pre-commit" in ci_yaml
     assert "SKIP: tox-suite" in ci_yaml
     assert "pre-commit run --all-files --show-diff-on-failure" in ci_yaml
-    assert "tox-env: [lint, type, test]" in ci_yaml
+    assert "tox-env: [lint, type, coverage]" in ci_yaml
     assert "- name: Install tox" in ci_yaml
     assert "run: tox -e ${{ matrix.tox-env }}" in ci_yaml
+    assert "Upload coverage.xml artifact" in ci_yaml
+    assert "codecov/codecov-action@v5" in ci_yaml
+    assert "CODECOV_TOKEN" in ci_yaml
     assert "language:" in (out_dir / ".github/workflows/codeql.yml").read_text(
         encoding="utf-8"
     )
     generated_readme = (out_dir / "README.md").read_text(encoding="utf-8")
+    assert "[![codecov](" in generated_readme
     assert "Created by [repo-scaffold]" in generated_readme
     assert "## Setup" in generated_readme
     assert "## Git hooks" in generated_readme
@@ -107,7 +111,12 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "tox -e format" in generated_readme
     assert "tox -e precommit" in generated_readme
     assert "the hook exits non-zero" in generated_readme
-    assert "tox -e lint,type,test" in generated_readme
+    assert "tox -e lint,type,coverage" in generated_readme
+    assert "tox -e coverage" in generated_readme
+    assert "tox -e codecov-upload" in generated_readme
+    assert "CODECOV_TOKEN" in generated_readme
+    assert "already present in `.env`" in generated_readme
+    assert "minimum coverage gate is 70%" in generated_readme
     assert "make typecheck" in generated_readme
     assert "## Backlog bootstrap" not in generated_readme
     assert "## GitHub token permissions" not in generated_readme
@@ -118,20 +127,31 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "GH_REPO=" in env_example
     assert "GITHUB_PROJECT_TITLE=" in env_example
     assert "GITHUB_PROJECT_TITLE_TEMPLATE=" in env_example
+    assert "CODECOV_TOKEN=" in env_example
+    assert "read automatically by `tox -e codecov-upload`" in env_example
     pyproject = (out_dir / "pyproject.toml").read_text(encoding="utf-8")
     assert "black>=" in pyproject
     assert "mypy>=" in pyproject
     assert "pre-commit>=" in pyproject
     assert "tox>=" in pyproject
     assert "[tool.mypy]" in pyproject
+    assert "[tool.coverage.run]" in pyproject
+    assert "fail_under = 70" in pyproject
     assert "[tool.tox]" not in pyproject
     tox_ini = (out_dir / "tox.ini").read_text(encoding="utf-8")
-    assert "envlist = lint,type,test" in tox_ini
+    assert "envlist = lint,type,coverage" in tox_ini
     assert "black --check src tests" in tox_ini
     assert "ruff check src tests" in tox_ini
     assert "[testenv:format]" in tox_ini
     assert "[testenv:test-fast]" in tox_ini
     assert 'pytest -q -m "not e2e_github" {posargs:tests}' in tox_ini
+    assert "[testenv:coverage]" in tox_ini
+    assert "[testenv:coverage-fast]" in tox_ini
+    assert "[testenv:codecov-upload]" in tox_ini
+    assert "pytest-cov>=6" in tox_ini
+    assert "codecov-cli>=11" in tox_ini
+    assert "--cov=src --cov-branch" in tox_ini
+    assert "COVERAGE_FILE={toxworkdir}/.coverage.{envname}" in tox_ini
     assert "[testenv:precommit]" in tox_ini
     assert "skip_install = true" in tox_ini
     assert "allowlist_externals =" in tox_ini
@@ -141,7 +161,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "{[testenv:format]commands}" in tox_ini
     assert "{[testenv:lint]commands}" in tox_ini
     assert "{[testenv:type]commands}" in tox_ini
-    assert "{[testenv:test-fast]commands}" in tox_ini
+    assert "{[testenv:coverage-fast]commands}" in tox_ini
     assert "git diff --exit-code -- src tests" in tox_ini
     assert "black src tests" in tox_ini
     assert "ruff check src tests --fix" in tox_ini
@@ -153,11 +173,15 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "additional_dependencies:" in pre_commit
     assert "tox>=4.20.0" in pre_commit
     assert 'args: ["-e", "precommit", "-vv"]' in pre_commit
+    assert "run tox suite (format, lint, type, coverage)" in pre_commit
     web_package = (out_dir / "web/package.json").read_text(encoding="utf-8")
     assert '"lint": "eslint ."' in web_package
     assert '"eslint": "^9.21.0"' in web_package
     gitignore = (out_dir / ".gitignore").read_text(encoding="utf-8")
     assert "!.env.example" in gitignore
+    assert ".coverage" in gitignore
+    assert "coverage.xml" in gitignore
+    assert "htmlcov/" in gitignore
     assert ".pre-commit-cache/" in gitignore
     assert not (out_dir / "backlog").exists()
     assert not (out_dir / "scripts").exists()

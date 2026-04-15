@@ -28,3 +28,28 @@ testpaths = ["tests"]
 markers = [
   "e2e_github: runs live GitHub end-to-end validation (opt-in, remote side effects)",
 ]
+
+[tool.coverage.run]
+branch = true
+source = ["repo_scaffold"]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+skip_covered = false
+omit = [
+  "src/repo_scaffold/__init__.py",
+  "src/repo_scaffold/__main__.py",
+]
+exclude_also = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+  "raise NotImplementedError",
+]
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.coverage.html]
+directory = "htmlcov"

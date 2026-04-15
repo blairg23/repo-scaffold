@@ -11,6 +11,10 @@ venv/
 # Build artifacts
 dist/
 build/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # Environment
 .env
