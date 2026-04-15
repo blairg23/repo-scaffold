@@ -40,6 +40,59 @@ def test_resolve_repo_accepts_host_owner_repo_from_env() -> None:
     assert resolved == "acme/demo"
 
 
+def test_load_env_file_and_build_env_support_aliases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd = tmp_path / "cwd"
+    repo_dir = tmp_path / "repo"
+    cwd.mkdir()
+    repo_dir.mkdir()
+    (cwd / ".env").write_text(
+        "\n".join(
+            [
+                "export github_token=legacy-token",
+                "github_org=legacy-org",
+                "GH_REPO=from/cwd",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (repo_dir / ".env").write_text(
+        "\n".join(
+            [
+                'GITHUB_TOKEN="repo-token"',
+                "GITHUB_REPO=repo-name",
+                "GITHUB_ORG=repo-org",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(cwd)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_ORG", raising=False)
+    monkeypatch.delenv("GITHUB_REPO", raising=False)
+    monkeypatch.delenv("GH_REPO", raising=False)
+    monkeypatch.delenv("github_token", raising=False)
+    monkeypatch.delenv("github_org", raising=False)
+    monkeypatch.delenv("github_repo", raising=False)
+
+    env = create_ops._build_env(repo_dir)
+
+    assert env["GH_TOKEN"] == "repo-token"
+    assert env["GITHUB_ORG"] == "repo-org"
+    assert env["GITHUB_REPO"] == "repo-name"
+    assert env["GH_REPO"] == "from/cwd"
+
+
+def test_load_json_invalid_raises_runtime_error() -> None:
+    with pytest.raises(RuntimeError, match="bad json"):
+        create_ops._load_json("not-json", error_message="bad json")
+
+
 def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
     payload = json.loads(create_ops._default_branch_ruleset_payload())
     assert payload["name"] == "repo-scaffold default-branch ruleset"
@@ -60,6 +113,482 @@ def test_branch_protection_endpoint_url_encodes_branch_name() -> None:
         )
         == "/repos/acme/repo/branches/release%2F2026/protection"
     )
+
+
+def test_compare_ruleset_against_baseline_reports_multiple_drifts() -> None:
+    drifts = create_ops._compare_ruleset_against_baseline(
+        [
+            {
+                "name": "repo-scaffold default-branch ruleset",
+                "target": "tag",
+                "enforcement": "evaluate",
+                "conditions": {
+                    "ref_name": {
+                        "include": ["refs/heads/dev"],
+                        "exclude": ["refs/heads/tmp"],
+                    }
+                },
+                "rules": [
+                    {"type": "deletion"},
+                    {
+                        "type": "pull_request",
+                        "parameters": {
+                            "allowed_merge_methods": ["merge"],
+                            "dismiss_stale_reviews_on_push": True,
+                            "require_code_owner_review": True,
+                            "require_last_push_approval": True,
+                            "required_approving_review_count": 2,
+                            "required_review_thread_resolution": False,
+                        },
+                    },
+                ],
+            },
+            {
+                "name": "repo-scaffold default-branch ruleset",
+                "target": "branch",
+                "enforcement": "active",
+                "conditions": {
+                    "ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}
+                },
+                "rules": [],
+            },
+        ],
+        default_branch="main",
+    )
+
+    assert "multiple managed default-branch rulesets found" in drifts
+    assert "target expected 'branch' got 'tag'" in drifts
+    assert "enforcement expected 'active' got 'evaluate'" in drifts
+    assert any("conditions.ref_name.include expected one of" in item for item in drifts)
+    assert "conditions.ref_name.exclude expected [] got ['refs/heads/tmp']" in drifts
+    assert "missing rule: non_fast_forward" in drifts
+    assert "missing rule: required_linear_history" in drifts
+    assert "pull_request.required_approving_review_count expected 0 got 2" in drifts
+    assert any("pull_request.allowed_merge_methods" in item for item in drifts)
+
+
+def test_repo_metadata_and_ruleset_loaders_cover_success_and_error_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout='{"default_branch":"main"}', stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout='[{"id":1}]', stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout='{"id":1}', stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="boom"
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="{}", stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="[]", stderr=""
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(create_ops, "_api", lambda **_: next(responses))
+
+    assert create_ops._get_repo_info(
+        repo_dir=Path("/tmp/repo"), env={}, repo="acme/repo"
+    ) == {"default_branch": "main"}
+    assert create_ops._list_repo_rulesets(
+        repo_dir=Path("/tmp/repo"), env={}, repo="acme/repo"
+    ) == [{"id": 1}]
+    assert create_ops._get_repo_ruleset(
+        repo_dir=Path("/tmp/repo"), env={}, repo="acme/repo", ruleset_id=1
+    ) == {"id": 1}
+
+    with pytest.raises(RuntimeError, match="boom"):
+        create_ops._list_repo_rulesets(
+            repo_dir=Path("/tmp/repo"), env={}, repo="acme/repo"
+        )
+    with pytest.raises(RuntimeError, match="Unexpected rulesets response"):
+        create_ops._list_repo_rulesets(
+            repo_dir=Path("/tmp/repo"), env={}, repo="acme/repo"
+        )
+    with pytest.raises(RuntimeError, match="Unexpected ruleset response"):
+        create_ops._get_repo_ruleset(
+            repo_dir=Path("/tmp/repo"), env={}, repo="acme/repo", ruleset_id=1
+        )
+
+
+def test_security_feature_status_and_optional_endpoint_feature_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_info = {
+        "security_and_analysis": {
+            "secret_scanning": {"status": "enabled"},
+            "other": {"status": "disabled"},
+        }
+    }
+    assert (
+        create_ops._security_feature_status(repo_info, "secret_scanning") == "enabled"
+    )
+    assert create_ops._security_feature_status(repo_info, "missing") is None
+    assert create_ops._security_feature_status({}, "secret_scanning") is None
+
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **kwargs: subprocess.CompletedProcess(
+            args=["gh", "api"],
+            returncode=1 if kwargs["endpoint"].endswith("/disabled") else 0,
+            stdout="",
+            stderr="not enabled" if kwargs["endpoint"].endswith("/disabled") else "",
+        ),
+    )
+
+    assert create_ops._optional_endpoint_feature_enabled(
+        repo_dir=Path("/tmp/repo"), env={}, endpoint="/repos/acme/repo/enabled"
+    ) == (True, "enabled")
+    assert create_ops._optional_endpoint_feature_enabled(
+        repo_dir=Path("/tmp/repo"), env={}, endpoint="/repos/acme/repo/disabled"
+    ) == (False, "not enabled")
+
+
+def test_ruleset_and_legacy_branch_helpers_cover_error_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    api_responses = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="", stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="branch not protected"
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="boom"
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="", stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="not found"
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="boom"
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="warn"
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="warn"
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **kwargs: (
+            calls.append((kwargs["method"], kwargs["endpoint"])) or next(api_responses)
+        ),
+    )
+
+    create_ops._clear_legacy_branch_protection(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+        out=lambda _line: None,
+    )
+    create_ops._clear_legacy_branch_protection(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+        out=lambda _line: None,
+    )
+    with pytest.raises(RuntimeError, match="boom"):
+        create_ops._clear_legacy_branch_protection(
+            repo_dir=Path("/tmp/repo"),
+            env={},
+            repo="acme/repo",
+            default_branch="main",
+            out=lambda _line: None,
+        )
+
+    assert create_ops._legacy_branch_protection_exists(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+    )
+    assert (
+        create_ops._legacy_branch_protection_exists(
+            repo_dir=Path("/tmp/repo"),
+            env={},
+            repo="acme/repo",
+            default_branch="main",
+        )
+        is False
+    )
+    with pytest.raises(RuntimeError, match="boom"):
+        create_ops._legacy_branch_protection_exists(
+            repo_dir=Path("/tmp/repo"),
+            env={},
+            repo="acme/repo",
+            default_branch="main",
+        )
+
+    warnings: list[str] = []
+    create_ops._enable_security_and_analysis_feature(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        feature_name="Secret scanning",
+        feature_key="secret_scanning",
+        out=lambda _line: None,
+        warn=warnings.append,
+    )
+    create_ops._enable_optional_endpoint_feature(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        endpoint="/repos/acme/repo/private-vulnerability-reporting",
+        feature_name="Private vulnerability reporting",
+        out=lambda _line: None,
+        warn=warnings.append,
+    )
+    assert any("could not enable secret scanning" in item.lower() for item in warnings)
+    assert any(
+        "could not enable private vulnerability reporting" in item.lower()
+        for item in warnings
+    )
+    assert any(endpoint.endswith("/protection") for _, endpoint in calls)
+
+
+def test_sync_ruleset_covers_update_create_missing_id_and_api_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines: list[str] = []
+
+    monkeypatch.setattr(
+        create_ops,
+        "_list_repo_rulesets",
+        lambda **_: [{"name": "repo-scaffold default-branch ruleset", "id": 9}],
+    )
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **kwargs: (
+            subprocess.CompletedProcess(args=["gh"], returncode=0, stdout="", stderr="")
+            if kwargs["method"] == "PUT"
+            else subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="", stderr=""
+            )
+        ),
+    )
+    create_ops._sync_default_branch_ruleset(
+        repo_dir=Path("/tmp/repo"), env={}, repo="acme/repo", out=lines.append
+    )
+    assert any("Updated ruleset" in line for line in lines)
+
+    monkeypatch.setattr(create_ops, "_list_repo_rulesets", lambda **_: [])
+    lines.clear()
+    create_ops._sync_default_branch_ruleset(
+        repo_dir=Path("/tmp/repo"), env={}, repo="acme/repo", out=lines.append
+    )
+    assert any("Created ruleset" in line for line in lines)
+
+    monkeypatch.setattr(
+        create_ops,
+        "_list_repo_rulesets",
+        lambda **_: [{"name": "repo-scaffold default-branch ruleset", "id": "bad"}],
+    )
+    with pytest.raises(RuntimeError, match="missing a numeric id"):
+        create_ops._sync_default_branch_ruleset(
+            repo_dir=Path("/tmp/repo"), env={}, repo="acme/repo", out=lambda _line: None
+        )
+
+    monkeypatch.setattr(create_ops, "_list_repo_rulesets", lambda **_: [])
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **_: subprocess.CompletedProcess(
+            args=["gh"], returncode=1, stdout="", stderr="failed"
+        ),
+    )
+    with pytest.raises(RuntimeError, match="failed"):
+        create_ops._sync_default_branch_ruleset(
+            repo_dir=Path("/tmp/repo"), env={}, repo="acme/repo", out=lambda _line: None
+        )
+
+
+def test_tool_auth_remote_and_push_helpers_cover_common_error_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    monkeypatch.setattr(
+        create_ops.shutil,
+        "which",
+        lambda tool: None if tool == "gh" else "/usr/bin/git",
+    )
+    with pytest.raises(RuntimeError, match="GitHub CLI"):
+        create_ops._ensure_tools()
+
+    monkeypatch.setattr(
+        create_ops.shutil, "which", lambda tool: "/usr/bin/gh" if tool == "gh" else None
+    )
+    with pytest.raises(RuntimeError, match="git is required"):
+        create_ops._ensure_tools()
+
+    monkeypatch.setattr(create_ops.shutil, "which", lambda _tool: "/usr/bin/tool")
+    create_ops._ensure_tools()
+
+    monkeypatch.setattr(
+        create_ops,
+        "_run",
+        lambda args, **kwargs: (
+            subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="")
+            if args[:3] == ["gh", "auth", "status"]
+            else subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="", stderr=""
+            )
+        ),
+    )
+    with pytest.raises(RuntimeError, match="Authenticate first"):
+        create_ops._ensure_gh_auth(repo_dir, {})
+
+    assert create_ops._repo_exists(repo_dir=repo_dir, env={}, repo="acme/repo") is True
+    monkeypatch.setattr(
+        create_ops,
+        "_run",
+        lambda args, **kwargs: subprocess.CompletedProcess(
+            args=args, returncode=1, stdout="", stderr="not found"
+        ),
+    )
+    assert create_ops._repo_exists(repo_dir=repo_dir, env={}, repo="acme/repo") is False
+    monkeypatch.setattr(
+        create_ops,
+        "_run",
+        lambda args, **kwargs: subprocess.CompletedProcess(
+            args=args, returncode=1, stdout="", stderr="boom"
+        ),
+    )
+    with pytest.raises(RuntimeError, match="boom"):
+        create_ops._repo_exists(repo_dir=repo_dir, env={}, repo="acme/repo")
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        create_ops,
+        "_run",
+        lambda args, **kwargs: (
+            calls.append(args)
+            or subprocess.CompletedProcess(
+                args=args,
+                returncode=(
+                    1 if args[:4] == ["git", "remote", "get-url", "origin"] else 0
+                ),
+                stdout="" if args[:4] == ["git", "remote", "get-url", "origin"] else "",
+                stderr="",
+            )
+        ),
+    )
+    create_ops._ensure_origin_remote(
+        repo_dir=repo_dir,
+        env={},
+        repo="acme/repo",
+        dry_run=False,
+        out=lambda _line: None,
+    )
+    assert [
+        "git",
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/acme/repo.git",
+    ] in calls
+
+    monkeypatch.setattr(
+        create_ops,
+        "_run",
+        lambda args, **kwargs: subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=(
+                "https://github.com/other/repo.git\n"
+                if args[:4] == ["git", "remote", "get-url", "origin"]
+                else ""
+            ),
+            stderr="",
+        ),
+    )
+    create_ops._ensure_origin_remote(
+        repo_dir=repo_dir,
+        env={},
+        repo="acme/repo",
+        dry_run=False,
+        out=lambda _line: None,
+    )
+
+    monkeypatch.setattr(
+        create_ops,
+        "_run",
+        lambda args, **kwargs: subprocess.CompletedProcess(
+            args=args,
+            returncode=0 if args[:3] == ["gh", "auth", "token"] else 1,
+            stdout="gh-token\n" if args[:3] == ["gh", "auth", "token"] else "",
+            stderr="",
+        ),
+    )
+    assert create_ops._resolve_push_token(repo_dir=repo_dir, env={}) == "gh-token"
+    assert "workflow write permission" in create_ops._format_push_failure(
+        "workflow missing scope"
+    )
+
+
+def test_create_or_push_repo_covers_existing_and_create_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    monkeypatch.setattr(create_ops, "_repo_exists", lambda **_: True)
+    monkeypatch.setattr(create_ops, "_ensure_origin_remote", lambda **_: None)
+    monkeypatch.setattr(
+        create_ops, "_push_main", lambda **_: (False, "could not read username")
+    )
+    created, pushed, error = create_ops._create_or_push_repo(
+        repo_dir=repo_dir,
+        env={},
+        repo="acme/repo",
+        visibility="public",
+        dry_run=False,
+        out=lambda _line: None,
+    )
+    assert (created, pushed) == (False, False)
+    assert error and "could not read username" in error
+
+    monkeypatch.setattr(create_ops, "_repo_exists", lambda **_: False)
+    monkeypatch.setattr(
+        create_ops,
+        "_run",
+        lambda args, **kwargs: subprocess.CompletedProcess(
+            args=args, returncode=1, stdout="", stderr="create failed"
+        ),
+    )
+    created, pushed, error = create_ops._create_or_push_repo(
+        repo_dir=repo_dir,
+        env={},
+        repo="acme/repo",
+        visibility="public",
+        dry_run=False,
+        out=lambda _line: None,
+    )
+    assert (created, pushed) == (False, False)
+    assert error == "create failed"
 
 
 def test_apply_settings_dry_run_previews_ruleset_and_security_defaults() -> None:
@@ -490,3 +1019,229 @@ def test_push_main_uses_head_ref_with_token(monkeypatch: pytest.MonkeyPatch) -> 
     assert calls
     push_args = calls[0]
     assert push_args[-4:] == ["push", "-u", "origin", "HEAD:main"]
+
+
+def test_push_main_formats_noninteractive_auth_failure_without_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(create_ops, "_resolve_push_token", lambda **_: None)
+    monkeypatch.setattr(
+        create_ops,
+        "_run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["git"],
+            returncode=1,
+            stdout="",
+            stderr="could not read Username for 'https://github.com'",
+        ),
+    )
+
+    pushed, error = create_ops._push_main(repo_dir=Path("/tmp/repo"), env={})
+
+    assert pushed is False
+    assert error is not None
+    assert "Non-interactive auth failed" in error
+
+
+def test_apply_and_check_repository_settings_wrappers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    events: list[str] = []
+
+    monkeypatch.setattr(create_ops, "_ensure_tools", lambda: events.append("tools"))
+    monkeypatch.setattr(create_ops, "_build_env", lambda _repo_dir: {"GH_TOKEN": "x"})
+    monkeypatch.setattr(
+        create_ops,
+        "_ensure_gh_auth",
+        lambda _repo_dir, _env: events.append("auth"),
+    )
+    monkeypatch.setattr(
+        create_ops,
+        "_apply_settings",
+        lambda **kwargs: events.append(
+            f"apply:{kwargs['repo']}:{kwargs['dry_run']}:{kwargs['repo_dir']}"
+        ),
+    )
+    expected_summary = create_ops.SettingsCheckSummary(
+        repo="acme/repo", passed=1, failed=0, skipped=0, drifts=()
+    )
+    monkeypatch.setattr(create_ops, "_check_settings", lambda **_: expected_summary)
+
+    create_ops.apply_repository_settings(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        dry_run=True,
+        out=lambda _line: None,
+    )
+    create_ops.apply_repository_settings(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        dry_run=False,
+        out=lambda _line: None,
+    )
+    summary = create_ops.check_repository_settings(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        out=lambda _line: None,
+    )
+
+    assert summary == expected_summary
+    assert events.count("tools") == 3
+    assert events.count("auth") == 2
+    assert any(
+        item.startswith(f"apply:acme/repo:True:{repo_dir.resolve()}") for item in events
+    )
+    assert any(
+        item.startswith(f"apply:acme/repo:False:{repo_dir.resolve()}")
+        for item in events
+    )
+
+
+def test_apply_settings_covers_dry_run_and_patch_failure_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines: list[str] = []
+    create_ops._apply_settings(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        dry_run=True,
+        out=lines.append,
+        warn=lambda _line: None,
+    )
+
+    assert "[dry-run] sync repository merge settings" in lines
+    assert any("private vulnerability reporting" in line for line in lines)
+
+    monkeypatch.setattr(
+        create_ops,
+        "_get_repo_info",
+        lambda **_: {"default_branch": "main", "visibility": "public"},
+    )
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **_: subprocess.CompletedProcess(
+            args=["gh"], returncode=1, stdout="", stderr="boom"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        create_ops._apply_settings(
+            repo_dir=Path("/tmp/repo"),
+            env={},
+            repo="acme/repo",
+            dry_run=False,
+            out=lambda _line: None,
+            warn=lambda _line: None,
+        )
+
+
+def test_create_repository_covers_success_skip_and_error_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    monkeypatch.setattr(create_ops, "_ensure_tools", lambda: None)
+    monkeypatch.setattr(create_ops, "_build_env", lambda _repo_dir: {"GH_TOKEN": "x"})
+    monkeypatch.setattr(create_ops, "_ensure_gh_auth", lambda _repo_dir, _env: None)
+    monkeypatch.setattr(create_ops, "_resolve_repo", lambda **_: "acme/repo")
+    monkeypatch.setattr(create_ops, "_ensure_git_repo", lambda **_: None)
+
+    applied: list[str] = []
+    monkeypatch.setattr(
+        create_ops,
+        "_apply_settings",
+        lambda **kwargs: applied.append(kwargs["repo"]),
+    )
+    monkeypatch.setattr(
+        create_ops,
+        "_create_or_push_repo",
+        lambda **_: (True, True, None),
+    )
+
+    summary = create_ops.create_repository(
+        repo_dir=repo_dir,
+        repo=None,
+        owner=None,
+        name=None,
+        visibility="public",
+        apply_settings=True,
+        dry_run=False,
+        out=lambda _line: None,
+        err=lambda _line: None,
+    )
+
+    assert summary.repo == "acme/repo"
+    assert summary.repo_created is True
+    assert summary.pushed is True
+    assert summary.settings_applied is True
+    assert summary.failures == 0
+    assert applied == ["acme/repo"]
+
+    skipped_lines: list[str] = []
+    monkeypatch.setattr(
+        create_ops,
+        "_create_or_push_repo",
+        lambda **_: (False, False, "push failed"),
+    )
+    errors: list[str] = []
+    skipped = create_ops.create_repository(
+        repo_dir=repo_dir,
+        repo=None,
+        owner=None,
+        name=None,
+        visibility="public",
+        apply_settings=True,
+        dry_run=False,
+        out=skipped_lines.append,
+        err=errors.append,
+    )
+
+    assert skipped.pushed is False
+    assert skipped.settings_applied is False
+    assert skipped.failures == 1
+    assert errors == ["push failed"]
+    assert "Skipping settings apply until main branch is pushed." in skipped_lines
+
+    monkeypatch.setattr(
+        create_ops,
+        "_ensure_git_repo",
+        lambda **_: (_ for _ in ()).throw(RuntimeError("bad repo")),
+    )
+    errors.clear()
+    failed = create_ops.create_repository(
+        repo_dir=repo_dir,
+        repo=None,
+        owner=None,
+        name=None,
+        visibility="public",
+        apply_settings=False,
+        dry_run=False,
+        out=lambda _line: None,
+        err=errors.append,
+    )
+
+    assert failed.failures == 1
+    assert errors == ["bad repo"]
+
+
+def test_create_repository_rejects_invalid_visibility(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    with pytest.raises(RuntimeError, match="Visibility must be one of"):
+        create_ops.create_repository(
+            repo_dir=repo_dir,
+            repo="acme/repo",
+            owner=None,
+            name=None,
+            visibility="friends-only",
+            apply_settings=False,
+            dry_run=True,
+            out=lambda _line: None,
+            err=lambda _line: None,
+        )

@@ -8,7 +8,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tox-env: [lint, type, test]
+        tox-env: [lint, type, coverage]
     steps:
       - uses: actions/checkout@v4
 
@@ -25,3 +25,20 @@ jobs:
 
       - name: Run tox (${{ matrix.tox-env }})
         run: poetry run tox -e ${{ matrix.tox-env }}
+
+      - name: Upload coverage.xml artifact
+        if: matrix.tox-env == 'coverage'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: error
+
+      - name: Upload coverage to Codecov
+        if: matrix.tox-env == 'coverage'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -178,6 +179,65 @@ def test_resolve_authenticated_login_returns_login(
     assert backlog_ops.resolve_authenticated_login(repo_dir) == "octocat"
 
 
+def test_backlog_helper_parsers_and_label_merging() -> None:
+    assert (
+        backlog_ops._project_scope_hint("missing required token scopes")
+        != "missing required token scopes"
+    )
+    assert backlog_ops._project_scope_hint("plain error") == "plain error"
+    assert backlog_ops._parse_repo_owner("acme/repo") == "acme"
+    with pytest.raises(RuntimeError, match="owner/repo"):
+        backlog_ops._parse_repo_owner("broken")
+
+    merged = backlog_ops._merge_labels(
+        backlog_ops._normalize_labels([" epic ", "", "epic", 1]),
+        ["ticket", "epic", " ticket "],
+    )
+    assert merged == ["epic", "ticket"]
+
+    raw = '[{"title":"one"}]\n [{"title":"two"}, 1]\n'
+    assert backlog_ops._parse_concatenated_json_arrays(raw) == [
+        {"title": "one"},
+        {"title": "two"},
+    ]
+    assert len(backlog_ops._label_color("epic")) == 6
+
+
+def test_load_token_from_env_file_and_ensure_gh_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    env_file = repo_dir / ".env"
+    env_file.write_text('export github_token="token-from-env"\n', encoding="utf-8")
+
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    backlog_ops._load_token_from_env_file(env_file)
+    assert os.environ["GH_TOKEN"] == "token-from-env"
+
+    monkeypatch.setattr(
+        backlog_ops.shutil,
+        "which",
+        lambda tool: "/usr/bin/gh" if tool == "gh" else None,
+    )
+    monkeypatch.setattr(backlog_ops.subprocess, "run", lambda *args, **kwargs: _cp_ok())
+    backlog_ops._ensure_gh_auth(repo_dir)
+
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    clean_repo_dir = tmp_path / "clean-repo"
+    clean_repo_dir.mkdir()
+    monkeypatch.chdir(clean_repo_dir)
+    monkeypatch.setattr(
+        backlog_ops.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["gh", "auth", "status"], returncode=1, stdout="", stderr=""
+        ),
+    )
+    with pytest.raises(RuntimeError, match="Authenticate first"):
+        backlog_ops._ensure_gh_auth(clean_repo_dir)
+
+
 def test_find_issue_number_uses_repo_issues_api_exact_match(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -212,6 +272,185 @@ def test_find_issue_number_uses_repo_issues_api_exact_match(
     assert (
         backlog_ops._find_issue_number(repo_dir, "acme/repo", "Missing issue") is None
     )
+
+
+def test_resolve_project_target_variants_and_project_linking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    lines: list[str] = []
+    errors: list[str] = []
+
+    monkeypatch.setattr(
+        backlog_ops,
+        "_list_projects",
+        lambda *_args, **_kwargs: [{"title": "Roadmap", "number": 7}],
+    )
+    monkeypatch.setattr(
+        backlog_ops,
+        "_project_title_for_number",
+        lambda *_args, **_kwargs: "Exact Project",
+    )
+
+    target = backlog_ops._resolve_project_target(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        project_number=7,
+        project_title=None,
+        project_owner=None,
+        dry_run=False,
+        out=lines.append,
+    )
+    assert target == backlog_ops._ProjectTarget(
+        owner="acme", number=7, title="Exact Project", created=False
+    )
+
+    target = backlog_ops._resolve_project_target(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        project_number=None,
+        project_title="Roadmap",
+        project_owner=None,
+        dry_run=False,
+        out=lines.append,
+    )
+    assert target == backlog_ops._ProjectTarget(
+        owner="acme", number=7, title="Roadmap", created=False
+    )
+
+    target = backlog_ops._resolve_project_target(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        project_number=None,
+        project_title="New Roadmap",
+        project_owner="octo-org",
+        dry_run=True,
+        out=lines.append,
+    )
+    assert target == backlog_ops._ProjectTarget(
+        owner="octo-org", number=None, title="New Roadmap", created=True
+    )
+
+    with pytest.raises(
+        RuntimeError, match="only one of --project-number or --project-title"
+    ):
+        backlog_ops._resolve_project_target(
+            repo_dir=repo_dir,
+            repo="acme/repo",
+            project_number=1,
+            project_title="dup",
+            project_owner=None,
+            dry_run=False,
+            out=lines.append,
+        )
+
+    monkeypatch.setattr(
+        backlog_ops,
+        "_run_gh",
+        lambda _repo_dir, args: (
+            _cp_ok()
+            if args[:2] == ["project", "link"]
+            else subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="already linked"
+            )
+        ),
+    )
+
+    assert (
+        backlog_ops._link_project_to_repo(
+            repo_dir=repo_dir,
+            repo="acme/repo",
+            project=backlog_ops._ProjectTarget(
+                owner="acme", number=None, title="New Roadmap", created=True
+            ),
+            dry_run=True,
+            out=lines.append,
+            emit_err=errors.append,
+        )
+        == 0
+    )
+    assert (
+        backlog_ops._link_project_to_repo(
+            repo_dir=repo_dir,
+            repo="acme/repo",
+            project=backlog_ops._ProjectTarget(
+                owner="acme", number=7, title="Roadmap", created=False
+            ),
+            dry_run=False,
+            out=lines.append,
+            emit_err=errors.append,
+        )
+        == 0
+    )
+
+
+def test_add_issue_to_project_handles_dry_run_existing_missing_number_and_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    lines: list[str] = []
+    errors: list[str] = []
+    project = backlog_ops._ProjectTarget(
+        owner="acme", number=7, title="Roadmap", created=False
+    )
+
+    assert backlog_ops._add_issue_to_project(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        project=project,
+        issue_title="A1",
+        issue_number=None,
+        dry_run=True,
+        out=lines.append,
+        emit_err=errors.append,
+    ) == (1, 0, 0)
+
+    assert backlog_ops._add_issue_to_project(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        project=project,
+        issue_title="A1",
+        issue_number=None,
+        dry_run=False,
+        out=lines.append,
+        emit_err=errors.append,
+    ) == (0, 0, 1)
+
+    states = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="already added"
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="boom"
+            ),
+        ]
+    )
+    monkeypatch.setattr(backlog_ops, "_run_gh", lambda *_args, **_kwargs: next(states))
+
+    assert backlog_ops._add_issue_to_project(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        project=project,
+        issue_title="A1",
+        issue_number=11,
+        dry_run=False,
+        out=lines.append,
+        emit_err=errors.append,
+    ) == (0, 1, 0)
+    assert backlog_ops._add_issue_to_project(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        project=project,
+        issue_title="A2",
+        issue_number=12,
+        dry_run=False,
+        out=lines.append,
+        emit_err=errors.append,
+    ) == (0, 0, 1)
+    assert any("Failed to add issue to project" in line for line in errors)
 
 
 def test_wait_for_issue_titles_visible_retries_until_present(

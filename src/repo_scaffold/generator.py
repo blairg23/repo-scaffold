@@ -236,7 +236,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tox-env: [lint, type, test]
+        tox-env: [lint, type, coverage]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -248,6 +248,21 @@ jobs:
           python -m pip install tox
       - name: Run tox (${{{{ matrix.tox-env }}}})
         run: tox -e ${{{{ matrix.tox-env }}}}
+      - name: Upload coverage.xml artifact
+        if: matrix.tox-env == 'coverage'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: error
+      - name: Upload coverage to Codecov
+        if: matrix.tox-env == 'coverage'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{{{ secrets.CODECOV_TOKEN }}}}
 
   react:
     if: contains(env.LANGUAGES, 'react') && hashFiles('web/package.json') != ''
@@ -414,6 +429,7 @@ def _render_gitignore(languages: Iterable[str]) -> str:
                 ".tox/",
                 ".coverage",
                 ".coverage.*",
+                "coverage.xml",
                 "htmlcov/",
                 ".venv/",
                 "venv/",
@@ -512,8 +528,15 @@ def _render_backlog_issues_json() -> str:
 
 
 def _render_repo_readme(config: ScaffoldConfig) -> str:
+    badge_owner = config.owner or "OWNER"
+    coverage_badge = (
+        f"[![codecov](https://codecov.io/gh/{badge_owner}/{config.name}/graph/badge.svg)]"
+        f"(https://codecov.io/gh/{badge_owner}/{config.name})"
+    )
     lines: list[str] = [
         f"# {config.name}",
+        "",
+        coverage_badge,
         "",
         "Created by [repo-scaffold](https://github.com/your-org/repo-scaffold).",
         "",
@@ -574,6 +597,7 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
             "",
             "For parity with CI quality gates, pre-commit also runs `tox -e precommit`.",
             "If formatters or fixers change tracked files, the hook exits non-zero so you can re-stage and rerun the commit intentionally.",
+            "The fast pre-commit gate also enforces the Python coverage threshold when Python is enabled.",
             "",
         ]
     )
@@ -591,11 +615,19 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
                 "black --check .",
                 "mypy src",
                 "pytest",
-                "tox -e lint,type,test",
+                "tox -e lint,type,coverage",
+                "tox -e coverage",
                 "tox -e precommit",
+                "tox -e codecov-upload",
+                "export CODECOV_TOKEN=your_codecov_token",
+                "tox -e codecov-upload",
                 "```",
                 "",
-                "CI runs the same Python quality matrix via tox (`lint`, `type`, `test`).",
+                "CI runs the same Python quality matrix via tox (`lint`, `type`, `coverage`).",
+                "Run `tox -e coverage` to generate `coverage.xml` and `htmlcov/` locally.",
+                "The current minimum coverage gate is 70%.",
+                "If `CODECOV_TOKEN` is already present in `.env`, you can run `tox -e codecov-upload` directly.",
+                "If you prefer an explicit shell export, set `CODECOV_TOKEN` and then run `tox -e codecov-upload`.",
                 "",
             ]
         )
@@ -663,6 +695,9 @@ GITHUB_REPO={name}
 # Optional backlog project naming defaults (used with --with-project):
 # GITHUB_PROJECT_TITLE=YOUR_FIXED_PROJECT_TITLE
 # GITHUB_PROJECT_TITLE_TEMPLATE={{repo}} Roadmap
+
+# Optional local Codecov upload token (read automatically by `tox -e codecov-upload`):
+# CODECOV_TOKEN=your_codecov_token
 
 # Legacy lowercase aliases are still supported:
 # github_token=...
@@ -2221,6 +2256,31 @@ where = ["src"]
 addopts = "-q -s"
 testpaths = ["tests"]
 
+[tool.coverage.run]
+branch = true
+source = ["src"]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+skip_covered = false
+omit = [
+  "src/*/__init__.py",
+  "src/*/__main__.py",
+]
+exclude_also = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+  "raise NotImplementedError",
+]
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.coverage.html]
+directory = "htmlcov"
+
 [tool.black]
 line-length = 100
 target-version = ["py310"]
@@ -2247,7 +2307,7 @@ no_implicit_optional = true
 
 def _render_tox_ini() -> str:
     return """[tox]
-envlist = lint,type,test
+envlist = lint,type,coverage
 
 [testenv]
 deps = -e .[dev]
@@ -2281,6 +2341,32 @@ deps = -e .[dev]
 commands =
     pytest -q -m "not e2e_github" {posargs:tests}
 
+[testenv:coverage]
+deps =
+    -e .[dev]
+    pytest-cov>=6
+setenv =
+    COVERAGE_FILE={toxworkdir}/.coverage.{envname}
+commands =
+    pytest -q -m "not e2e_github" --cov=src --cov-branch --cov-report=term-missing --cov-report=xml --cov-report=html {posargs:tests}
+
+[testenv:coverage-fast]
+deps =
+    {[testenv:coverage]deps}
+setenv =
+    {[testenv:coverage]setenv}
+commands =
+    pytest -q -m "not e2e_github" --cov=src --cov-branch --cov-report=term-missing {posargs:tests}
+
+[testenv:codecov-upload]
+skip_install = true
+passenv =
+    CODECOV_TOKEN
+deps =
+    codecov-cli>=11
+commands =
+    python -c 'import os, subprocess; from pathlib import Path; env=os.environ.copy(); p=Path(".env"); raws=p.read_text(encoding="utf-8").splitlines() if (not env.get("CODECOV_TOKEN") and p.exists()) else []; clean=[r.strip() for r in raws]; pairs=[(line[7:] if line.startswith("export ") else line).split("=", 1) for line in clean if line and not line.startswith("#") and "=" in line]; [env.setdefault(k.strip(), v.strip().rstrip("\\r").strip(chr(34)).strip(chr(39))) for k, v in pairs if k.strip() == "CODECOV_TOKEN"]; subprocess.run(["codecovcli", "do-upload", "--file", "coverage.xml"], check=True, env=env)'
+
 [testenv:precommit]
 skip_install = true
 allowlist_externals =
@@ -2292,12 +2378,12 @@ deps =
     {[testenv:format]deps}
     {[testenv:lint]deps}
     {[testenv:type]deps}
-    {[testenv:test-fast]deps}
+    {[testenv:coverage-fast]deps}
 commands =
     {[testenv:format]commands}
     {[testenv:lint]commands}
     {[testenv:type]commands}
-    {[testenv:test-fast]commands}
+    {[testenv:coverage-fast]commands}
     git diff --exit-code -- src tests
 """
 
@@ -2321,7 +2407,7 @@ def _render_pre_commit_config(languages: Iterable[str]) -> str:
                 "  - repo: local",
                 "    hooks:",
                 "      - id: tox-suite",
-                "        name: run tox suite (lint, type, test-fast)",
+                "        name: run tox suite (format, lint, type, coverage)",
                 "        entry: tox",
                 "        language: python",
                 "        additional_dependencies:",
