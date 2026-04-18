@@ -95,14 +95,29 @@ def test_load_json_invalid_raises_runtime_error() -> None:
 
 def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
     payload = json.loads(create_ops._default_branch_ruleset_payload())
-    assert payload["name"] == "repo-scaffold default-branch ruleset"
+    assert payload["name"] == "repo-scaffold baseline branch rules"
     assert payload["conditions"]["ref_name"]["include"] == ["~DEFAULT_BRANCH"]
     pull_request_rule = next(
         rule for rule in payload["rules"] if rule["type"] == "pull_request"
     )
+    code_scanning_rule = next(
+        rule for rule in payload["rules"] if rule["type"] == "code_scanning"
+    )
+    copilot_code_review_rule = next(
+        rule for rule in payload["rules"] if rule["type"] == "copilot_code_review"
+    )
     assert pull_request_rule["parameters"]["required_approving_review_count"] == 0
     assert pull_request_rule["parameters"]["allowed_merge_methods"] == ["squash"]
     assert pull_request_rule["parameters"]["required_review_thread_resolution"] is True
+    assert code_scanning_rule["parameters"]["code_scanning_tools"] == [
+        {
+            "tool": "CodeQL",
+            "alerts_threshold": "errors",
+            "security_alerts_threshold": "high_or_higher",
+        }
+    ]
+    assert copilot_code_review_rule["parameters"]["review_draft_pull_requests"] is False
+    assert copilot_code_review_rule["parameters"]["review_on_push"] is True
 
 
 def test_branch_protection_endpoint_url_encodes_branch_name() -> None:
@@ -115,11 +130,17 @@ def test_branch_protection_endpoint_url_encodes_branch_name() -> None:
     )
 
 
+def test_is_managed_ruleset_name_accepts_new_and_legacy_names() -> None:
+    assert create_ops._is_managed_ruleset_name("repo-scaffold baseline branch rules")
+    assert create_ops._is_managed_ruleset_name("repo-scaffold default-branch ruleset")
+    assert create_ops._is_managed_ruleset_name("something else") is False
+
+
 def test_compare_ruleset_against_baseline_reports_multiple_drifts() -> None:
     drifts = create_ops._compare_ruleset_against_baseline(
         [
             {
-                "name": "repo-scaffold default-branch ruleset",
+                "name": "repo-scaffold baseline branch rules",
                 "target": "tag",
                 "enforcement": "evaluate",
                 "conditions": {
@@ -139,6 +160,25 @@ def test_compare_ruleset_against_baseline_reports_multiple_drifts() -> None:
                             "require_last_push_approval": True,
                             "required_approving_review_count": 2,
                             "required_review_thread_resolution": False,
+                        },
+                    },
+                    {
+                        "type": "code_scanning",
+                        "parameters": {
+                            "code_scanning_tools": [
+                                {
+                                    "tool": "CodeQL",
+                                    "alerts_threshold": "all",
+                                    "security_alerts_threshold": "all",
+                                }
+                            ]
+                        },
+                    },
+                    {
+                        "type": "copilot_code_review",
+                        "parameters": {
+                            "review_draft_pull_requests": True,
+                            "review_on_push": False,
                         },
                     },
                 ],
@@ -165,6 +205,12 @@ def test_compare_ruleset_against_baseline_reports_multiple_drifts() -> None:
     assert "missing rule: required_linear_history" in drifts
     assert "pull_request.required_approving_review_count expected 0 got 2" in drifts
     assert any("pull_request.allowed_merge_methods" in item for item in drifts)
+    assert any("code_scanning.code_scanning_tools" in item for item in drifts)
+    assert (
+        "copilot_code_review.review_draft_pull_requests expected False got True"
+        in drifts
+    )
+    assert "copilot_code_review.review_on_push expected True got False" in drifts
 
 
 def test_repo_metadata_and_ruleset_loaders_cover_success_and_error_paths(
@@ -402,7 +448,7 @@ def test_sync_ruleset_covers_update_create_missing_id_and_api_failure(
     monkeypatch.setattr(
         create_ops,
         "_list_repo_rulesets",
-        lambda **_: [{"name": "repo-scaffold default-branch ruleset", "id": "bad"}],
+        lambda **_: [{"name": "repo-scaffold baseline branch rules", "id": "bad"}],
     )
     with pytest.raises(RuntimeError, match="missing a numeric id"):
         create_ops._sync_default_branch_ruleset(
@@ -773,7 +819,7 @@ def test_check_settings_fetches_ruleset_details_and_accepts_expanded_default_bra
         lambda **_: [
             {
                 "id": 123,
-                "name": "repo-scaffold default-branch ruleset",
+                "name": "repo-scaffold baseline branch rules",
                 "target": "branch",
                 "enforcement": "active",
             }

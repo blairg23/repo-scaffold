@@ -2342,6 +2342,7 @@ commands =
     pytest -q -m "not e2e_github" {posargs:tests}
 
 [testenv:coverage]
+package = editable
 deps =
     -e .[dev]
     pytest-cov>=6
@@ -2351,6 +2352,7 @@ commands =
     pytest -q -m "not e2e_github" --cov=src --cov-branch --cov-report=term-missing --cov-report=xml --cov-report=html {posargs:tests}
 
 [testenv:coverage-fast]
+package = editable
 deps =
     {[testenv:coverage]deps}
 setenv =
