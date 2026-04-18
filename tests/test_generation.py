@@ -148,6 +148,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "[testenv:coverage]" in tox_ini
     assert "[testenv:coverage-fast]" in tox_ini
     assert "[testenv:codecov-upload]" in tox_ini
+    assert "package = editable" in tox_ini
     assert "pytest-cov>=6" in tox_ini
     assert "codecov-cli>=11" in tox_ini
     assert "--cov=src --cov-branch" in tox_ini

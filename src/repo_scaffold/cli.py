@@ -13,6 +13,7 @@ from .backlog_ops import (
     resolve_authenticated_login,
     resolve_project_target_for_auth_check,
 )
+from .backlog_import import build_backlog_import_file
 from .create_ops import (
     CreateSummary,
     SettingsCheckSummary,
@@ -36,8 +37,13 @@ from .overwrite_policy import ApplySummary, OverwritePolicy, apply_files
 
 DEFAULT_INIT_NAME_PREFIX = "repo-scaffold-e2e"
 DEFAULT_INIT_LANGUAGES = "go,python,react"
-DEFAULT_BACKLOG_REL_PATH = "backlog/issues.json"
+DEFAULT_BACKLOG_REL_PATH = "artifacts/backlog/issues.json"
+LEGACY_DEFAULT_BACKLOG_REL_PATH = "backlog/issues.json"
 DEFAULT_LOCAL_BACKLOG_REL_PATH = "local/backlog/issues.json"
+DEFAULT_MARKDOWN_BACKLOG_REL_DIR = "artifacts/tickets"
+FALLBACK_MARKDOWN_BACKLOG_REL_DIR = "tickets"
+LEGACY_MARKDOWN_BACKLOG_REL_DIR = ".future_tickets"
+BACKLOG_TICKETS_DIR_ENV = "GITHUB_TICKETS_DIR"
 
 
 def _repo_name_from_repo_ref(raw: str | None) -> str | None:
@@ -114,6 +120,10 @@ def _seed_env_from_dotenv(path: Path) -> None:
         os.environ["GITHUB_PROJECT_TITLE_TEMPLATE"] = os.environ[
             "github_project_title_template"
         ]
+    if not os.environ.get(BACKLOG_TICKETS_DIR_ENV) and os.environ.get(
+        "github_tickets_dir"
+    ):
+        os.environ[BACKLOG_TICKETS_DIR_ENV] = os.environ["github_tickets_dir"]
 
 
 def _normalize_owner_repo(raw: str, *, allow_host_prefix: bool) -> str | None:
@@ -161,14 +171,57 @@ def _resolve_backlog_file_path(*, repo_dir: Path, file_arg: str | None) -> Path:
     local_backlog = Path.cwd() / DEFAULT_LOCAL_BACKLOG_REL_PATH
     if local_backlog.exists():
         return local_backlog
-    return repo_dir / DEFAULT_BACKLOG_REL_PATH
+    default_backlog = repo_dir / DEFAULT_BACKLOG_REL_PATH
+    if default_backlog.exists():
+        return default_backlog
+    return repo_dir / LEGACY_DEFAULT_BACKLOG_REL_PATH
+
+
+def _resolve_markdown_source_dir(*, repo_dir: Path, source_arg: str | None) -> Path:
+    source_value = source_arg or (os.environ.get(BACKLOG_TICKETS_DIR_ENV) or "").strip()
+    if source_value:
+        source_dir = Path(source_value)
+        return source_dir if source_dir.is_absolute() else (repo_dir / source_dir)
+
+    default_source = repo_dir / DEFAULT_MARKDOWN_BACKLOG_REL_DIR
+    fallback_source = repo_dir / FALLBACK_MARKDOWN_BACKLOG_REL_DIR
+    legacy_source = repo_dir / LEGACY_MARKDOWN_BACKLOG_REL_DIR
+    if default_source.exists():
+        return default_source
+    if fallback_source.exists():
+        return fallback_source
+    if legacy_source.exists():
+        return legacy_source
+    return default_source
+
+
+def _find_existing_markdown_source_dir(repo_dir: Path) -> Path | None:
+    env_source = (os.environ.get(BACKLOG_TICKETS_DIR_ENV) or "").strip()
+    if env_source:
+        candidate = Path(env_source)
+        resolved = candidate if candidate.is_absolute() else (repo_dir / candidate)
+        if resolved.exists():
+            return resolved
+        raise RuntimeError(
+            f"Error: {BACKLOG_TICKETS_DIR_ENV} points to a missing markdown source directory: {resolved}"
+        )
+
+    for relative_dir in (
+        DEFAULT_MARKDOWN_BACKLOG_REL_DIR,
+        FALLBACK_MARKDOWN_BACKLOG_REL_DIR,
+        LEGACY_MARKDOWN_BACKLOG_REL_DIR,
+    ):
+        candidate = repo_dir / relative_dir
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _seed_env_for_parsed_mode(ns: argparse.Namespace) -> None:
     _seed_env_from_dotenv(Path.cwd() / ".env")
     if ns.mode == "create" and getattr(ns, "path", None):
         _seed_env_from_dotenv(Path(ns.path) / ".env")
-    if ns.mode == "apply" and hasattr(ns, "path"):
+    if ns.mode in {"apply", "import"} and hasattr(ns, "path"):
         _seed_env_from_dotenv(Path(ns.path) / ".env")
 
 
@@ -366,7 +419,12 @@ def build_parser() -> argparse.ArgumentParser:
     apply_backlog_cmd = apply_sub.add_parser(
         "backlog",
         parents=[apply_parent],
-        help="Create milestones/issues in GitHub from backlog/issues.json",
+        help="Create milestones/issues in GitHub from backlog JSON",
+    )
+    apply_backlog_cmd.add_argument(
+        "repo_ref",
+        nargs="?",
+        help="Target GitHub repo (owner/repo). Shorthand for --repo.",
     )
     apply_backlog_cmd.add_argument(
         "--path", default=".", help="Repo path containing backlog data (default: .)"
@@ -375,8 +433,11 @@ def build_parser() -> argparse.ArgumentParser:
     apply_backlog_cmd.add_argument(
         "--file",
         help=(
-            "Backlog JSON path. If omitted, uses ./local/backlog/issues.json when present, "
-            "otherwise <repo-path>/backlog/issues.json"
+            "Backlog JSON path. If omitted, auto-imports from markdown when "
+            "<repo-path>/artifacts/tickets (or fallback source dirs) exists; otherwise uses "
+            "./local/backlog/issues.json when present, "
+            "otherwise <repo-path>/artifacts/backlog/issues.json, "
+            "then legacy <repo-path>/backlog/issues.json"
         ),
     )
     apply_backlog_cmd.add_argument(
@@ -428,6 +489,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check_rules.add_argument("--repo", help="Target GitHub repo (owner/repo)")
 
+    import_cmd = subparsers.add_parser(
+        "import",
+        help="Import markdown artifacts into repo-scaffold formats",
+    )
+    import_sub = import_cmd.add_subparsers(dest="import_command", required=True)
+    import_backlog = import_sub.add_parser(
+        "backlog",
+        parents=[apply_parent],
+        help="Import markdown backlog files into artifacts/backlog/issues.json",
+    )
+    import_backlog.add_argument(
+        "--path",
+        default=".",
+        help="Target repository path containing markdown backlog notes (default: .)",
+    )
+    import_backlog.add_argument(
+        "--source",
+        help=(
+            "Markdown source directory "
+            "(default: <path>/artifacts/tickets, fallback to <path>/tickets, "
+            "then legacy <path>/.future_tickets; env override: GITHUB_TICKETS_DIR)"
+        ),
+    )
+    import_backlog.add_argument(
+        "--out",
+        help="Backlog JSON output path (default: <path>/artifacts/backlog/issues.json)",
+    )
+
     return parser
 
 
@@ -435,7 +524,7 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
     raw = list(sys.argv[1:] if argv is None else argv)
     if raw and raw[0] in {"-h", "--help"}:
         return raw
-    if raw and raw[0] in {"create", "init", "apply", "check", "delete"}:
+    if raw and raw[0] in {"create", "init", "apply", "check", "delete", "import"}:
         return raw
     # Backward-compatible behavior: previous root command maps to init.
     return ["init", *raw]
@@ -717,8 +806,14 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+        if ns.repo and ns.repo_ref and ns.repo != ns.repo_ref:
+            print(
+                "Error: positional repo and --repo disagree. Use only one target repo.",
+                file=sys.stderr,
+            )
+            return 2
         target_repo, repo_error = _resolve_repo_from_args_or_env(
-            repo=ns.repo, fallback_name=repo_dir.name
+            repo=ns.repo or ns.repo_ref, fallback_name=repo_dir.name
         )
         if repo_error:
             print(repo_error, file=sys.stderr)
@@ -761,7 +856,62 @@ def main(argv: list[str] | None = None) -> int:
             if project_target is not None:
                 print(f"GitHub project access OK: {project_target}")
             return 0
-        backlog_file = _resolve_backlog_file_path(repo_dir=repo_dir, file_arg=ns.file)
+        backlog_file: Path
+        if ns.file:
+            backlog_file = _resolve_backlog_file_path(
+                repo_dir=repo_dir, file_arg=ns.file
+            )
+        else:
+            try:
+                markdown_source_dir = _find_existing_markdown_source_dir(repo_dir)
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+            if markdown_source_dir is not None:
+                try:
+                    imported_backlog_file, import_summary = build_backlog_import_file(
+                        source_dir=markdown_source_dir,
+                        output_file=repo_dir / DEFAULT_BACKLOG_REL_PATH,
+                    )
+                except RuntimeError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 1
+
+                if ns.dry_run:
+                    temp_dir = Path(tempfile.mkdtemp(prefix="repo-scaffold-backlog-"))
+                    backlog_file = temp_dir / "issues.json"
+                    backlog_file.write_text(
+                        imported_backlog_file.content, encoding="utf-8"
+                    )
+                    print(
+                        f"[dry-run] auto-imported backlog JSON from {import_summary.source_dir}"
+                    )
+                else:
+                    import_apply_summary = apply_files(
+                        [imported_backlog_file],
+                        _policy_from_ns(ns),
+                        prompt=input,
+                        is_tty=sys.stdin.isatty(),
+                    )
+                    if import_apply_summary.failures > 0:
+                        return 1
+                    if (
+                        import_apply_summary.skipped > 0
+                        and not imported_backlog_file.path.exists()
+                    ):
+                        print(
+                            "Error: auto-imported backlog JSON was skipped and no existing output file is available.",
+                            file=sys.stderr,
+                        )
+                        return 1
+                    backlog_file = imported_backlog_file.path
+                    print(
+                        f"Auto-imported backlog JSON from {import_summary.source_dir}"
+                    )
+            else:
+                backlog_file = _resolve_backlog_file_path(
+                    repo_dir=repo_dir, file_arg=None
+                )
         try:
             backlog_summary: BacklogApplySummary = apply_backlog(
                 repo_dir=repo_dir,
@@ -853,6 +1003,65 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  checks skipped: {check_summary.skipped}")
         print(f"  drift items: {len(check_summary.drifts)}")
         return 1 if check_summary.failed > 0 else 0
+
+    if ns.mode == "import" and ns.import_command == "backlog":
+        repo_dir = Path(ns.path)
+        if not repo_dir.exists() or not repo_dir.is_dir():
+            print(
+                f"Error: repo path does not exist or is not a directory: {repo_dir}",
+                file=sys.stderr,
+            )
+            return 2
+
+        source_dir = _resolve_markdown_source_dir(
+            repo_dir=repo_dir, source_arg=ns.source
+        )
+        output_file = (
+            Path(ns.out)
+            if ns.out and Path(ns.out).is_absolute()
+            else repo_dir / (ns.out or DEFAULT_BACKLOG_REL_PATH)
+        )
+
+        try:
+            imported_backlog_file, import_summary = build_backlog_import_file(
+                source_dir=source_dir,
+                output_file=output_file,
+            )
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+        apply_summary = apply_files(
+            [imported_backlog_file],
+            _policy_from_ns(ns),
+            prompt=input,
+            is_tty=sys.stdin.isatty(),
+        )
+        print("")
+        print("Summary:")
+        if ns.dry_run:
+            print("  mode: dry-run")
+        print(f"  source dir: {import_summary.source_dir}")
+        print(f"  output file: {import_summary.output_file}")
+        print(f"  markdown files scanned: {import_summary.files_scanned}")
+        print(f"  epics imported: {import_summary.epics_imported}")
+        print(
+            f"  epics skipped (already present): {import_summary.epics_skipped_existing}"
+        )
+        print(f"  tickets imported: {import_summary.tickets_imported}")
+        print(
+            f"  tickets skipped (already present): {import_summary.tickets_skipped_existing}"
+        )
+        print(f"  synthetic epics: {import_summary.synthetic_epics}")
+        print(f"  created: {apply_summary.created}")
+        print(f"  overwritten: {apply_summary.overwritten}")
+        print(f"  skipped: {apply_summary.skipped}")
+        print(f"  failures: {apply_summary.failures}")
+        if apply_summary.failures == 0:
+            print(
+                f"{'Dry-run complete for' if ns.dry_run else 'Imported backlog to'}: {output_file}"
+            )
+        return 1 if apply_summary.failures > 0 else 0
 
     parser.error("Unsupported command.")
     return 2

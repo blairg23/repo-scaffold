@@ -2,11 +2,12 @@
 
 [![codecov](https://codecov.io/gh/blairg23/repo-scaffold/graph/badge.svg)](https://codecov.io/gh/blairg23/repo-scaffold)
 
-`repo-scaffold` is a repo operations toolkit with five modes:
+`repo-scaffold` is a repo operations toolkit with six modes:
 
 - `create`: create/push a GitHub repo from a local folder and apply baseline settings
 - `init`: generate a new language-first repository scaffold
 - `apply`: apply capabilities safely to an existing repository
+- `import`: convert markdown backlog notes into repo-scaffold JSON
 - `check`: verify GitHub settings drift against the repo-scaffold baseline
 - `delete`: safely clean up GitHub test repositories by prefix or exact name
 
@@ -16,6 +17,7 @@ Workflow model:
 
 - run `init` to generate local repo content
 - run `create` to create/push the remote repository + baseline settings
+- run `import backlog` inside a target repo when you want to turn `artifacts/tickets/*.md` into `artifacts/backlog/issues.json`
 - run `apply ...` from this toolkit repo to manage templates/CI/dependabot/backlog/rules for any target repo
 - run `check ...` from this toolkit repo to verify current GitHub settings against the repo-scaffold baseline
 - run `delete` from this toolkit repo to clean up test repositories
@@ -70,7 +72,7 @@ Defaults:
 - visibility defaults to `public` (override with `--visibility private|internal`)
 - applies merge settings, a managed default-branch ruleset, and security defaults unless `--skip-settings`
 - pushes `HEAD` to remote `main` (`HEAD:main`) and does not rename/switch your local branch
-- default branch policy uses a ruleset baseline: PR required, `0` approvals, conversation resolution, squash-only, linear history, no force-push, no delete
+- default branch policy uses a ruleset baseline: PR required, `0` approvals, conversation resolution, squash-only, linear history, no force-push, no delete, CodeQL merge protection, and automatic Copilot review on new pushes
 - also attempts to enable secret scanning, push protection, Dependabot alerts, automated security updates, and public-repo private vulnerability reporting (best-effort; warnings only if plan/policy blocks them)
 - supports `--dry-run`
 
@@ -93,6 +95,36 @@ Subcommands:
 - `backlog --repo owner/repo [--file PATH] [--dry-run] [--auth-check] [--with-project] [--project-number N | --project-title T] [--project-owner O]`: bulk-create milestones/issues using `gh`
 - `rules [--repo owner/repo] [--apply]`: preview or apply merge settings, the managed default-branch ruleset, and security defaults
 
+### `import`
+
+Convert markdown backlog notes into repo-scaffold backlog JSON.
+
+```bash
+poetry run repo-scaffold import backlog --path /path/to/repo --yes
+```
+
+Behavior:
+
+- defaults source markdown to `<path>/artifacts/tickets`
+- if `<path>/artifacts/tickets` is missing, falls back to `<path>/tickets`
+- if both are missing, falls back to legacy `<path>/.future_tickets`
+- defaults output JSON to `<path>/artifacts/backlog/issues.json`
+- accepts the same overwrite-policy flags as other file-writing commands: `--yes`, `--no`, `--force`, `--dry-run`, `--backup`
+- scans `*.md` recursively under the source directory
+- imports explicit epic markdown files and ticket markdown files
+- creates synthetic epics when tickets do not map to an existing epic
+- merges into an existing backlog JSON file when one is already present
+- skips epics already present by key and tickets already present by exact title
+- produces backlog JSON that can be consumed immediately by `apply backlog`
+
+Typical flow:
+
+```bash
+poetry run repo-scaffold import backlog --path /path/to/repo --yes
+poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --dry-run
+poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --with-project
+```
+
 ### `check`
 
 Verify current GitHub settings against the repo-scaffold baseline.
@@ -105,6 +137,7 @@ Behavior:
 
 - checks current merge settings
 - checks the managed default-branch ruleset
+- checks CodeQL merge protection and automatic Copilot review inside that ruleset baseline
 - checks that legacy branch protection has been cleared
 - checks secret scanning and push protection
 - checks Dependabot alerts and Dependabot security updates
@@ -220,11 +253,48 @@ Use default project title from repo name (or env override) with one flag:
 poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --with-project
 ```
 
-## Backlog JSON format
+If `--file` is omitted and markdown source exists under `<repo-path>/artifacts/tickets` (or fallback source dirs), `apply backlog` auto-imports markdown into backlog JSON before applying. You can also override the markdown source with `GITHUB_TICKETS_DIR`. That means you can use repo-scaffold as the source-of-truth workspace:
 
-Backlog input is JSON only. If `--file` is omitted, fallback order is:
+```bash
+poetry run repo-scaffold apply backlog --repo OWNER/REPO --with-project --dry-run
+poetry run repo-scaffold apply backlog --repo OWNER/REPO --with-project
+```
+
+## Backlog import + JSON format
+
+`apply backlog` still consumes JSON. If your source material is markdown, use `import backlog` first:
+
+```bash
+poetry run repo-scaffold import backlog --path /path/to/repo --yes
+```
+
+Default paths:
+
+1. markdown source: `<repo-path>/artifacts/tickets`
+2. JSON output: `<repo-path>/artifacts/backlog/issues.json`
+
+Env override:
+
+- `GITHUB_TICKETS_DIR=/absolute/or/relative/path`
+- relative paths resolve from `<repo-path>`
+- explicit `--source` still wins over the env var
+
+Legacy fallback:
+
+- if `<repo-path>/artifacts/tickets` does not exist, import tries `<repo-path>/tickets`
+- if `<repo-path>/tickets` also does not exist, import uses `<repo-path>/.future_tickets`
+
+Supported markdown import conventions:
+
+- front matter keys like `name: Epic|Ticket`, `type: epic|ticket`, `key`, `epic`, `epic_key`, `milestone`, `labels`, `assignees`, `priority`
+- `## Title` sections or first markdown heading for issue titles
+- directory grouping for ticket-to-epic mapping
+- `epic:<KEY>` labels for explicit ticket-to-epic association
+
+If you already have JSON, or after import completes, `apply backlog` resolves `--file` with this fallback order:
 1. `local/backlog/issues.json` (when present in the current working directory)
-2. `<repo-path>/backlog/issues.json` (where `--path` defaults to `.`)
+2. `<repo-path>/artifacts/backlog/issues.json` (where `--path` defaults to `.`)
+3. legacy `<repo-path>/backlog/issues.json`
 
 Completed sample file: `examples/backlog/issues.sample.json`.
 Workspace-local private path in this repo: `local/backlog/issues.json` (git-ignored).

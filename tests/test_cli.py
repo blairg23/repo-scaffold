@@ -11,6 +11,13 @@ from repo_scaffold.cli import main
 from repo_scaffold.delete_ops import DeleteSummary
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cli_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("GITHUB_TICKETS_DIR", raising=False)
+    monkeypatch.delenv("github_tickets_dir", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+
 def test_init_mode_supports_legacy_root_invocation(tmp_path: Path) -> None:
     out_dir = tmp_path / "demo"
     rc = main(
@@ -38,6 +45,7 @@ def test_root_help_shows_all_modes(capsys: pytest.CaptureFixture[str]) -> None:
     assert "apply" in stdout
     assert "check" in stdout
     assert "delete" in stdout
+    assert "import" in stdout
 
 
 def test_init_defaults_name_and_languages(
@@ -172,6 +180,180 @@ def test_apply_dependabot_infers_languages_from_repo(tmp_path: Path) -> None:
     assert 'package-ecosystem: "npm"' not in dependabot
 
 
+def test_import_backlog_writes_json_from_markdown(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    source_dir = repo_dir / "artifacts" / "tickets"
+    source_dir.mkdir(parents=True)
+    (source_dir / "ticket.md").write_text(
+        """## 🧾 Title
+
+Document import flow
+
+## 🧠 Summary
+
+Turn markdown backlog notes into JSON.
+""",
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "import",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--yes",
+        ]
+    )
+
+    assert rc == 0
+    output_file = repo_dir / "artifacts" / "backlog" / "issues.json"
+    assert output_file.exists()
+    payload = output_file.read_text(encoding="utf-8")
+    assert "Document import flow" in payload
+
+
+def test_import_backlog_dry_run_does_not_write(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    source_dir = repo_dir / "artifacts" / "tickets"
+    source_dir.mkdir(parents=True)
+    (source_dir / "ticket.md").write_text(
+        "# Dry Run Ticket\n\n## Summary\n\nPreview only.\n",
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "import",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--dry-run",
+        ]
+    )
+
+    assert rc == 0
+    assert not (repo_dir / "artifacts" / "backlog" / "issues.json").exists()
+
+
+def test_import_backlog_falls_back_to_repo_tickets(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    source_dir = repo_dir / "tickets"
+    source_dir.mkdir(parents=True)
+    (source_dir / "ticket.md").write_text(
+        "# Repo Ticket\n\n## Summary\n\nImported from repo tickets path.\n",
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "import",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--yes",
+        ]
+    )
+
+    assert rc == 0
+    payload = (repo_dir / "artifacts" / "backlog" / "issues.json").read_text(
+        encoding="utf-8"
+    )
+    assert "Repo Ticket" in payload
+
+
+def test_import_backlog_uses_env_ticket_dir_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    source_dir = tmp_path / "shared-tickets"
+    source_dir.mkdir(parents=True)
+    (source_dir / "ticket.md").write_text(
+        "# Env Ticket\n\n## Summary\n\nImported from env override.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_TICKETS_DIR", str(source_dir))
+
+    rc = main(
+        [
+            "import",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--yes",
+        ]
+    )
+
+    assert rc == 0
+    payload = (repo_dir / "artifacts" / "backlog" / "issues.json").read_text(
+        encoding="utf-8"
+    )
+    assert "Env Ticket" in payload
+
+
+def test_import_backlog_uses_repo_local_dotenv_ticket_dir_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    source_dir = tmp_path / "shared-tickets"
+    source_dir.mkdir(parents=True)
+    (source_dir / "ticket.md").write_text(
+        "# Repo Local Env Ticket\n\n## Summary\n\nImported from repo-local .env override.\n",
+        encoding="utf-8",
+    )
+    (repo_dir / ".env").write_text(
+        f"GITHUB_TICKETS_DIR={source_dir}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(workspace)
+
+    rc = main(
+        [
+            "import",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--yes",
+        ]
+    )
+
+    assert rc == 0
+    payload = (repo_dir / "artifacts" / "backlog" / "issues.json").read_text(
+        encoding="utf-8"
+    )
+    assert "Repo Local Env Ticket" in payload
+
+
+def test_import_backlog_falls_back_to_legacy_future_tickets(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    source_dir = repo_dir / ".future_tickets"
+    source_dir.mkdir(parents=True)
+    (source_dir / "ticket.md").write_text(
+        "# Legacy Ticket\n\n## Summary\n\nImported from legacy path.\n",
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "import",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--yes",
+        ]
+    )
+
+    assert rc == 0
+    payload = (repo_dir / "artifacts" / "backlog" / "issues.json").read_text(
+        encoding="utf-8"
+    )
+    assert "Legacy Ticket" in payload
+
+
 def test_apply_backlog_subcommand_delegates_to_backlog_ops(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -248,6 +430,187 @@ def test_apply_backlog_subcommand_delegates_to_backlog_ops(
     assert "issues skipped (total): 4" in stdout
 
 
+def test_apply_backlog_auto_imports_markdown_when_no_file_is_provided(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_dir = tmp_path / "repo"
+    source_dir = repo_dir / "artifacts" / "tickets"
+    source_dir.mkdir(parents=True)
+    (source_dir / "ticket.md").write_text(
+        "# Imported Ticket\n\n## Summary\n\nImported automatically before apply.\n",
+        encoding="utf-8",
+    )
+
+    called: dict[str, object] = {}
+
+    def _fake_apply_backlog(
+        *,
+        repo_dir: Path,
+        repo: str,
+        backlog_file: Path,
+        dry_run: bool,
+        project_number,
+        project_title,
+        project_owner,
+        out,
+        err,
+    ):
+        called["repo_dir"] = repo_dir
+        called["repo"] = repo
+        called["backlog_file"] = backlog_file
+        called["dry_run"] = dry_run
+        called["backlog_payload"] = backlog_file.read_text(encoding="utf-8")
+        return BacklogApplySummary(
+            milestones_created=0,
+            milestones_skipped=0,
+            issues_created=0,
+            issues_skipped=0,
+            failures=0,
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_backlog", _fake_apply_backlog)
+
+    rc = main(
+        [
+            "apply",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--repo",
+            "acme/repo",
+            "--dry-run",
+        ]
+    )
+
+    assert rc == 0
+    assert called["repo_dir"] == repo_dir
+    assert called["repo"] == "acme/repo"
+    assert Path(str(called["backlog_file"])).exists()
+    assert "Imported Ticket" in str(called["backlog_payload"])
+    stdout = capsys.readouterr().out
+    assert "[dry-run] auto-imported backlog JSON from" in stdout
+
+
+def test_apply_backlog_auto_imports_markdown_from_env_ticket_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    source_dir = tmp_path / "workspace-artifacts" / "tickets"
+    source_dir.mkdir(parents=True)
+    (source_dir / "ticket.md").write_text(
+        "# Imported From Env\n\n## Summary\n\nImported automatically from env.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_TICKETS_DIR", str(source_dir))
+
+    called: dict[str, object] = {}
+
+    def _fake_apply_backlog(
+        *,
+        repo_dir: Path,
+        repo: str,
+        backlog_file: Path,
+        dry_run: bool,
+        project_number,
+        project_title,
+        project_owner,
+        out,
+        err,
+    ):
+        called["repo_dir"] = repo_dir
+        called["repo"] = repo
+        called["backlog_file"] = backlog_file
+        called["backlog_payload"] = backlog_file.read_text(encoding="utf-8")
+        return BacklogApplySummary(
+            milestones_created=0,
+            milestones_skipped=0,
+            issues_created=0,
+            issues_skipped=0,
+            failures=0,
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_backlog", _fake_apply_backlog)
+
+    rc = main(
+        [
+            "apply",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--repo",
+            "acme/repo",
+            "--dry-run",
+        ]
+    )
+
+    assert rc == 0
+    assert called["repo_dir"] == repo_dir
+    assert called["repo"] == "acme/repo"
+    assert "Imported From Env" in str(called["backlog_payload"])
+    stdout = capsys.readouterr().out
+    assert "[dry-run] auto-imported backlog JSON from" in stdout
+
+
+def test_apply_backlog_accepts_positional_repo_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    backlog = repo_dir / "artifacts" / "backlog"
+    backlog.mkdir(parents=True)
+    (backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    monkeypatch.chdir(workspace)
+
+    called: dict[str, object] = {}
+
+    def _fake_apply_backlog(
+        *,
+        repo_dir: Path,
+        repo: str,
+        backlog_file: Path,
+        dry_run: bool,
+        project_number,
+        project_title,
+        project_owner,
+        out,
+        err,
+    ):
+        called["repo"] = repo
+        called["backlog_file"] = backlog_file
+        return BacklogApplySummary(
+            milestones_created=0,
+            milestones_skipped=0,
+            issues_created=0,
+            issues_skipped=0,
+            failures=0,
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_backlog", _fake_apply_backlog)
+
+    rc = main(
+        [
+            "apply",
+            "backlog",
+            "acme/repo",
+            "--path",
+            str(repo_dir),
+            "--dry-run",
+        ]
+    )
+
+    assert rc == 0
+    assert called["repo"] == "acme/repo"
+    assert called["backlog_file"] == backlog / "issues.json"
+
+
 def test_apply_backlog_defaults_to_local_backlog_when_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -259,8 +622,10 @@ def test_apply_backlog_defaults_to_local_backlog_when_present(
 
     repo_dir = workspace / "repo"
     repo_dir.mkdir(parents=True)
-    (repo_dir / "backlog").mkdir(parents=True)
-    (repo_dir / "backlog" / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    (repo_dir / "artifacts" / "backlog").mkdir(parents=True)
+    (repo_dir / "artifacts" / "backlog" / "issues.json").write_text(
+        '{"epics":[]}', encoding="utf-8"
+    )
 
     monkeypatch.chdir(workspace)
 
@@ -308,7 +673,7 @@ def test_apply_backlog_defaults_to_local_backlog_when_present(
     assert called["backlog_file"] == local_backlog / "issues.json"
 
 
-def test_apply_backlog_defaults_to_repo_backlog_when_local_missing(
+def test_apply_backlog_defaults_to_repo_artifacts_backlog_when_local_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -316,7 +681,7 @@ def test_apply_backlog_defaults_to_repo_backlog_when_local_missing(
 
     repo_dir = workspace / "repo"
     repo_dir.mkdir(parents=True)
-    repo_backlog = repo_dir / "backlog"
+    repo_backlog = repo_dir / "artifacts" / "backlog"
     repo_backlog.mkdir(parents=True)
     (repo_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
 
@@ -364,6 +729,60 @@ def test_apply_backlog_defaults_to_repo_backlog_when_local_missing(
     assert called["repo_dir"] == repo_dir
     assert called["repo"] == "acme/repo"
     assert called["backlog_file"] == repo_backlog / "issues.json"
+
+
+def test_apply_backlog_falls_back_to_legacy_repo_backlog_when_artifacts_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+
+    repo_dir = workspace / "repo"
+    repo_dir.mkdir(parents=True)
+    legacy_backlog = repo_dir / "backlog"
+    legacy_backlog.mkdir(parents=True)
+    (legacy_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+
+    monkeypatch.chdir(workspace)
+
+    called: dict[str, object] = {}
+
+    def _fake_apply_backlog(
+        *,
+        repo_dir: Path,
+        repo: str,
+        backlog_file: Path,
+        dry_run: bool,
+        project_number,
+        project_title,
+        project_owner,
+        out,
+        err,
+    ):
+        called["backlog_file"] = backlog_file
+        return BacklogApplySummary(
+            milestones_created=0,
+            milestones_skipped=0,
+            issues_created=0,
+            issues_skipped=0,
+            failures=0,
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_backlog", _fake_apply_backlog)
+
+    rc = main(
+        [
+            "apply",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--repo",
+            "acme/repo",
+            "--dry-run",
+        ]
+    )
+    assert rc == 0
+    assert called["backlog_file"] == legacy_backlog / "issues.json"
 
 
 def test_apply_backlog_auth_check(

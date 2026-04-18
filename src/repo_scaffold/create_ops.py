@@ -30,12 +30,20 @@ class SettingsCheckSummary:
 
 
 _API_VERSION = "2026-03-10"
-_SETTINGS_RULESET_NAME = "repo-scaffold default-branch ruleset"
+_SETTINGS_RULESET_NAME = "repo-scaffold baseline branch rules"
+_LEGACY_SETTINGS_RULESET_NAME = "repo-scaffold default-branch ruleset"
 
 _BEST_EFFORT_SECURITY_FEATURES: tuple[tuple[str, str], ...] = (
     ("Dependabot alerts", "/repos/{repo}/vulnerability-alerts"),
     ("Dependabot security updates", "/repos/{repo}/automated-security-fixes"),
 )
+
+
+def _is_managed_ruleset_name(name: object) -> bool:
+    return isinstance(name, str) and name in {
+        _SETTINGS_RULESET_NAME,
+        _LEGACY_SETTINGS_RULESET_NAME,
+    }
 
 
 def _api_headers() -> list[str]:
@@ -62,6 +70,41 @@ def _repo_patch_payload() -> str:
 
 
 def _default_branch_ruleset_payload() -> str:
+    rules: list[dict[str, object]] = [
+        {"type": "deletion"},
+        {"type": "non_fast_forward"},
+        {"type": "required_linear_history"},
+        {
+            "type": "pull_request",
+            "parameters": {
+                "allowed_merge_methods": ["squash"],
+                "dismiss_stale_reviews_on_push": False,
+                "require_code_owner_review": False,
+                "require_last_push_approval": False,
+                "required_approving_review_count": 0,
+                "required_review_thread_resolution": True,
+            },
+        },
+        {
+            "type": "code_scanning",
+            "parameters": {
+                "code_scanning_tools": [
+                    {
+                        "tool": "CodeQL",
+                        "alerts_threshold": "errors",
+                        "security_alerts_threshold": "high_or_higher",
+                    }
+                ]
+            },
+        },
+        {
+            "type": "copilot_code_review",
+            "parameters": {
+                "review_draft_pull_requests": False,
+                "review_on_push": True,
+            },
+        },
+    ]
     return json.dumps(
         {
             "name": _SETTINGS_RULESET_NAME,
@@ -73,22 +116,7 @@ def _default_branch_ruleset_payload() -> str:
                     "exclude": [],
                 }
             },
-            "rules": [
-                {"type": "deletion"},
-                {"type": "non_fast_forward"},
-                {"type": "required_linear_history"},
-                {
-                    "type": "pull_request",
-                    "parameters": {
-                        "allowed_merge_methods": ["squash"],
-                        "dismiss_stale_reviews_on_push": False,
-                        "require_code_owner_review": False,
-                        "require_last_push_approval": False,
-                        "required_approving_review_count": 0,
-                        "required_review_thread_resolution": True,
-                    },
-                },
-            ],
+            "rules": rules,
         },
         indent=2,
     )
@@ -293,7 +321,7 @@ def _sync_default_branch_ruleset(
     managed_rulesets = [
         item
         for item in _list_repo_rulesets(repo_dir=repo_dir, env=env, repo=repo)
-        if item.get("name") == _SETTINGS_RULESET_NAME
+        if _is_managed_ruleset_name(item.get("name"))
     ]
     payload = _default_branch_ruleset_payload()
 
@@ -432,7 +460,7 @@ def _compare_ruleset_against_baseline(
 ) -> list[str]:
     drifts: list[str] = []
     managed_rulesets = [
-        item for item in rulesets if item.get("name") == _SETTINGS_RULESET_NAME
+        item for item in rulesets if _is_managed_ruleset_name(item.get("name"))
     ]
     if not managed_rulesets:
         return ["managed default-branch ruleset missing"]
@@ -491,6 +519,8 @@ def _compare_ruleset_against_baseline(
         "non_fast_forward",
         "required_linear_history",
         "pull_request",
+        "code_scanning",
+        "copilot_code_review",
     ):
         if required_rule not in rule_map:
             drifts.append(f"missing rule: {required_rule}")
@@ -521,6 +551,43 @@ def _compare_ruleset_against_baseline(
         drifts.append(
             f"pull_request.allowed_merge_methods expected ['squash'] got {actual_methods!r}"
         )
+
+    code_scanning_rule = rule_map.get("code_scanning")
+    if isinstance(code_scanning_rule, dict):
+        code_scanning_parameters = code_scanning_rule.get("parameters")
+        if not isinstance(code_scanning_parameters, dict):
+            drifts.append("code_scanning rule parameters missing or invalid")
+        else:
+            tools = code_scanning_parameters.get("code_scanning_tools")
+            expected_tools = [
+                {
+                    "tool": "CodeQL",
+                    "alerts_threshold": "errors",
+                    "security_alerts_threshold": "high_or_higher",
+                }
+            ]
+            if tools != expected_tools:
+                drifts.append(
+                    "code_scanning.code_scanning_tools expected "
+                    f"{expected_tools!r} got {tools!r}"
+                )
+
+    copilot_code_review_rule = rule_map.get("copilot_code_review")
+    if isinstance(copilot_code_review_rule, dict):
+        copilot_parameters = copilot_code_review_rule.get("parameters")
+        if not isinstance(copilot_parameters, dict):
+            drifts.append("copilot_code_review rule parameters missing or invalid")
+        else:
+            expected_copilot_params = {
+                "review_draft_pull_requests": False,
+                "review_on_push": True,
+            }
+            for key, expected in expected_copilot_params.items():
+                actual = copilot_parameters.get(key)
+                if actual != expected:
+                    drifts.append(
+                        f"copilot_code_review.{key} expected {expected!r} got {actual!r}"
+                    )
 
     return drifts
 
@@ -894,7 +961,8 @@ def _apply_settings(
         out("[dry-run] sync repository merge settings")
         out(
             "[dry-run] sync managed default-branch ruleset "
-            "(pull request required, 0 approvals, squash-only, no force-push, no delete)"
+            "(pull request required, 0 approvals, squash-only, no force-push, no delete, "
+            "CodeQL merge protection, Copilot review on new pushes)"
         )
         out("[dry-run] remove legacy default-branch protection if present")
         out("[dry-run] enable secret scanning")
@@ -1007,7 +1075,7 @@ def _check_settings(
     rulesets = _list_repo_rulesets(repo_dir=repo_dir, env=env, repo=repo)
     detailed_rulesets: list[dict[str, object]] = []
     for ruleset in rulesets:
-        if ruleset.get("name") == _SETTINGS_RULESET_NAME and (
+        if _is_managed_ruleset_name(ruleset.get("name")) and (
             not isinstance(ruleset.get("conditions"), dict)
             or not isinstance(ruleset.get("rules"), list)
         ):
