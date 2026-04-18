@@ -521,6 +521,15 @@ def _parse_front_matter_value(raw: str) -> object:
         try:
             parsed = ast.literal_eval(text)
         except (SyntaxError, ValueError):
+            if text.startswith("[") and text.endswith("]"):
+                inner = text[1:-1].strip()
+                if not inner:
+                    return []
+                return [
+                    _strip_matching_quotes(part)
+                    for part in (piece.strip() for piece in inner.split(","))
+                    if part
+                ]
             return _strip_matching_quotes(text)
         if isinstance(parsed, list):
             return [str(item).strip() for item in parsed if str(item).strip()]
@@ -645,6 +654,10 @@ def _normalize_string_list(raw: object) -> tuple[str, ...]:
             return ()
         if text.startswith("[") and text.endswith("]"):
             parsed = _parse_front_matter_value(text)
+            if parsed == text:
+                return tuple(
+                    part.strip() for part in text[1:-1].split(",") if part.strip()
+                )
             return _normalize_string_list(parsed)
         return tuple(part.strip() for part in text.split(",") if part.strip())
     return ()

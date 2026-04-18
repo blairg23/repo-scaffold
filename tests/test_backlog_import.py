@@ -74,6 +74,55 @@ Run formatting, typing, and tests in CI.
     ]
 
 
+def test_build_backlog_import_file_parses_unquoted_bracket_front_matter_lists(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "tickets" / "platform"
+    source_dir.mkdir(parents=True)
+
+    (source_dir / "epic.md").write_text(
+        """---
+name: Epic
+key: PLATFORM
+labels: [epic, needs-triage]
+assignees: [blairg23]
+---
+
+# Platform foundation
+""",
+        encoding="utf-8",
+    )
+    (source_dir / "ticket.md").write_text(
+        """---
+name: Ticket
+labels: [needs-triage]
+assignees: [blairg23]
+priority: P1
+---
+
+# Add CI pipeline
+""",
+        encoding="utf-8",
+    )
+
+    scaffold_file, summary = build_backlog_import_file(
+        source_dir=source_dir.parent,
+        output_file=tmp_path / "artifacts" / "backlog" / "issues.json",
+    )
+
+    payload = json.loads(scaffold_file.content)
+    assert summary.epics_imported == 1
+    assert summary.tickets_imported == 1
+    assert payload["epics"][0]["labels"] == ["epic", "needs-triage"]
+    assert payload["epics"][0]["assignees"] == ["blairg23"]
+    assert payload["epics"][0]["tickets"][0]["labels"] == [
+        "ticket",
+        "epic:PLATFORM",
+        "needs-triage",
+    ]
+    assert payload["epics"][0]["tickets"][0]["assignees"] == ["blairg23"]
+
+
 def test_build_backlog_import_file_creates_synthetic_epic_for_unmapped_tickets(
     tmp_path: Path,
 ) -> None:

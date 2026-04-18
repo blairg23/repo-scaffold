@@ -12,9 +12,10 @@ from repo_scaffold.delete_ops import DeleteSummary
 
 
 @pytest.fixture(autouse=True)
-def _isolate_ticket_dir_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GITHUB_TICKETS_DIR", "")
-    monkeypatch.setenv("github_tickets_dir", "")
+def _isolate_cli_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("GITHUB_TICKETS_DIR", raising=False)
+    monkeypatch.delenv("github_tickets_dir", raising=False)
+    monkeypatch.chdir(tmp_path)
 
 
 def test_init_mode_supports_legacy_root_invocation(tmp_path: Path) -> None:
@@ -289,6 +290,42 @@ def test_import_backlog_uses_env_ticket_dir_override(
         encoding="utf-8"
     )
     assert "Env Ticket" in payload
+
+
+def test_import_backlog_uses_repo_local_dotenv_ticket_dir_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    source_dir = tmp_path / "shared-tickets"
+    source_dir.mkdir(parents=True)
+    (source_dir / "ticket.md").write_text(
+        "# Repo Local Env Ticket\n\n## Summary\n\nImported from repo-local .env override.\n",
+        encoding="utf-8",
+    )
+    (repo_dir / ".env").write_text(
+        f"GITHUB_TICKETS_DIR={source_dir}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(workspace)
+
+    rc = main(
+        [
+            "import",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--yes",
+        ]
+    )
+
+    assert rc == 0
+    payload = (repo_dir / "artifacts" / "backlog" / "issues.json").read_text(
+        encoding="utf-8"
+    )
+    assert "Repo Local Env Ticket" in payload
 
 
 def test_import_backlog_falls_back_to_legacy_future_tickets(tmp_path: Path) -> None:

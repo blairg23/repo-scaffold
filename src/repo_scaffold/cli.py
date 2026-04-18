@@ -221,7 +221,7 @@ def _seed_env_for_parsed_mode(ns: argparse.Namespace) -> None:
     _seed_env_from_dotenv(Path.cwd() / ".env")
     if ns.mode == "create" and getattr(ns, "path", None):
         _seed_env_from_dotenv(Path(ns.path) / ".env")
-    if ns.mode == "apply" and hasattr(ns, "path"):
+    if ns.mode in {"apply", "import"} and hasattr(ns, "path"):
         _seed_env_from_dotenv(Path(ns.path) / ".env")
 
 
