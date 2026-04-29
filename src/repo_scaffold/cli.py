@@ -34,6 +34,20 @@ from .generator import (
     parse_language_csv,
 )
 from .overwrite_policy import ApplySummary, OverwritePolicy, apply_files
+from .project_ops import (
+    DEFAULT_PROJECT_BACKUP_REL_DIR,
+    ProjectItemsSummary,
+    ProjectListSummary,
+    ProjectMutationSummary,
+    create_project,
+    delete_project,
+    delete_project_item,
+    edit_project,
+    list_project_items,
+    list_projects,
+    undo_project_backup,
+    view_project,
+)
 
 DEFAULT_INIT_NAME_PREFIX = "repo-scaffold-e2e"
 DEFAULT_INIT_LANGUAGES = "go,python,react"
@@ -221,7 +235,7 @@ def _seed_env_for_parsed_mode(ns: argparse.Namespace) -> None:
     _seed_env_from_dotenv(Path.cwd() / ".env")
     if ns.mode == "create" and getattr(ns, "path", None):
         _seed_env_from_dotenv(Path(ns.path) / ".env")
-    if ns.mode in {"apply", "import"} and hasattr(ns, "path"):
+    if ns.mode in {"apply", "import", "project"} and hasattr(ns, "path"):
         _seed_env_from_dotenv(Path(ns.path) / ".env")
 
 
@@ -276,6 +290,48 @@ def _add_apply_target_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--owner", help="GitHub owner for generated metadata")
     parser.add_argument(
         "--name", help="Repository name override (defaults to folder name)"
+    )
+
+
+def _add_project_target_args(parser: argparse.ArgumentParser) -> None:
+    project_group = parser.add_mutually_exclusive_group(required=True)
+    project_group.add_argument(
+        "--project-number",
+        type=int,
+        help="GitHub Project number to target",
+    )
+    project_group.add_argument(
+        "--project-title",
+        help="GitHub Project title to target",
+    )
+    parser.add_argument(
+        "--project-owner",
+        help="GitHub login/org owning the project (defaults to env or authenticated login)",
+    )
+
+
+def _add_danger_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--danger",
+        action="store_true",
+        help="Required acknowledgement for destructive project operations",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip confirmation prompt for dangerous project operations",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the dangerous operation without changing state",
+    )
+    parser.add_argument(
+        "--backup-dir",
+        help=(
+            "Backup directory for destructive project operations "
+            f"(default: <path>/{DEFAULT_PROJECT_BACKUP_REL_DIR})"
+        ),
     )
 
 
@@ -489,6 +545,167 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check_rules.add_argument("--repo", help="Target GitHub repo (owner/repo)")
 
+    project_cmd = subparsers.add_parser(
+        "project",
+        help="Manage GitHub Projects with explicit destructive-op guards",
+    )
+    project_sub = project_cmd.add_subparsers(dest="project_command", required=True)
+
+    project_list_cmd = project_sub.add_parser("list", help="List projects for an owner")
+    project_list_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution and backups (default: .)",
+    )
+    project_list_cmd.add_argument(
+        "--project-owner",
+        help="GitHub login/org owning the projects (defaults to env or authenticated login)",
+    )
+
+    project_view_cmd = project_sub.add_parser(
+        "view", help="View metadata for a single project"
+    )
+    project_view_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution and backups (default: .)",
+    )
+    _add_project_target_args(project_view_cmd)
+
+    project_items_cmd = project_sub.add_parser(
+        "items", help="List the contents of a single project"
+    )
+    project_items_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution and backups (default: .)",
+    )
+    _add_project_target_args(project_items_cmd)
+    project_items_cmd.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        help="Maximum number of project items to fetch (default: 100)",
+    )
+
+    project_create_cmd = project_sub.add_parser("create", help="Create a new project")
+    project_create_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution and backups (default: .)",
+    )
+    project_create_cmd.add_argument(
+        "--project-owner",
+        help="GitHub login/org owning the project (defaults to env or authenticated login)",
+    )
+    project_create_cmd.add_argument(
+        "--project-title",
+        required=True,
+        help="Title for the new project",
+    )
+    project_create_cmd.add_argument(
+        "--description",
+        help="Optional project description",
+    )
+    project_create_cmd.add_argument(
+        "--readme",
+        help="Optional project readme markdown",
+    )
+    project_create_cmd.add_argument(
+        "--visibility",
+        choices=["PRIVATE", "PUBLIC", "private", "public"],
+        help="Optional project visibility override",
+    )
+    project_create_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the project creation without changing state",
+    )
+
+    project_edit_cmd = project_sub.add_parser(
+        "edit", help="Edit metadata for an existing project"
+    )
+    project_edit_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution and backups (default: .)",
+    )
+    _add_project_target_args(project_edit_cmd)
+    project_edit_cmd.add_argument(
+        "--title",
+        help="Rename the project",
+    )
+    project_edit_cmd.add_argument(
+        "--description",
+        help="Set the project description",
+    )
+    project_edit_cmd.add_argument(
+        "--readme",
+        help="Set the project readme markdown",
+    )
+    project_edit_cmd.add_argument(
+        "--visibility",
+        choices=["PRIVATE", "PUBLIC", "private", "public"],
+        help="Set the project visibility",
+    )
+    project_edit_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the project edit without changing state",
+    )
+
+    project_delete_cmd = project_sub.add_parser(
+        "delete", help="Delete a project (dangerous; backup + confirmation required)"
+    )
+    project_delete_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution and backups (default: .)",
+    )
+    _add_project_target_args(project_delete_cmd)
+    _add_danger_args(project_delete_cmd)
+
+    project_item_delete_cmd = project_sub.add_parser(
+        "item-delete",
+        help="Delete a project item by item id or linked issue number (dangerous)",
+    )
+    project_item_delete_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution and backups (default: .)",
+    )
+    _add_project_target_args(project_item_delete_cmd)
+    item_group = project_item_delete_cmd.add_mutually_exclusive_group(required=True)
+    item_group.add_argument(
+        "--item-id",
+        help="Exact project item id to delete",
+    )
+    item_group.add_argument(
+        "--issue-number",
+        type=int,
+        help="Linked GitHub issue number for the project item to delete",
+    )
+    _add_danger_args(project_item_delete_cmd)
+
+    project_undo_cmd = project_sub.add_parser(
+        "undo", help="Undo a destructive project backup snapshot"
+    )
+    project_undo_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution and backups (default: .)",
+    )
+    project_undo_cmd.add_argument(
+        "--backup-file",
+        required=True,
+        help="Backup snapshot JSON produced by a dangerous project operation",
+    )
+    project_undo_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the undo without changing state",
+    )
+
     import_cmd = subparsers.add_parser(
         "import",
         help="Import markdown artifacts into repo-scaffold formats",
@@ -524,7 +741,15 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
     raw = list(sys.argv[1:] if argv is None else argv)
     if raw and raw[0] in {"-h", "--help"}:
         return raw
-    if raw and raw[0] in {"create", "init", "apply", "check", "delete", "import"}:
+    if raw and raw[0] in {
+        "create",
+        "init",
+        "apply",
+        "check",
+        "delete",
+        "import",
+        "project",
+    }:
         return raw
     # Backward-compatible behavior: previous root command maps to init.
     return ["init", *raw]
@@ -1003,6 +1228,188 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  checks skipped: {check_summary.skipped}")
         print(f"  drift items: {len(check_summary.drifts)}")
         return 1 if check_summary.failed > 0 else 0
+
+    if ns.mode == "project":
+        repo_dir = Path(ns.path)
+        if not repo_dir.exists() or not repo_dir.is_dir():
+            print(
+                f"Error: repo path does not exist or is not a directory: {repo_dir}",
+                file=sys.stderr,
+            )
+            return 2
+
+        mutation_summary: ProjectMutationSummary
+        try:
+            if ns.project_command == "list":
+                list_summary: ProjectListSummary = list_projects(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                )
+                print("Projects:")
+                if not list_summary.projects:
+                    print("  (none)")
+                for project in list_summary.projects:
+                    closed_suffix = " [closed]" if project.closed else ""
+                    print(
+                        f"  - {project.owner}/#{project.number} {project.title}{closed_suffix}"
+                    )
+                print("")
+                print("Summary:")
+                print(f"  owner: {list_summary.owner}")
+                print(f"  projects: {len(list_summary.projects)}")
+                return 0
+
+            if ns.project_command == "view":
+                project = view_project(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                )
+                print("Project:")
+                print(f"  owner: {project.owner}")
+                print(f"  number: {project.number}")
+                print(f"  title: {project.title}")
+                if project.id:
+                    print(f"  id: {project.id}")
+                if project.closed is not None:
+                    print(f"  closed: {project.closed}")
+                if project.visibility:
+                    print(f"  visibility: {project.visibility}")
+                if project.description:
+                    print(f"  description: {project.description}")
+                if project.readme:
+                    print(f"  readme: {project.readme}")
+                return 0
+
+            if ns.project_command == "items":
+                items_summary: ProjectItemsSummary = list_project_items(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    limit=ns.limit,
+                )
+                print(
+                    f"Project: {items_summary.project.owner}/#{items_summary.project.number} ({items_summary.project.title})"
+                )
+                print("Items:")
+                if not items_summary.items:
+                    print("  (none)")
+                for item in items_summary.items:
+                    number_display = (
+                        f" #{item.issue_number}"
+                        if item.issue_number is not None
+                        else ""
+                    )
+                    print(
+                        f"  - [{item.content_type}] item={item.id}{number_display} {item.title}"
+                    )
+                    if item.repository:
+                        print(f"    repo: {item.repository}")
+                    if item.content_url:
+                        print(f"    url: {item.content_url}")
+                print("")
+                print("Summary:")
+                print(f"  items: {len(items_summary.items)}")
+                return 0
+
+            if ns.project_command == "create":
+                mutation_summary = create_project(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_title=ns.project_title,
+                    description=ns.description,
+                    readme=ns.readme,
+                    visibility=ns.visibility,
+                    dry_run=ns.dry_run,
+                    out=print,
+                )
+            elif ns.project_command == "edit":
+                mutation_summary = edit_project(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    title=ns.title,
+                    description=ns.description,
+                    readme=ns.readme,
+                    visibility=ns.visibility,
+                    dry_run=ns.dry_run,
+                    out=print,
+                )
+            elif ns.project_command == "delete":
+                mutation_summary = delete_project(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    danger=ns.danger,
+                    assume_yes=ns.yes,
+                    dry_run=ns.dry_run,
+                    backup_dir=ns.backup_dir,
+                    prompt=input,
+                    is_tty=sys.stdin.isatty(),
+                    out=print,
+                    err=lambda line: print(line, file=sys.stderr),
+                )
+            elif ns.project_command == "item-delete":
+                mutation_summary = delete_project_item(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    item_id=ns.item_id,
+                    issue_number=ns.issue_number,
+                    danger=ns.danger,
+                    assume_yes=ns.yes,
+                    dry_run=ns.dry_run,
+                    backup_dir=ns.backup_dir,
+                    prompt=input,
+                    is_tty=sys.stdin.isatty(),
+                    out=print,
+                    err=lambda line: print(line, file=sys.stderr),
+                )
+            elif ns.project_command == "undo":
+                backup_file = Path(ns.backup_file)
+                if not backup_file.is_absolute():
+                    backup_file = repo_dir / backup_file
+                mutation_summary = undo_project_backup(
+                    repo_dir=repo_dir,
+                    backup_file=backup_file,
+                    dry_run=ns.dry_run,
+                    out=print,
+                )
+            else:
+                parser.error("Unsupported project command.")
+                return 2
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+        print("")
+        print("Summary:")
+        if getattr(ns, "dry_run", False):
+            print("  mode: dry-run")
+        print(f"  action: {mutation_summary.action}")
+        print(f"  owner: {mutation_summary.owner}")
+        if mutation_summary.project_number is not None:
+            print(f"  project number: {mutation_summary.project_number}")
+        if mutation_summary.project_title:
+            print(f"  project title: {mutation_summary.project_title}")
+        print(f"  changed: {mutation_summary.changed}")
+        if mutation_summary.backup_file is not None:
+            print(f"  backup file: {mutation_summary.backup_file}")
+        if mutation_summary.undo_command is not None:
+            print(f"  undo: {mutation_summary.undo_command}")
+        if mutation_summary.restored_project_number is not None:
+            print(
+                f"  restored project number: {mutation_summary.restored_project_number}"
+            )
+        if mutation_summary.restored_item_id is not None:
+            print(f"  restored item id: {mutation_summary.restored_item_id}")
+        print(f"  failures: {mutation_summary.failures}")
+        return 1 if mutation_summary.failures > 0 else 0
 
     if ns.mode == "import" and ns.import_command == "backlog":
         repo_dir = Path(ns.path)
