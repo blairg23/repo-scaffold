@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import sys
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -334,7 +335,7 @@ def _find_existing_project(
     if not wanted_title:
         raise RuntimeError("--project-title must not be empty.")
 
-    for item in _list_projects(repo_dir, project_owner):
+    for item in _list_projects(repo_dir, project_owner, include_closed=True):
         item_title = item.get("title")
         item_number = item.get("number")
         if (
@@ -569,9 +570,10 @@ def _backup_paths(
 ) -> tuple[Path, str]:
     root = Path(backup_dir) if backup_dir else _default_backup_dir(repo_dir)
     backup_root = root if root.is_absolute() else (repo_dir / root)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    suffix = uuid.uuid4().hex[:8]
     backup_root.mkdir(parents=True, exist_ok=True)
-    return backup_root / f"{prefix}-{stamp}.json", stamp
+    return backup_root / f"{prefix}-{stamp}-{suffix}.json", stamp
 
 
 def _write_backup_file(path: Path, payload: dict[str, object]) -> None:

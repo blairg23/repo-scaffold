@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import json
 import subprocess
 from pathlib import Path
@@ -36,6 +37,88 @@ def test_list_projects_resolves_and_parses_projects(
     assert [project.title for project in summary.projects] == ["Roadmap", "Archive"]
     assert summary.projects[0].visibility == "PUBLIC"
     assert summary.projects[1].closed is True
+
+
+def test_find_existing_project_by_title_includes_closed_projects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    calls: list[bool] = []
+    monkeypatch.setattr(
+        project_ops,
+        "_list_projects",
+        lambda _repo_dir, _owner, *, include_closed=False: (
+            calls.append(include_closed)
+            or [
+                {
+                    "number": 7,
+                    "title": "Archived Roadmap",
+                    "closed": True,
+                    "public": False,
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        project_ops,
+        "_load_project_view",
+        lambda *_args, **_kwargs: {
+            "number": 7,
+            "title": "Archived Roadmap",
+            "closed": True,
+            "public": False,
+        },
+    )
+
+    project = project_ops._find_existing_project(
+        repo_dir=repo_dir,
+        owner="acme",
+        project_number=None,
+        project_title="Archived Roadmap",
+    )
+
+    assert calls == [True]
+    assert project.number == 7
+    assert project.closed is True
+
+
+def test_backup_paths_are_unique_within_same_second(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    class _FixedDatetime:
+        @staticmethod
+        def now(_tz):
+            return datetime.datetime(2026, 4, 29, 12, 0, 0, 123456)
+
+    class _FakeUuid:
+        def __init__(self, hex_value: str) -> None:
+            self.hex = hex_value
+
+    uuids = iter([_FakeUuid("aaaaaaaa12345678"), _FakeUuid("bbbbbbbb12345678")])
+    monkeypatch.setattr(project_ops, "datetime", _FixedDatetime)
+    monkeypatch.setattr(project_ops.uuid, "uuid4", lambda: next(uuids))
+
+    first, first_stamp = project_ops._backup_paths(
+        repo_dir=repo_dir,
+        backup_dir=None,
+        prefix="project-delete",
+    )
+    second, second_stamp = project_ops._backup_paths(
+        repo_dir=repo_dir,
+        backup_dir=None,
+        prefix="project-delete",
+    )
+
+    assert first != second
+    assert first_stamp == second_stamp
+    assert first.name.endswith("-aaaaaaaa.json")
+    assert second.name.endswith("-bbbbbbbb.json")
+    assert first.parent.is_dir()
 
 
 def test_list_project_items_parses_issue_and_draft_items(
