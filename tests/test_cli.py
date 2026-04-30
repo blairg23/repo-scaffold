@@ -9,6 +9,13 @@ from repo_scaffold.backlog_ops import BacklogApplySummary
 from repo_scaffold.create_ops import CreateSummary, SettingsCheckSummary
 from repo_scaffold.cli import main
 from repo_scaffold.delete_ops import DeleteSummary
+from repo_scaffold.project_ops import (
+    ProjectInfo,
+    ProjectItemInfo,
+    ProjectItemsSummary,
+    ProjectListSummary,
+    ProjectMutationSummary,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +53,7 @@ def test_root_help_shows_all_modes(capsys: pytest.CaptureFixture[str]) -> None:
     assert "check" in stdout
     assert "delete" in stdout
     assert "import" in stdout
+    assert "project" in stdout
 
 
 def test_init_defaults_name_and_languages(
@@ -1478,3 +1486,125 @@ def test_delete_subcommand_delete_local_only(
     assert called["owner"] is None
     assert called["include_local"] is True
     assert called["delete_local_only"] is True
+
+
+def test_project_list_subcommand_prints_projects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_projects",
+        lambda **_kwargs: ProjectListSummary(
+            owner="acme",
+            projects=(
+                ProjectInfo(owner="acme", number=1, title="Roadmap", closed=False),
+                ProjectInfo(owner="acme", number=2, title="Archive", closed=True),
+            ),
+        ),
+    )
+
+    rc = main(["project", "list", "--path", str(repo_dir), "--project-owner", "acme"])
+
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "acme/#1 Roadmap" in stdout
+    assert "acme/#2 Archive [closed]" in stdout
+    assert "projects: 2" in stdout
+
+
+def test_project_items_subcommand_prints_project_contents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    def _fake_items(**_kwargs) -> ProjectItemsSummary:
+        return ProjectItemsSummary(
+            project=ProjectInfo(owner="acme", number=4, title="Roadmap"),
+            items=(
+                ProjectItemInfo(
+                    id="PVTI_1",
+                    title="Ticket A",
+                    content_type="Issue",
+                    content_url="https://github.com/acme/repo/issues/11",
+                    issue_number=11,
+                    repository="acme/repo",
+                ),
+            ),
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.list_project_items", _fake_items)
+
+    rc = main(
+        [
+            "project",
+            "items",
+            "--path",
+            str(repo_dir),
+            "--project-owner",
+            "acme",
+            "--project-number",
+            "4",
+        ]
+    )
+
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "Project: acme/#4 (Roadmap)" in stdout
+    assert "[Issue] item=PVTI_1 #11 Ticket A" in stdout
+    assert "repo: acme/repo" in stdout
+    assert "items: 1" in stdout
+
+
+def test_project_delete_subcommand_delegates_to_project_ops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    called: dict[str, object] = {}
+
+    def _fake_delete_project(**kwargs) -> ProjectMutationSummary:
+        called.update(kwargs)
+        return ProjectMutationSummary(
+            action="delete",
+            owner="acme",
+            project_number=4,
+            project_title="Roadmap",
+            failures=0,
+            changed=True,
+            backup_file=repo_dir / "artifacts" / "project-backups" / "backup.json",
+            undo_command="undo-cmd",
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.delete_project", _fake_delete_project)
+
+    rc = main(
+        [
+            "project",
+            "delete",
+            "--path",
+            str(repo_dir),
+            "--project-owner",
+            "acme",
+            "--project-number",
+            "4",
+            "--danger",
+            "--yes",
+        ]
+    )
+
+    assert rc == 0
+    assert called["danger"] is True
+    assert called["assume_yes"] is True
+    stdout = capsys.readouterr().out
+    assert "backup file:" in stdout
+    assert "undo: undo-cmd" in stdout

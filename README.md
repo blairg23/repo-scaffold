@@ -2,13 +2,14 @@
 
 [![codecov](https://codecov.io/gh/blairg23/repo-scaffold/graph/badge.svg)](https://codecov.io/gh/blairg23/repo-scaffold)
 
-`repo-scaffold` is a repo operations toolkit with six modes:
+`repo-scaffold` is a repo operations toolkit with seven modes:
 
 - `create`: create/push a GitHub repo from a local folder and apply baseline settings
 - `init`: generate a new language-first repository scaffold
 - `apply`: apply capabilities safely to an existing repository
 - `import`: convert markdown backlog notes into repo-scaffold JSON
 - `check`: verify GitHub settings drift against the repo-scaffold baseline
+- `project`: manage GitHub Projects with explicit destructive-op guards
 - `delete`: safely clean up GitHub test repositories by prefix or exact name
 
 Supported languages: `go`, `python`, `react`.
@@ -20,6 +21,7 @@ Workflow model:
 - run `import backlog` inside a target repo when you want to turn `artifacts/tickets/*.md` into `artifacts/backlog/issues.json`
 - run `apply ...` from this toolkit repo to manage templates/CI/dependabot/backlog/rules for any target repo
 - run `check ...` from this toolkit repo to verify current GitHub settings against the repo-scaffold baseline
+- run `project ...` from this toolkit repo when you need to inspect or manage GitHub Projects directly
 - run `delete` from this toolkit repo to clean up test repositories
 
 ## Install
@@ -145,6 +147,45 @@ Behavior:
 - returns non-zero when drift is found
 
 If `--repo` is omitted, resolves from `GH_REPO` or `GITHUB_ORG` + `GITHUB_REPO` from env/`.env`.
+
+### `project`
+
+Manage GitHub Projects directly.
+
+```bash
+poetry run repo-scaffold project list --project-owner acme
+```
+
+Subcommands:
+
+- `list [--project-owner OWNER]`: list projects for an owner
+- `view (--project-number N | --project-title T) [--project-owner OWNER]`: show project metadata
+- `items (--project-number N | --project-title T) [--project-owner OWNER] [--limit N]`: list the contents of a project
+- `create --project-title T [--project-owner OWNER] [--description TEXT] [--readme MD] [--visibility PUBLIC|PRIVATE] [--dry-run]`: create a project
+- `edit (--project-number N | --project-title T) [--project-owner OWNER] [--title T] [--description TEXT] [--readme MD] [--visibility PUBLIC|PRIVATE] [--dry-run]`: update project metadata
+- `delete (--project-number N | --project-title T) [--project-owner OWNER] --danger [--yes] [--dry-run] [--backup-dir PATH]`: delete a project with automatic backup + undo snapshot
+- `item-delete (--project-number N | --project-title T) [--project-owner OWNER] (--item-id ID | --issue-number N) --danger [--yes] [--dry-run] [--backup-dir PATH]`: delete a project item with automatic backup + undo snapshot
+- `undo --backup-file PATH [--dry-run]`: restore a destructive backup snapshot
+
+Behavior:
+
+- owner resolution defaults in this order: `--project-owner`, then repo/env owner, then the authenticated GitHub login
+- GitHub Projects operations require `project` scope (`gh auth refresh -h github.com -s project`)
+- `list`, `view`, and `items` are read-only
+- `create` and `edit` are standard write operations and support `--dry-run`
+- destructive commands (`delete`, `item-delete`) require `--danger`
+- destructive commands still prompt `y/N` unless `--yes` is passed
+- destructive commands write a backup snapshot to `<path>/artifacts/project-backups` by default
+- the summary prints an exact `project undo --backup-file ...` command after a destructive write
+- undo restores project membership and draft items, but does not recreate custom project fields or field values
+
+Typical destructive flow:
+
+```bash
+poetry run repo-scaffold project items --project-owner acme --project-title "Roadmap"
+poetry run repo-scaffold project item-delete --project-owner acme --project-title "Roadmap" --issue-number 42 --danger --yes
+poetry run repo-scaffold project undo --backup-file /path/to/artifacts/project-backups/project-item-delete-acme-4-YYYYMMDDHHMMSS.json
+```
 
 ### `delete`
 

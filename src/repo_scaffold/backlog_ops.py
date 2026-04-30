@@ -99,10 +99,16 @@ def _parse_repo_owner(repo: str) -> str:
     return repo.split("/", 1)[0]
 
 
-def _list_projects(repo_dir: Path, owner: str) -> list[dict[str, object]]:
+def _list_projects(
+    repo_dir: Path, owner: str, *, include_closed: bool = False
+) -> list[dict[str, object]]:
+    args = ["project", "list", "--owner", owner, "--limit", "100"]
+    if include_closed:
+        args.append("--closed")
+    args.extend(["--format", "json"])
     cp = _run_gh(
         repo_dir,
-        ["project", "list", "--owner", owner, "--limit", "100", "--format", "json"],
+        args,
     )
     if cp.returncode != 0:
         detail = cp.stderr.strip() or cp.stdout.strip() or "Failed listing projects."
