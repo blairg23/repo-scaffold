@@ -20,12 +20,16 @@ htmlcov/
 .env
 .env.*
 !.env.example
+.claude/settings.local.json
 
 # Local-only backlog data (do not commit)
 local/backlog/issues.json
 
 # Local generated artifacts (do not commit)
 artifacts/
+
+# Repo-scaffold local metadata (do not commit)
+.repo-scaffold/
 
 # Editor / OS
 .DS_Store

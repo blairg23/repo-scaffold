@@ -397,6 +397,13 @@ def _render_gitignore(languages: Iterable[str]) -> str:
         ".env",
         ".env.*",
         "!.env.example",
+        ".claude/settings.local.json",
+        "",
+        "# Repo-scaffold local metadata",
+        ".repo-scaffold/",
+        "",
+        "# Local generated artifacts",
+        "artifacts/",
         "",
         "# Logs",
         "*.log",
@@ -667,6 +674,28 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
             "",
             "Optional wrappers are provided in `Makefile`: `make format`, `make lint`, `make typecheck`, `make test`, `make build`.",
             "",
+            "## Repo-scaffold GitHub workflow",
+            "",
+            "- Keep repo planning markdown in `artifacts/tickets/`.",
+            "- The canonical repo project metadata file is `.repo-scaffold/project.json` once a project has been created or synced.",
+            "- `AGENTS.md` tells local agents to treat `GH_REPO` and `.repo-scaffold/project.json` as the repo-local GitHub context.",
+            "- Prefer `gh auth login` or an OS-backed credential manager for local GitHub auth; use `.env` only when you intentionally want token-based local scripting.",
+            "- Run `./scripts/first_time_setup.sh` once to wire the local GitHub Projects v2 token, Claude Code settings, and the `ghp` shell alias for WSL workflows.",
+            "",
+            "### GitHub Projects v2 auth for WSL / Claude Code",
+            "",
+            "```bash",
+            "./scripts/first_time_setup.sh",
+            "source ~/.bashrc  # or ~/.zshrc",
+            "ghp project list --owner YOUR_OWNER",
+            "GH_TOKEN=<classic-PAT> gh project item-list <PROJECT_NUMBER> --owner YOUR_OWNER",
+            "```",
+            "",
+            "- `.env.example` includes `export GH_PROJECT_TOKEN=<classic-PAT>` because child processes need the export prefix.",
+            "- `.claude/settings.local.json` is local-only and gives Claude Code the same project token context.",
+            "- For direct `gh project ...` calls in WSL/Claude, prefer `ghp ...` or `GH_TOKEN=<classic-PAT> gh ...`.",
+            "- Do not rely on `GH_TOKEN=$GH_PROJECT_TOKEN gh ...` for project board commands in this environment.",
+            "",
             "## GitHub templates included",
             "",
             "- `.github/ISSUE_TEMPLATE/epic.md`",
@@ -692,9 +721,19 @@ GITHUB_REPO={name}
 # Alternative single value instead of GITHUB_ORG + GITHUB_REPO:
 # GH_REPO=YOUR_ORG/{name}
 
+# Optional canonical project title for this repo's roadmap:
+# GITHUB_PROJECT_TITLE={name} Roadmap
+
 # Optional backlog project naming defaults (used with --with-project):
 # GITHUB_PROJECT_TITLE=YOUR_FIXED_PROJECT_TITLE
 # GITHUB_PROJECT_TITLE_TEMPLATE={{repo}} Roadmap
+
+# Optional markdown backlog source override:
+# GITHUB_TICKETS_DIR=artifacts/tickets
+
+# Classic PAT for GitHub Projects v2 commands run from WSL / Claude Code.
+# Keep the export prefix so child processes inherit it.
+export GH_PROJECT_TOKEN=<classic-PAT>
 
 # Optional local Codecov upload token (read automatically by `tox -e codecov-upload`):
 # CODECOV_TOKEN=your_codecov_token
@@ -706,6 +745,139 @@ GITHUB_REPO={name}
 # github_full_repo=...
 # github_project_title=...
 # github_project_title_template=...
+# github_tickets_dir=...
+"""
+
+
+def _render_claude_settings_local() -> str:
+    return """{
+  "env": {
+    "GH_PROJECT_TOKEN": "<classic-PAT>"
+  }
+}
+"""
+
+
+def _render_agents_md(config: ScaffoldConfig) -> str:
+    return f"""# AGENTS
+
+Repo-scaffold conventions for local agents:
+
+- Treat `GH_REPO` (or `GITHUB_ORG` + `GITHUB_REPO`) as the canonical GitHub repo identity for this workspace.
+- Do not mutate other repositories unless the user explicitly asks.
+- If `.repo-scaffold/project.json` exists, it is the canonical GitHub Project metadata for this repo. Read it before doing project or ticket work.
+- Prefer repo issues and the repo-linked roadmap project for planning context.
+- Planning markdown lives in `artifacts/tickets/`.
+- Imported backlog JSON lives in `artifacts/backlog/issues.json`.
+- For local GitHub auth, prefer `gh auth login` or an OS credential manager. Use `.env` tokens only when the user intentionally wants repo-local token-based scripting.
+- For GitHub Projects v2 commands in WSL / Claude Code, prefer the `ghp` shell alias or `GH_TOKEN=<classic-PAT> gh ...`.
+- Do not rely on `GH_TOKEN=$GH_PROJECT_TOKEN gh ...` for project board commands in this environment.
+- `.claude/settings.local.json` is local-only and should carry `GH_PROJECT_TOKEN` for Claude Code sessions.
+
+Expected default project title:
+
+- `{config.name} Roadmap`
+"""
+
+
+def _render_first_time_setup_script() -> str:
+    return """#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_EXAMPLE="$REPO_ROOT/.env.example"
+ENV_FILE="$REPO_ROOT/.env"
+CLAUDE_DIR="$REPO_ROOT/.claude"
+CLAUDE_SETTINGS_FILE="$CLAUDE_DIR/settings.local.json"
+PAT_PLACEHOLDER="<classic-PAT>"
+
+pick_shell_rc() {
+  local shell_name
+  shell_name="$(basename "${SHELL:-bash}")"
+  case "$shell_name" in
+    zsh) printf '%s\n' "$HOME/.zshrc" ;;
+    *) printf '%s\n' "$HOME/.bashrc" ;;
+  esac
+}
+
+upsert_env_line() {
+  local file="$1"
+  local pattern="$2"
+  local replacement="$3"
+  local tmp
+
+  tmp="$(mktemp)"
+  if [ -f "$file" ]; then
+    grep -v -E "$pattern" "$file" > "$tmp" || true
+  fi
+  printf '%s\n' "$replacement" >> "$tmp"
+  mv "$tmp" "$file"
+}
+
+echo "Repo-scaffold first-time GitHub Projects setup"
+echo
+echo "This script will:"
+echo "  1) ensure .env exists"
+echo "  2) set export GH_PROJECT_TOKEN=..."
+echo "  3) write .claude/settings.local.json"
+echo "  4) optionally append a ghp alias to your shell rc"
+echo
+
+if [ ! -f "$ENV_FILE" ]; then
+  if [ -f "$ENV_EXAMPLE" ]; then
+    cp "$ENV_EXAMPLE" "$ENV_FILE"
+    echo "Created $ENV_FILE from .env.example"
+  else
+    : > "$ENV_FILE"
+    echo "Created empty $ENV_FILE"
+  fi
+fi
+
+read -r -p "Classic PAT for GitHub Projects v2 (leave blank to keep placeholder): " PROJECT_TOKEN
+if [ -z "$PROJECT_TOKEN" ]; then
+  PROJECT_TOKEN="$PAT_PLACEHOLDER"
+fi
+
+upsert_env_line "$ENV_FILE" '^(export[[:space:]]+)?GH_PROJECT_TOKEN=' "export GH_PROJECT_TOKEN=$PROJECT_TOKEN"
+echo "Updated $ENV_FILE"
+
+mkdir -p "$CLAUDE_DIR"
+cat > "$CLAUDE_SETTINGS_FILE" <<EOF
+{
+  "env": {
+    "GH_PROJECT_TOKEN": "$PROJECT_TOKEN"
+  }
+}
+EOF
+echo "Wrote $CLAUDE_SETTINGS_FILE"
+
+RC_FILE="$(pick_shell_rc)"
+ALIAS_LINE="alias ghp='GH_TOKEN=$PROJECT_TOKEN gh'"
+read -r -p "Append ghp alias to $RC_FILE? [y/N] " APPEND_ALIAS
+case "$APPEND_ALIAS" in
+  [yY]|[yY][eE][sS])
+    touch "$RC_FILE"
+    if ! grep -Fqx "$ALIAS_LINE" "$RC_FILE"; then
+      printf '\n%s\n' "$ALIAS_LINE" >> "$RC_FILE"
+      echo "Appended ghp alias to $RC_FILE"
+    else
+      echo "ghp alias already present in $RC_FILE"
+    fi
+    ;;
+  *)
+    echo "Skipped shell alias update."
+    ;;
+esac
+
+echo
+echo "Next steps:"
+echo "  source $RC_FILE"
+echo "  ghp project list --owner YOUR_OWNER"
+echo "  GH_TOKEN=$PROJECT_TOKEN gh project item-list <PROJECT_NUMBER> --owner YOUR_OWNER"
+echo
+echo "For project board commands in WSL / Claude Code, use ghp or direct GH_TOKEN=... gh ... commands."
+echo "Do not rely on GH_TOKEN=\\$GH_PROJECT_TOKEN gh ... in this environment."
 """
 
 
@@ -2618,6 +2790,11 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
         ),
         ScaffoldFile(config.out_dir / "docs" / "api-v1.md", "# API v1\n\nTBD\n"),
         ScaffoldFile(config.out_dir / ".env.example", _render_env_example(config.name)),
+        ScaffoldFile(
+            config.out_dir / ".claude" / "settings.local.json",
+            _render_claude_settings_local(),
+        ),
+        ScaffoldFile(config.out_dir / "AGENTS.md", _render_agents_md(config)),
         ScaffoldFile(config.out_dir / "README.md", _render_repo_readme(config)),
         ScaffoldFile(config.out_dir / "LICENSE", _apache_2_license()),
         ScaffoldFile(
@@ -2625,6 +2802,11 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
         ),
         ScaffoldFile(config.out_dir / ".editorconfig", _render_editorconfig()),
         ScaffoldFile(config.out_dir / "Makefile", _render_makefile()),
+        ScaffoldFile(
+            config.out_dir / "scripts" / "first_time_setup.sh",
+            _render_first_time_setup_script(),
+            executable=True,
+        ),
     ]
 
     selected = set(config.languages)
