@@ -224,6 +224,8 @@ def test_load_token_from_env_file_and_ensure_gh_auth(
     backlog_ops._ensure_gh_auth(repo_dir)
 
     monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GH_PROJECT_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_PROJECT_TOKEN", raising=False)
     clean_repo_dir = tmp_path / "clean-repo"
     clean_repo_dir.mkdir()
     monkeypatch.chdir(clean_repo_dir)
@@ -236,6 +238,30 @@ def test_load_token_from_env_file_and_ensure_gh_auth(
     )
     with pytest.raises(RuntimeError, match="Authenticate first"):
         backlog_ops._ensure_gh_auth(clean_repo_dir)
+
+
+def test_load_token_from_env_file_uses_project_token_when_gh_token_is_placeholder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "GH_TOKEN=ghp_replace_with_real_token",
+                "export GH_PROJECT_TOKEN=ghp_project_real_token",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GH_PROJECT_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_PROJECT_TOKEN", raising=False)
+
+    backlog_ops._load_token_from_env_file(env_file)
+
+    assert os.environ["GH_TOKEN"] == "ghp_project_real_token"
 
 
 def test_find_issue_number_uses_repo_issues_api_exact_match(
@@ -562,6 +588,13 @@ def test_apply_backlog_project_title_creates_and_adds_items(
     assert summary.issues_skipped == 2
     assert summary.epic_issues_skipped == 1
     assert summary.ticket_issues_skipped == 1
+    project_metadata = repo_dir / ".repo-scaffold" / "project.json"
+    assert project_metadata.exists()
+    payload = json.loads(project_metadata.read_text(encoding="utf-8"))
+    assert payload["source"] == "apply_backlog"
+    assert payload["repo"] == "acme/repo"
+    assert payload["number"] == 42
+    assert payload["title"] == "Roadmap"
 
 
 def test_list_projects_supports_wrapped_json_response(

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
+import repo_scaffold.cli as cli_module
 
 from repo_scaffold.backlog_ops import BacklogApplySummary
 from repo_scaffold.create_ops import CreateSummary, SettingsCheckSummary
@@ -54,6 +55,29 @@ def test_root_help_shows_all_modes(capsys: pytest.CaptureFixture[str]) -> None:
     assert "delete" in stdout
     assert "import" in stdout
     assert "project" in stdout
+
+
+def test_seed_env_from_dotenv_promotes_project_token_when_gh_token_is_placeholder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "GH_TOKEN=ghp_replace_with_real_token",
+                "export GH_PROJECT_TOKEN=ghp_project_real_token",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GH_PROJECT_TOKEN", raising=False)
+
+    cli_module._seed_env_from_dotenv(env_file)
+
+    assert cli_module.os.environ["GH_TOKEN"] == "ghp_project_real_token"
 
 
 def test_init_defaults_name_and_languages(
@@ -916,6 +940,60 @@ def test_apply_backlog_project_title_delegates_to_backlog_ops(
     assert called["project_number"] is None
     assert called["project_title"] == "Roadmap"
     assert called["project_owner"] == "acme"
+
+
+def test_project_sync_metadata_delegates_to_project_ops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    called: dict[str, object] = {}
+
+    def _fake_sync_project_metadata(
+        *,
+        repo_dir: Path,
+        owner: str | None,
+        project_number: int | None,
+        project_title: str | None,
+        out,
+    ) -> ProjectMutationSummary:
+        called["repo_dir"] = repo_dir
+        called["owner"] = owner
+        called["project_number"] = project_number
+        called["project_title"] = project_title
+        return ProjectMutationSummary(
+            action="sync-metadata",
+            owner="acme",
+            project_number=4,
+            project_title="Roadmap",
+            failures=0,
+            changed=True,
+            metadata_file=repo_dir / ".repo-scaffold" / "project.json",
+        )
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.sync_project_metadata", _fake_sync_project_metadata
+    )
+
+    rc = main(
+        [
+            "project",
+            "sync-metadata",
+            "--path",
+            str(repo_dir),
+            "--project-owner",
+            "acme",
+            "--project-title",
+            "Roadmap",
+        ]
+    )
+
+    assert rc == 0
+    assert called["repo_dir"] == repo_dir
+    assert called["owner"] == "acme"
+    assert called["project_number"] is None
+    assert called["project_title"] == "Roadmap"
 
 
 def test_apply_backlog_with_project_defaults_title_from_repo_name(

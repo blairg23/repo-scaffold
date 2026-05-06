@@ -88,6 +88,35 @@ def test_load_env_file_and_build_env_support_aliases(
     assert env["GH_REPO"] == "from/cwd"
 
 
+def test_build_env_promotes_project_token_when_gh_token_is_placeholder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd = tmp_path / "cwd"
+    repo_dir = tmp_path / "repo"
+    cwd.mkdir()
+    repo_dir.mkdir()
+    (repo_dir / ".env").write_text(
+        "\n".join(
+            [
+                "GH_TOKEN=ghp_replace_with_real_token",
+                "export GH_PROJECT_TOKEN=ghp_project_real_token",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(cwd)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_PROJECT_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_PROJECT_TOKEN", raising=False)
+
+    env = create_ops._build_env(repo_dir)
+
+    assert env["GH_TOKEN"] == "ghp_project_real_token"
+
+
 def test_load_json_invalid_raises_runtime_error() -> None:
     with pytest.raises(RuntimeError, match="bad json"):
         create_ops._load_json("not-json", error_message="bad json")

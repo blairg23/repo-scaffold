@@ -172,6 +172,42 @@ def test_list_project_items_parses_issue_and_draft_items(
     assert summary.items[1].body == "draft body"
 
 
+def test_sync_project_metadata_writes_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    monkeypatch.setenv("GH_REPO", "acme/repo")
+    monkeypatch.setattr(
+        project_ops,
+        "_find_existing_project",
+        lambda **_kwargs: project_ops.ProjectInfo(
+            owner="acme",
+            number=4,
+            title="Roadmap",
+            closed=False,
+            visibility="PRIVATE",
+            description="desc",
+        ),
+    )
+
+    summary = project_ops.sync_project_metadata(
+        repo_dir=repo_dir,
+        owner="acme",
+        project_number=4,
+        project_title=None,
+        out=lambda _line: None,
+    )
+
+    assert summary.metadata_file is not None
+    payload = json.loads(summary.metadata_file.read_text(encoding="utf-8"))
+    assert payload["repo"] == "acme/repo"
+    assert payload["owner"] == "acme"
+    assert payload["number"] == 4
+    assert payload["title"] == "Roadmap"
+    assert payload["source"] == "project_sync_metadata"
+
+
 def test_create_project_delegates_optional_metadata_edit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

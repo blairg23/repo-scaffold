@@ -24,6 +24,14 @@ Workflow model:
 - run `project ...` from this toolkit repo when you need to inspect or manage GitHub Projects directly
 - run `delete` from this toolkit repo to clean up test repositories
 
+Repo-local GitHub convention:
+
+- each repo's canonical roadmap/project metadata lives in `.repo-scaffold/project.json`
+- `apply backlog --with-project` writes or refreshes that file automatically
+- older repos can create or refresh it with `project sync-metadata`
+- generated repos include `AGENTS.md` so local agents know to use `GH_REPO` and `.repo-scaffold/project.json` as their GitHub context
+- generated repos include `.claude/settings.local.json` and `scripts/first_time_setup.sh` for the local GitHub Projects v2 token workflow
+
 ## Install
 
 ```bash
@@ -47,6 +55,7 @@ Defaults:
 - output defaults to `./out/<name>`
 - scaffolds include `.pre-commit-config.yaml`
 - Python scaffolds include `tox.ini`; generated CI runs `tox` (`lint`, `type`, `coverage`)
+- scaffolds include `.env.example`, `.claude/settings.local.json`, and `scripts/first_time_setup.sh` for local GitHub Projects v2 setup
 
 Fast path (no required flags):
 
@@ -161,6 +170,7 @@ Subcommands:
 - `list [--project-owner OWNER]`: list projects for an owner
 - `view (--project-number N | --project-title T) [--project-owner OWNER]`: show project metadata
 - `items (--project-number N | --project-title T) [--project-owner OWNER] [--limit N]`: list the contents of a project
+- `sync-metadata (--project-number N | --project-title T) [--project-owner OWNER]`: write `.repo-scaffold/project.json` for the resolved project
 - `create --project-title T [--project-owner OWNER] [--description TEXT] [--readme MD] [--visibility PUBLIC|PRIVATE] [--dry-run]`: create a project
 - `edit (--project-number N | --project-title T) [--project-owner OWNER] [--title T] [--description TEXT] [--readme MD] [--visibility PUBLIC|PRIVATE] [--dry-run]`: update project metadata
 - `delete (--project-number N | --project-title T) [--project-owner OWNER] --danger [--yes] [--dry-run] [--backup-dir PATH]`: delete a project with automatic backup + undo snapshot
@@ -176,15 +186,22 @@ Behavior:
 - destructive commands (`delete`, `item-delete`) require `--danger`
 - destructive commands still prompt `y/N` unless `--yes` is passed
 - destructive commands write a backup snapshot to `<path>/artifacts/project-backups` by default
+- `sync-metadata`, `create`, `edit`, and project restores keep `<path>/.repo-scaffold/project.json` aligned with the resolved project
 - the summary prints an exact `project undo --backup-file ...` command after a destructive write
 - undo restores project membership and draft items, but does not recreate custom project fields or field values
+
+Repo-local agent workflow:
+
+- repo-local agents should treat `GH_REPO` (or `GITHUB_ORG` + `GITHUB_REPO`) as the canonical repo identity
+- repo-local agents should read `.repo-scaffold/project.json` before doing project/ticket work
+- repo-local agents should not mutate other repositories unless the user explicitly asks
 
 Typical destructive flow:
 
 ```bash
 poetry run repo-scaffold project items --project-owner acme --project-title "Roadmap"
 poetry run repo-scaffold project item-delete --project-owner acme --project-title "Roadmap" --issue-number 42 --danger --yes
-poetry run repo-scaffold project undo --backup-file /path/to/artifacts/project-backups/project-item-delete-acme-4-YYYYMMDDHHMMSS.json
+poetry run repo-scaffold project undo --backup-file /path/to/artifacts/project-backups/project-item-delete-<timestamp>-<suffix>.json
 ```
 
 ### `delete`
@@ -299,6 +316,17 @@ If `--file` is omitted and markdown source exists under `<repo-path>/artifacts/t
 ```bash
 poetry run repo-scaffold apply backlog --repo OWNER/REPO --with-project --dry-run
 poetry run repo-scaffold apply backlog --repo OWNER/REPO --with-project
+```
+
+When `--with-project` resolves or creates a GitHub Project, repo-scaffold also writes `<repo-path>/.repo-scaffold/project.json`. That gives the target repo a stable local pointer to its roadmap project for repo-local agents and scripts without depending on disposable `artifacts/`.
+
+SOP for an older repo that already has a GitHub Project:
+
+```bash
+poetry run repo-scaffold project sync-metadata \
+  --path /path/to/repo \
+  --project-owner OWNER \
+  --project-title "REPO_NAME Roadmap"
 ```
 
 ## Backlog import + JSON format

@@ -47,11 +47,14 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
         "docs/requirements.md",
         "docs/api-v1.md",
         "README.md",
+        "AGENTS.md",
         ".env.example",
+        ".claude/settings.local.json",
         "LICENSE",
         ".gitignore",
         ".editorconfig",
         "Makefile",
+        "scripts/first_time_setup.sh",
         "go.mod",
         "cmd/demo/main.go",
         "internal/.gitkeep",
@@ -118,6 +121,12 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "already present in `.env`" in generated_readme
     assert "minimum coverage gate is 70%" in generated_readme
     assert "make typecheck" in generated_readme
+    assert "## Repo-scaffold GitHub workflow" in generated_readme
+    assert ".repo-scaffold/project.json" in generated_readme
+    assert "AGENTS.md" in generated_readme
+    assert "./scripts/first_time_setup.sh" in generated_readme
+    assert "GH_TOKEN=<classic-PAT> gh project item-list" in generated_readme
+    assert ".claude/settings.local.json" in generated_readme
     assert "## Backlog bootstrap" not in generated_readme
     assert "## GitHub token permissions" not in generated_readme
     assert "./scripts/create-issues.sh" not in generated_readme
@@ -125,10 +134,23 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "GH_TOKEN=" in env_example
     assert "GITHUB_ORG=" in env_example
     assert "GH_REPO=" in env_example
+    assert f"GITHUB_PROJECT_TITLE={cfg.name} Roadmap" in env_example
     assert "GITHUB_PROJECT_TITLE=" in env_example
     assert "GITHUB_PROJECT_TITLE_TEMPLATE=" in env_example
+    assert "GITHUB_TICKETS_DIR=" in env_example
+    assert "export GH_PROJECT_TOKEN=<classic-PAT>" in env_example
     assert "CODECOV_TOKEN=" in env_example
     assert "read automatically by `tox -e codecov-upload`" in env_example
+    claude_settings = (out_dir / ".claude" / "settings.local.json").read_text(
+        encoding="utf-8"
+    )
+    assert '"GH_PROJECT_TOKEN": "<classic-PAT>"' in claude_settings
+    agents_md = (out_dir / "AGENTS.md").read_text(encoding="utf-8")
+    assert ".repo-scaffold/project.json" in agents_md
+    assert "GH_REPO" in agents_md
+    assert f"{cfg.name} Roadmap" in agents_md
+    assert "ghp" in agents_md
+    assert "GH_TOKEN=$GH_PROJECT_TOKEN gh ..." in agents_md
     pyproject = (out_dir / "pyproject.toml").read_text(encoding="utf-8")
     assert "black>=" in pyproject
     assert "mypy>=" in pyproject
@@ -180,12 +202,28 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert '"eslint": "^9.21.0"' in web_package
     gitignore = (out_dir / ".gitignore").read_text(encoding="utf-8")
     assert "!.env.example" in gitignore
+    assert ".claude/settings.local.json" in gitignore
+    assert ".repo-scaffold/" in gitignore
+    assert "artifacts/" in gitignore
     assert ".coverage" in gitignore
     assert "coverage.xml" in gitignore
     assert "htmlcov/" in gitignore
     assert ".pre-commit-cache/" in gitignore
     assert not (out_dir / "backlog").exists()
-    assert not (out_dir / "scripts").exists()
+    first_time_setup = out_dir / "scripts" / "first_time_setup.sh"
+    assert first_time_setup.exists()
+    assert first_time_setup.stat().st_mode & 0o111
+    script_text = first_time_setup.read_text(encoding="utf-8")
+    assert "alias ghp='GH_TOKEN=$PROJECT_TOKEN gh'" in script_text
+    assert "GH_TOKEN=$PROJECT_TOKEN gh project item-list" in script_text
+    assert (
+        "Repo-scaffold GH_TOKEN (leave blank to reuse the project token): "
+        in script_text
+    )
+    assert (
+        'upsert_env_line "$ENV_FILE" \'^GH_TOKEN=\' "GH_TOKEN=$REPO_TOKEN"'
+        in script_text
+    )
 
 
 def test_generation_is_deterministic(tmp_path: Path) -> None:

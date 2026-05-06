@@ -17,6 +17,7 @@ from .backlog_ops import (
     _run_gh,
     resolve_authenticated_login,
 )
+from .project_metadata import write_project_metadata
 
 DEFAULT_PROJECT_BACKUP_REL_DIR = "artifacts/project-backups"
 
@@ -68,6 +69,7 @@ class ProjectMutationSummary:
     undo_command: str | None = None
     restored_project_number: int | None = None
     restored_item_id: str | None = None
+    metadata_file: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,34 @@ class _ProjectBackup:
 
 def _emit_err_factory(err: Callable[[str], None] | None) -> Callable[[str], None]:
     return err if err is not None else (lambda line: print(line, file=sys.stderr))
+
+
+def _resolve_repo_ref_from_env() -> str | None:
+    full_repo = os.environ.get("GH_REPO") or os.environ.get("GITHUB_REPOSITORY")
+    if full_repo and "/" in full_repo:
+        return full_repo.strip()
+    owner = (os.environ.get("GITHUB_ORG") or "").strip()
+    name = (os.environ.get("GITHUB_REPO") or "").strip()
+    if owner and name:
+        return f"{owner}/{name}"
+    return None
+
+
+def _sync_project_metadata_file(
+    *, repo_dir: Path, project: ProjectInfo, source: str
+) -> Path:
+    return write_project_metadata(
+        repo_dir,
+        owner=project.owner,
+        number=project.number,
+        title=project.title,
+        repo=_resolve_repo_ref_from_env(),
+        source=source,
+        closed=project.closed,
+        visibility=project.visibility,
+        description=project.description,
+        readme=project.readme,
+    )
 
 
 def _normalize_visibility(payload: dict[str, object]) -> str | None:
@@ -385,6 +415,37 @@ def list_project_items(
     return ProjectItemsSummary(project=project, items=items)
 
 
+def sync_project_metadata(
+    *,
+    repo_dir: Path,
+    owner: str | None,
+    project_number: int | None,
+    project_title: str | None,
+    out: Callable[[str], None] = print,
+) -> ProjectMutationSummary:
+    project = _find_existing_project(
+        repo_dir=repo_dir,
+        owner=owner,
+        project_number=project_number,
+        project_title=project_title,
+    )
+    metadata_file = _sync_project_metadata_file(
+        repo_dir=repo_dir,
+        project=project,
+        source="project_sync_metadata",
+    )
+    out(f"Synced project metadata: {metadata_file}")
+    return ProjectMutationSummary(
+        action="sync-metadata",
+        owner=project.owner,
+        project_number=project.number,
+        project_title=project.title,
+        failures=0,
+        changed=True,
+        metadata_file=metadata_file,
+    )
+
+
 def create_project(
     *,
     repo_dir: Path,
@@ -463,7 +524,7 @@ def create_project(
     out(f"Created project: {project_owner}/#{number} ({title})")
 
     if description or readme or visibility:
-        edit_project(
+        edit_summary = edit_project(
             repo_dir=repo_dir,
             owner=project_owner,
             project_number=number,
@@ -475,6 +536,19 @@ def create_project(
             dry_run=False,
             out=out,
         )
+        metadata_file = edit_summary.metadata_file
+    else:
+        project = _project_from_payload(
+            _load_project_view(repo_dir, project_owner, number),
+            owner=project_owner,
+            fallback_number=number,
+        )
+        metadata_file = _sync_project_metadata_file(
+            repo_dir=repo_dir,
+            project=project,
+            source="project_create",
+        )
+        out(f"Synced project metadata: {metadata_file}")
 
     return ProjectMutationSummary(
         action="create",
@@ -483,6 +557,7 @@ def create_project(
         project_title=title,
         failures=0,
         changed=True,
+        metadata_file=metadata_file,
     )
 
 
@@ -548,16 +623,28 @@ def edit_project(
         )
         raise RuntimeError(_project_scope_hint(detail))
 
+    updated_project = _project_from_payload(
+        _load_project_view(repo_dir, project.owner, project.number),
+        owner=project.owner,
+        fallback_number=project.number,
+    )
+    metadata_file = _sync_project_metadata_file(
+        repo_dir=repo_dir,
+        project=updated_project,
+        source="project_edit",
+    )
     out(
         f"Updated project: {project.owner}/#{project.number} ({title.strip() if title else project.title})"
     )
+    out(f"Synced project metadata: {metadata_file}")
     return ProjectMutationSummary(
         action="edit",
         owner=project.owner,
         project_number=project.number,
-        project_title=title.strip() if title else project.title,
+        project_title=updated_project.title,
         failures=0,
         changed=True,
+        metadata_file=metadata_file,
     )
 
 
@@ -1091,6 +1178,7 @@ def undo_project_backup(
             failures=0,
             changed=True,
             backup_file=backup_file,
+            metadata_file=summary.metadata_file,
             restored_project_number=restored_number,
         )
 
@@ -1119,6 +1207,17 @@ def undo_project_backup(
             raw_item=raw_item,
             out=out,
         )
+        project = _project_from_payload(
+            _load_project_view(repo_dir, owner, project_number_value),
+            owner=owner,
+            fallback_number=project_number_value,
+        )
+        metadata_file = _sync_project_metadata_file(
+            repo_dir=repo_dir,
+            project=project,
+            source="project_undo",
+        )
+        out(f"Synced project metadata: {metadata_file}")
         return ProjectMutationSummary(
             action="undo",
             owner=owner,
@@ -1127,6 +1226,7 @@ def undo_project_backup(
             failures=0,
             changed=True,
             backup_file=backup_file,
+            metadata_file=metadata_file,
             restored_item_id=restored_item_id,
         )
 
