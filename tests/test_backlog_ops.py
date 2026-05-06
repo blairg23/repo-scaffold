@@ -562,6 +562,13 @@ def test_apply_backlog_project_title_creates_and_adds_items(
     assert summary.issues_skipped == 2
     assert summary.epic_issues_skipped == 1
     assert summary.ticket_issues_skipped == 1
+    project_metadata = repo_dir / ".repo-scaffold" / "project.json"
+    assert project_metadata.exists()
+    payload = json.loads(project_metadata.read_text(encoding="utf-8"))
+    assert payload["source"] == "apply_backlog"
+    assert payload["repo"] == "acme/repo"
+    assert payload["number"] == 42
+    assert payload["title"] == "Roadmap"
 
 
 def test_list_projects_supports_wrapped_json_response(

@@ -45,6 +45,7 @@ from .project_ops import (
     edit_project,
     list_project_items,
     list_projects,
+    sync_project_metadata,
     undo_project_backup,
     view_project,
 )
@@ -587,6 +588,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=100,
         help="Maximum number of project items to fetch (default: 100)",
     )
+
+    project_sync_cmd = project_sub.add_parser(
+        "sync-metadata",
+        help="Write .repo-scaffold/project.json for a resolved project",
+    )
+    project_sync_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution and metadata output (default: .)",
+    )
+    _add_project_target_args(project_sync_cmd)
 
     project_create_cmd = project_sub.add_parser("create", help="Create a new project")
     project_create_cmd.add_argument(
@@ -1314,7 +1326,15 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  items: {len(items_summary.items)}")
                 return 0
 
-            if ns.project_command == "create":
+            if ns.project_command == "sync-metadata":
+                mutation_summary = sync_project_metadata(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    out=print,
+                )
+            elif ns.project_command == "create":
                 mutation_summary = create_project(
                     repo_dir=repo_dir,
                     owner=ns.project_owner,
@@ -1400,6 +1420,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  changed: {mutation_summary.changed}")
         if mutation_summary.backup_file is not None:
             print(f"  backup file: {mutation_summary.backup_file}")
+        if mutation_summary.metadata_file is not None:
+            print(f"  metadata file: {mutation_summary.metadata_file}")
         if mutation_summary.undo_command is not None:
             print(f"  undo: {mutation_summary.undo_command}")
         if mutation_summary.restored_project_number is not None:

@@ -918,6 +918,60 @@ def test_apply_backlog_project_title_delegates_to_backlog_ops(
     assert called["project_owner"] == "acme"
 
 
+def test_project_sync_metadata_delegates_to_project_ops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    called: dict[str, object] = {}
+
+    def _fake_sync_project_metadata(
+        *,
+        repo_dir: Path,
+        owner: str | None,
+        project_number: int | None,
+        project_title: str | None,
+        out,
+    ) -> ProjectMutationSummary:
+        called["repo_dir"] = repo_dir
+        called["owner"] = owner
+        called["project_number"] = project_number
+        called["project_title"] = project_title
+        return ProjectMutationSummary(
+            action="sync-metadata",
+            owner="acme",
+            project_number=4,
+            project_title="Roadmap",
+            failures=0,
+            changed=True,
+            metadata_file=repo_dir / ".repo-scaffold" / "project.json",
+        )
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.sync_project_metadata", _fake_sync_project_metadata
+    )
+
+    rc = main(
+        [
+            "project",
+            "sync-metadata",
+            "--path",
+            str(repo_dir),
+            "--project-owner",
+            "acme",
+            "--project-title",
+            "Roadmap",
+        ]
+    )
+
+    assert rc == 0
+    assert called["repo_dir"] == repo_dir
+    assert called["owner"] == "acme"
+    assert called["project_number"] is None
+    assert called["project_title"] == "Roadmap"
+
+
 def test_apply_backlog_with_project_defaults_title_from_repo_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

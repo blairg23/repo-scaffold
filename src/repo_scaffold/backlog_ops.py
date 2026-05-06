@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .project_metadata import write_project_metadata
+
 
 @dataclass(frozen=True)
 class BacklogApplySummary:
@@ -676,6 +678,16 @@ def apply_backlog(
             out=out,
             emit_err=emit_err,
         )
+        if not dry_run and project.number is not None:
+            metadata_file = write_project_metadata(
+                repo_dir,
+                owner=project.owner,
+                number=project.number,
+                title=project.title,
+                repo=repo,
+                source="apply_backlog",
+            )
+            out(f"Synced project metadata: {metadata_file}")
 
     existing_milestones: set[str] = set()
     cp = _run_gh(
