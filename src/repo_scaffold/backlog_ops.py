@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .auth_tokens import is_placeholder_token, resolve_gh_token
 from .project_metadata import write_project_metadata
 
 
@@ -361,7 +362,7 @@ def _add_issue_to_project(
 def _load_token_from_env_file(env_file: Path) -> None:
     if not env_file.exists():
         return
-
+    loaded: dict[str, str] = {}
     for raw_line in env_file.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -376,10 +377,11 @@ def _load_token_from_env_file(env_file: Path) -> None:
         value = value.strip().rstrip("\r")
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
             value = value[1:-1]
+        loaded[key] = value
 
-        if key in {"github_token", "GH_TOKEN", "GITHUB_TOKEN"}:
-            os.environ["GH_TOKEN"] = value
-            break
+    resolved_token = resolve_gh_token(loaded)
+    if resolved_token:
+        os.environ["GH_TOKEN"] = resolved_token
 
 
 def _ensure_gh_auth(repo_dir: Path) -> None:
@@ -388,10 +390,14 @@ def _ensure_gh_auth(repo_dir: Path) -> None:
 
     for env_file in (Path.cwd() / ".env", repo_dir / ".env"):
         _load_token_from_env_file(env_file)
-    if not os.environ.get("GH_TOKEN") and os.environ.get("GITHUB_TOKEN"):
-        os.environ["GH_TOKEN"] = os.environ["GITHUB_TOKEN"]
+    resolved_token = resolve_gh_token(os.environ)
+    current_gh_token = os.environ.get("GH_TOKEN")
+    if resolved_token and (
+        not current_gh_token or is_placeholder_token(current_gh_token)
+    ):
+        os.environ["GH_TOKEN"] = resolved_token
 
-    if os.environ.get("GH_TOKEN"):
+    if os.environ.get("GH_TOKEN") and not is_placeholder_token(os.environ["GH_TOKEN"]):
         return
 
     status = subprocess.run(

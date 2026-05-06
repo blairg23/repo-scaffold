@@ -216,6 +216,14 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     script_text = first_time_setup.read_text(encoding="utf-8")
     assert "alias ghp='GH_TOKEN=$PROJECT_TOKEN gh'" in script_text
     assert "GH_TOKEN=$PROJECT_TOKEN gh project item-list" in script_text
+    assert (
+        "Repo-scaffold GH_TOKEN (leave blank to reuse the project token): "
+        in script_text
+    )
+    assert (
+        'upsert_env_line "$ENV_FILE" \'^GH_TOKEN=\' "GH_TOKEN=$REPO_TOKEN"'
+        in script_text
+    )
 
 
 def test_generation_is_deterministic(tmp_path: Path) -> None:

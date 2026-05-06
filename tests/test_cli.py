@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
+import repo_scaffold.cli as cli_module
 
 from repo_scaffold.backlog_ops import BacklogApplySummary
 from repo_scaffold.create_ops import CreateSummary, SettingsCheckSummary
@@ -54,6 +55,29 @@ def test_root_help_shows_all_modes(capsys: pytest.CaptureFixture[str]) -> None:
     assert "delete" in stdout
     assert "import" in stdout
     assert "project" in stdout
+
+
+def test_seed_env_from_dotenv_promotes_project_token_when_gh_token_is_placeholder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "GH_TOKEN=ghp_replace_with_real_token",
+                "export GH_PROJECT_TOKEN=ghp_project_real_token",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GH_PROJECT_TOKEN", raising=False)
+
+    cli_module._seed_env_from_dotenv(env_file)
+
+    assert cli_module.os.environ["GH_TOKEN"] == "ghp_project_real_token"
 
 
 def test_init_defaults_name_and_languages(

@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import quote
 
+from .auth_tokens import is_placeholder_token, resolve_gh_token
+
 
 @dataclass(frozen=True)
 class CreateSummary:
@@ -159,11 +161,12 @@ def _build_env(repo_dir: Path) -> dict[str, str]:
         for key, value in _load_env_file(env_file).items():
             env.setdefault(key, value)
 
-    if not env.get("GH_TOKEN"):
-        if env.get("GITHUB_TOKEN"):
-            env["GH_TOKEN"] = env["GITHUB_TOKEN"]
-        elif env.get("github_token"):
-            env["GH_TOKEN"] = env["github_token"]
+    resolved_token = resolve_gh_token(env)
+    current_gh_token = env.get("GH_TOKEN")
+    if resolved_token and (
+        not current_gh_token or is_placeholder_token(current_gh_token)
+    ):
+        env["GH_TOKEN"] = resolved_token
 
     if not env.get("GITHUB_ORG") and env.get("github_org"):
         env["GITHUB_ORG"] = env["github_org"]

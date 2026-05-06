@@ -820,8 +820,9 @@ echo
 echo "This script will:"
 echo "  1) ensure .env exists"
 echo "  2) set export GH_PROJECT_TOKEN=..."
-echo "  3) write .claude/settings.local.json"
-echo "  4) optionally append a ghp alias to your shell rc"
+echo "  3) set GH_TOKEN=... for repo-scaffold compatibility"
+echo "  4) write .claude/settings.local.json"
+echo "  5) optionally append a ghp alias to your shell rc"
 echo
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -839,7 +840,13 @@ if [ -z "$PROJECT_TOKEN" ]; then
   PROJECT_TOKEN="$PAT_PLACEHOLDER"
 fi
 
+read -r -p "Repo-scaffold GH_TOKEN (leave blank to reuse the project token): " REPO_TOKEN
+if [ -z "$REPO_TOKEN" ]; then
+  REPO_TOKEN="$PROJECT_TOKEN"
+fi
+
 upsert_env_line "$ENV_FILE" '^(export[[:space:]]+)?GH_PROJECT_TOKEN=' "export GH_PROJECT_TOKEN=$PROJECT_TOKEN"
+upsert_env_line "$ENV_FILE" '^GH_TOKEN=' "GH_TOKEN=$REPO_TOKEN"
 echo "Updated $ENV_FILE"
 
 mkdir -p "$CLAUDE_DIR"

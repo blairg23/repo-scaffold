@@ -7,6 +7,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .auth_tokens import is_placeholder_token, resolve_gh_token
 from .backlog_ops import (
     BacklogApplySummary,
     apply_backlog,
@@ -109,11 +110,12 @@ def _seed_env_from_dotenv(path: Path) -> None:
     for key, value in _load_env_file(path).items():
         os.environ.setdefault(key, value)
 
-    if not os.environ.get("GH_TOKEN"):
-        if os.environ.get("GITHUB_TOKEN"):
-            os.environ["GH_TOKEN"] = os.environ["GITHUB_TOKEN"]
-        elif os.environ.get("github_token"):
-            os.environ["GH_TOKEN"] = os.environ["github_token"]
+    resolved_token = resolve_gh_token(os.environ)
+    current_gh_token = os.environ.get("GH_TOKEN")
+    if resolved_token and (
+        not current_gh_token or is_placeholder_token(current_gh_token)
+    ):
+        os.environ["GH_TOKEN"] = resolved_token
 
     if not os.environ.get("GITHUB_ORG") and os.environ.get("github_org"):
         os.environ["GITHUB_ORG"] = os.environ["github_org"]
