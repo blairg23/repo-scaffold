@@ -103,7 +103,7 @@ Subcommands:
 - `templates`: apply `.github` PR/issue templates, issue config, and `CODEOWNERS`
 - `ci --languages <list>`: apply `.github/workflows/ci.yml`
 - `dependabot [--low-noise]`: apply `.github/dependabot.yml`
-- `backlog --repo owner/repo [--file PATH] [--dry-run] [--auth-check] [--with-project] [--project-number N | --project-title T] [--project-owner O]`: bulk-create milestones/issues using `gh`
+- `backlog --repo owner/repo [--file PATH] [--dry-run] [--auth-check] [--with-project] [--project-number N | --project-title T] [--project-owner O]`: bulk-create milestones/issues using `gh`; when `--file` is omitted, markdown tickets are auto-imported first if a ticket source directory exists
 - `rules [--repo owner/repo] [--apply]`: preview or apply merge settings, the managed default-branch ruleset, and security defaults
 
 ### `import`
@@ -316,6 +316,21 @@ If `--file` is omitted and markdown source exists under `<repo-path>/artifacts/t
 ```bash
 poetry run repo-scaffold apply backlog --repo OWNER/REPO --with-project --dry-run
 poetry run repo-scaffold apply backlog --repo OWNER/REPO --with-project
+```
+
+When the markdown tickets live in this repo but the target backlog belongs to another checkout, pass the target repo path and point `GITHUB_TICKETS_DIR` at this repo's ticket directory. Use an absolute path because relative `GITHUB_TICKETS_DIR` values resolve from `--path`.
+
+```bash
+GITHUB_TICKETS_DIR="$PWD/artifacts/tickets" \
+  poetry run repo-scaffold apply backlog \
+  --path /path/to/gallery-dl-wrapper \
+  --repo OWNER/gallery-dl-wrapper \
+  --dry-run
+
+GITHUB_TICKETS_DIR="$PWD/artifacts/tickets" \
+  poetry run repo-scaffold apply backlog \
+  --path /path/to/gallery-dl-wrapper \
+  --repo OWNER/gallery-dl-wrapper
 ```
 
 When `--with-project` resolves or creates a GitHub Project, repo-scaffold also writes `<repo-path>/.repo-scaffold/project.json`. That gives the target repo a stable local pointer to its roadmap project for repo-local agents and scripts without depending on disposable `artifacts/`.
