@@ -152,9 +152,9 @@ def _resolve_local_roots(*, cwd: Path, local_roots: Sequence[str]) -> list[Path]
         if key in seen:
             continue
         seen.add(key)
-        if key == "/":
+        if normalized == normalized.parent:
             raise RuntimeError(
-                "Refusing local cleanup root '/'. Use a specific path such as /tmp."
+                f"Refusing local cleanup root '{normalized}'. Use a specific path such as /tmp."
             )
         resolved.append(normalized)
     return resolved

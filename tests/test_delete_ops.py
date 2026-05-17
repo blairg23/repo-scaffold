@@ -283,7 +283,7 @@ def test_delete_helpers_cover_owner_repo_and_root_validation(
     )
     assert roots == [(tmp_path / "a").resolve(), (tmp_path / "relative-root").resolve()]
 
-    with pytest.raises(RuntimeError, match="Refusing local cleanup root '/'"):
+    with pytest.raises(RuntimeError, match="Refusing local cleanup root"):
         delete_ops._resolve_local_roots(cwd=tmp_path, local_roots=("/",))
 
 
