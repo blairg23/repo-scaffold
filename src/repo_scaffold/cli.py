@@ -479,7 +479,6 @@ def build_parser() -> argparse.ArgumentParser:
             "Backlog JSON path. If omitted, auto-imports from markdown when "
             "<repo-path>/artifacts/tickets (or fallback source dirs) exists; otherwise resolves "
             "in this order: ./local/backlog/<owner>/<repo>/issues.json (when --repo is set), "
-            "./local/backlog/issues.json, "
             "<repo-path>/artifacts/backlog/issues.json"
         ),
     )

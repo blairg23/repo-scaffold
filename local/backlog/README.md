@@ -22,5 +22,5 @@ local/backlog/
 
 ## Legacy flat layout
 
-`local/backlog/issues.json` still works as a fallback when no slug path exists,
-but is ambiguous when managing multiple repos from the same workspace.
+`local/backlog/issues.json` is no longer supported. Use the slug layout above.
+Per-repo slug paths prevent ambiguity when managing multiple repos from the same workspace.
