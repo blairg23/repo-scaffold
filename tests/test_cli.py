@@ -368,6 +368,25 @@ def test_import_backlog_uses_slug_path_when_repo_provided(
     assert "Slug Ticket" in payload
 
 
+def test_import_backlog_rejects_invalid_repo_format(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    rc = main(
+        [
+            "import",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--repo",
+            "not-valid-repo",
+            "--yes",
+        ]
+    )
+
+    assert rc == 2
+
+
 def test_import_backlog_defaults_to_artifacts_when_no_repo(tmp_path: Path) -> None:
     repo_dir = tmp_path / "repo"
     source_dir = repo_dir / "artifacts" / "tickets"

@@ -1443,7 +1443,14 @@ def main(argv: list[str] | None = None) -> int:
             p = Path(ns.out)
             output_file = p if p.is_absolute() else repo_dir / p
         elif ns.repo:
-            output_file = _local_backlog_slug_path(ns.repo)
+            normalized_repo = _normalize_owner_repo(ns.repo, allow_host_prefix=True)
+            if normalized_repo is None:
+                print(
+                    "Error: --repo must be in owner/repo format.",
+                    file=sys.stderr,
+                )
+                return 2
+            output_file = _local_backlog_slug_path(normalized_repo)
         else:
             output_file = repo_dir / DEFAULT_BACKLOG_REL_PATH
 
