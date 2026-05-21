@@ -642,12 +642,20 @@ def apply_backlog(
     err: Callable[[str], None] | None = None,
 ) -> BacklogApplySummary:
     emit_err = err if err is not None else (lambda line: print(line))
-    resolve_authenticated_login(repo_dir)
 
     if not backlog_file.exists():
         raise RuntimeError(f"Backlog file not found: {backlog_file}")
 
     data = json.loads(backlog_file.read_text(encoding="utf-8"))
+    file_repo = data.get("repo")
+    if file_repo and file_repo != repo:
+        raise RuntimeError(
+            f"Backlog file declares repo '{file_repo}' but target is '{repo}'. "
+            f"Pass --file explicitly to apply this backlog to a different repo."
+        )
+
+    resolve_authenticated_login(repo_dir)
+
     epics = data.get("epics")
     if not isinstance(epics, list):
         raise RuntimeError("Invalid backlog JSON: expected top-level 'epics' list.")

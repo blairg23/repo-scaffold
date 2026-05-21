@@ -54,11 +54,8 @@ from .project_ops import (
 DEFAULT_INIT_NAME_PREFIX = "repo-scaffold-e2e"
 DEFAULT_INIT_LANGUAGES = "go,python,react"
 DEFAULT_BACKLOG_REL_PATH = "artifacts/backlog/issues.json"
-LEGACY_DEFAULT_BACKLOG_REL_PATH = "backlog/issues.json"
-DEFAULT_LOCAL_BACKLOG_REL_PATH = "local/backlog/issues.json"
+DEFAULT_LOCAL_BACKLOG_SLUG_DIR = "local/backlog"
 DEFAULT_MARKDOWN_BACKLOG_REL_DIR = "artifacts/tickets"
-FALLBACK_MARKDOWN_BACKLOG_REL_DIR = "tickets"
-LEGACY_MARKDOWN_BACKLOG_REL_DIR = ".future_tickets"
 BACKLOG_TICKETS_DIR_ENV = "GITHUB_TICKETS_DIR"
 
 
@@ -180,18 +177,23 @@ def _resolve_repo_from_args_or_env(
     )
 
 
-def _resolve_backlog_file_path(*, repo_dir: Path, file_arg: str | None) -> Path:
+def _local_backlog_slug_path(repo: str) -> Path:
+    return Path.cwd() / DEFAULT_LOCAL_BACKLOG_SLUG_DIR / repo / "issues.json"
+
+
+def _resolve_backlog_file_path(
+    *, repo_dir: Path, file_arg: str | None, repo: str | None = None
+) -> Path:
     if file_arg:
         backlog_file = Path(file_arg)
         return backlog_file if backlog_file.is_absolute() else (repo_dir / backlog_file)
 
-    local_backlog = Path.cwd() / DEFAULT_LOCAL_BACKLOG_REL_PATH
-    if local_backlog.exists():
-        return local_backlog
-    default_backlog = repo_dir / DEFAULT_BACKLOG_REL_PATH
-    if default_backlog.exists():
-        return default_backlog
-    return repo_dir / LEGACY_DEFAULT_BACKLOG_REL_PATH
+    if repo:
+        slug_path = _local_backlog_slug_path(repo)
+        if slug_path.exists():
+            return slug_path
+
+    return repo_dir / DEFAULT_BACKLOG_REL_PATH
 
 
 def _resolve_markdown_source_dir(*, repo_dir: Path, source_arg: str | None) -> Path:
@@ -199,17 +201,7 @@ def _resolve_markdown_source_dir(*, repo_dir: Path, source_arg: str | None) -> P
     if source_value:
         source_dir = Path(source_value)
         return source_dir if source_dir.is_absolute() else (repo_dir / source_dir)
-
-    default_source = repo_dir / DEFAULT_MARKDOWN_BACKLOG_REL_DIR
-    fallback_source = repo_dir / FALLBACK_MARKDOWN_BACKLOG_REL_DIR
-    legacy_source = repo_dir / LEGACY_MARKDOWN_BACKLOG_REL_DIR
-    if default_source.exists():
-        return default_source
-    if fallback_source.exists():
-        return fallback_source
-    if legacy_source.exists():
-        return legacy_source
-    return default_source
+    return repo_dir / DEFAULT_MARKDOWN_BACKLOG_REL_DIR
 
 
 def _find_existing_markdown_source_dir(repo_dir: Path) -> Path | None:
@@ -222,16 +214,8 @@ def _find_existing_markdown_source_dir(repo_dir: Path) -> Path | None:
         raise RuntimeError(
             f"Error: {BACKLOG_TICKETS_DIR_ENV} points to a missing markdown source directory: {resolved}"
         )
-
-    for relative_dir in (
-        DEFAULT_MARKDOWN_BACKLOG_REL_DIR,
-        FALLBACK_MARKDOWN_BACKLOG_REL_DIR,
-        LEGACY_MARKDOWN_BACKLOG_REL_DIR,
-    ):
-        candidate = repo_dir / relative_dir
-        if candidate.exists():
-            return candidate
-    return None
+    candidate = repo_dir / DEFAULT_MARKDOWN_BACKLOG_REL_DIR
+    return candidate if candidate.exists() else None
 
 
 def _seed_env_for_parsed_mode(ns: argparse.Namespace) -> None:
@@ -493,10 +477,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--file",
         help=(
             "Backlog JSON path. If omitted, auto-imports from markdown when "
-            "<repo-path>/artifacts/tickets (or fallback source dirs) exists; otherwise uses "
-            "./local/backlog/issues.json when present, "
-            "otherwise <repo-path>/artifacts/backlog/issues.json, "
-            "then legacy <repo-path>/backlog/issues.json"
+            "<repo-path>/artifacts/tickets (or fallback source dirs) exists; otherwise resolves "
+            "in this order: ./local/backlog/<owner>/<repo>/issues.json (when --repo is set), "
+            "<repo-path>/artifacts/backlog/issues.json"
         ),
     )
     apply_backlog_cmd.add_argument(
@@ -739,13 +722,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--source",
         help=(
             "Markdown source directory "
-            "(default: <path>/artifacts/tickets, fallback to <path>/tickets, "
-            "then legacy <path>/.future_tickets; env override: GITHUB_TICKETS_DIR)"
+            "(default: <path>/artifacts/tickets; env override: GITHUB_TICKETS_DIR)"
+        ),
+    )
+    import_backlog.add_argument(
+        "--repo",
+        help=(
+            "Target GitHub repo (owner/repo). When provided and --out is omitted, "
+            "output defaults to local/backlog/<owner>/<repo>/issues.json"
         ),
     )
     import_backlog.add_argument(
         "--out",
-        help="Backlog JSON output path (default: <path>/artifacts/backlog/issues.json)",
+        help=(
+            "Backlog JSON output path. Defaults to local/backlog/<owner>/<repo>/issues.json "
+            "when --repo is provided, otherwise <path>/artifacts/backlog/issues.json"
+        ),
     )
 
     return parser
@@ -1098,7 +1090,7 @@ def main(argv: list[str] | None = None) -> int:
         backlog_file: Path
         if ns.file:
             backlog_file = _resolve_backlog_file_path(
-                repo_dir=repo_dir, file_arg=ns.file
+                repo_dir=repo_dir, file_arg=ns.file, repo=target_repo
             )
         else:
             try:
@@ -1149,7 +1141,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
             else:
                 backlog_file = _resolve_backlog_file_path(
-                    repo_dir=repo_dir, file_arg=None
+                    repo_dir=repo_dir, file_arg=None, repo=target_repo
                 )
         try:
             backlog_summary: BacklogApplySummary = apply_backlog(
@@ -1447,11 +1439,20 @@ def main(argv: list[str] | None = None) -> int:
         source_dir = _resolve_markdown_source_dir(
             repo_dir=repo_dir, source_arg=ns.source
         )
-        output_file = (
-            Path(ns.out)
-            if ns.out and Path(ns.out).is_absolute()
-            else repo_dir / (ns.out or DEFAULT_BACKLOG_REL_PATH)
-        )
+        if ns.out:
+            p = Path(ns.out)
+            output_file = p if p.is_absolute() else repo_dir / p
+        elif ns.repo:
+            normalized_repo = _normalize_owner_repo(ns.repo, allow_host_prefix=True)
+            if normalized_repo is None:
+                print(
+                    "Error: --repo must be in owner/repo format.",
+                    file=sys.stderr,
+                )
+                return 2
+            output_file = _local_backlog_slug_path(normalized_repo)
+        else:
+            output_file = repo_dir / DEFAULT_BACKLOG_REL_PATH
 
         try:
             imported_backlog_file, import_summary = build_backlog_import_file(

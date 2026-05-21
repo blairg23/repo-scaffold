@@ -268,32 +268,6 @@ def test_import_backlog_dry_run_does_not_write(tmp_path: Path) -> None:
     assert not (repo_dir / "artifacts" / "backlog" / "issues.json").exists()
 
 
-def test_import_backlog_falls_back_to_repo_tickets(tmp_path: Path) -> None:
-    repo_dir = tmp_path / "repo"
-    source_dir = repo_dir / "tickets"
-    source_dir.mkdir(parents=True)
-    (source_dir / "ticket.md").write_text(
-        "# Repo Ticket\n\n## Summary\n\nImported from repo tickets path.\n",
-        encoding="utf-8",
-    )
-
-    rc = main(
-        [
-            "import",
-            "backlog",
-            "--path",
-            str(repo_dir),
-            "--yes",
-        ]
-    )
-
-    assert rc == 0
-    payload = (repo_dir / "artifacts" / "backlog" / "issues.json").read_text(
-        encoding="utf-8"
-    )
-    assert "Repo Ticket" in payload
-
-
 def test_import_backlog_uses_env_ticket_dir_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -360,12 +334,65 @@ def test_import_backlog_uses_repo_local_dotenv_ticket_dir_override(
     assert "Repo Local Env Ticket" in payload
 
 
-def test_import_backlog_falls_back_to_legacy_future_tickets(tmp_path: Path) -> None:
-    repo_dir = tmp_path / "repo"
-    source_dir = repo_dir / ".future_tickets"
+def test_import_backlog_uses_slug_path_when_repo_provided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    repo_dir = workspace / "target-repo"
+    source_dir = repo_dir / "artifacts" / "tickets"
     source_dir.mkdir(parents=True)
     (source_dir / "ticket.md").write_text(
-        "# Legacy Ticket\n\n## Summary\n\nImported from legacy path.\n",
+        "# Slug Ticket\n\n## Summary\n\nShould go to slug path.\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(workspace)
+
+    rc = main(
+        [
+            "import",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--repo",
+            "acme/my-repo",
+            "--yes",
+        ]
+    )
+
+    assert rc == 0
+    slug_file = workspace / "local" / "backlog" / "acme" / "my-repo" / "issues.json"
+    assert slug_file.exists()
+    payload = slug_file.read_text(encoding="utf-8")
+    assert "Slug Ticket" in payload
+
+
+def test_import_backlog_rejects_invalid_repo_format(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    rc = main(
+        [
+            "import",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--repo",
+            "not-valid-repo",
+            "--yes",
+        ]
+    )
+
+    assert rc == 2
+
+
+def test_import_backlog_defaults_to_artifacts_when_no_repo(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    source_dir = repo_dir / "artifacts" / "tickets"
+    source_dir.mkdir(parents=True)
+    (source_dir / "ticket.md").write_text(
+        "# No Repo Ticket\n\n## Summary\n\nNo repo flag provided.\n",
         encoding="utf-8",
     )
 
@@ -380,10 +407,10 @@ def test_import_backlog_falls_back_to_legacy_future_tickets(tmp_path: Path) -> N
     )
 
     assert rc == 0
-    payload = (repo_dir / "artifacts" / "backlog" / "issues.json").read_text(
-        encoding="utf-8"
-    )
-    assert "Legacy Ticket" in payload
+    artifacts_file = repo_dir / "artifacts" / "backlog" / "issues.json"
+    assert artifacts_file.exists()
+    payload = artifacts_file.read_text(encoding="utf-8")
+    assert "No Repo Ticket" in payload
 
 
 def test_apply_backlog_subcommand_delegates_to_backlog_ops(
@@ -643,68 +670,6 @@ def test_apply_backlog_accepts_positional_repo_ref(
     assert called["backlog_file"] == backlog / "issues.json"
 
 
-def test_apply_backlog_defaults_to_local_backlog_when_present(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir(parents=True)
-    local_backlog = workspace / "local" / "backlog"
-    local_backlog.mkdir(parents=True)
-    (local_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
-
-    repo_dir = workspace / "repo"
-    repo_dir.mkdir(parents=True)
-    (repo_dir / "artifacts" / "backlog").mkdir(parents=True)
-    (repo_dir / "artifacts" / "backlog" / "issues.json").write_text(
-        '{"epics":[]}', encoding="utf-8"
-    )
-
-    monkeypatch.chdir(workspace)
-
-    called: dict[str, object] = {}
-
-    def _fake_apply_backlog(
-        *,
-        repo_dir: Path,
-        repo: str,
-        backlog_file: Path,
-        dry_run: bool,
-        project_number,
-        project_title,
-        project_owner,
-        out,
-        err,
-    ):
-        called["repo_dir"] = repo_dir
-        called["repo"] = repo
-        called["backlog_file"] = backlog_file
-        return BacklogApplySummary(
-            milestones_created=0,
-            milestones_skipped=0,
-            issues_created=0,
-            issues_skipped=0,
-            failures=0,
-        )
-
-    monkeypatch.setattr("repo_scaffold.cli.apply_backlog", _fake_apply_backlog)
-
-    rc = main(
-        [
-            "apply",
-            "backlog",
-            "--path",
-            str(repo_dir),
-            "--repo",
-            "acme/repo",
-            "--dry-run",
-        ]
-    )
-    assert rc == 0
-    assert called["repo_dir"] == repo_dir
-    assert called["repo"] == "acme/repo"
-    assert called["backlog_file"] == local_backlog / "issues.json"
-
-
 def test_apply_backlog_defaults_to_repo_artifacts_backlog_when_local_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -763,17 +728,21 @@ def test_apply_backlog_defaults_to_repo_artifacts_backlog_when_local_missing(
     assert called["backlog_file"] == repo_backlog / "issues.json"
 
 
-def test_apply_backlog_falls_back_to_legacy_repo_backlog_when_artifacts_missing(
+def test_apply_backlog_prefers_slug_path_over_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True)
 
+    slug_backlog = workspace / "local" / "backlog" / "acme" / "repo"
+    slug_backlog.mkdir(parents=True)
+    (slug_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+
     repo_dir = workspace / "repo"
     repo_dir.mkdir(parents=True)
-    legacy_backlog = repo_dir / "backlog"
-    legacy_backlog.mkdir(parents=True)
-    (legacy_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    artifacts_backlog = repo_dir / "artifacts" / "backlog"
+    artifacts_backlog.mkdir(parents=True)
+    (artifacts_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
 
     monkeypatch.chdir(workspace)
 
@@ -814,7 +783,7 @@ def test_apply_backlog_falls_back_to_legacy_repo_backlog_when_artifacts_missing(
         ]
     )
     assert rc == 0
-    assert called["backlog_file"] == legacy_backlog / "issues.json"
+    assert called["backlog_file"] == slug_backlog / "issues.json"
 
 
 def test_apply_backlog_auth_check(

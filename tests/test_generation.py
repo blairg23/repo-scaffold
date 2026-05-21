@@ -23,6 +23,9 @@ def _tree_hash(root: Path) -> str:
     return h.hexdigest()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="chmod executable bits not supported on Windows"
+)
 def test_generate_full_scaffold(tmp_path: Path) -> None:
     out_dir = tmp_path / "demo"
     cfg = ScaffoldConfig(

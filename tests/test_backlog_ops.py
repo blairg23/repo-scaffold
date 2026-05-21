@@ -615,6 +615,64 @@ def test_list_projects_supports_wrapped_json_response(
     assert projects == [{"number": 1, "title": "Roadmap"}]
 
 
+def test_apply_backlog_raises_on_repo_field_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    backlog_file = repo_dir / "backlog.json"
+    backlog_file.write_text(
+        json.dumps({"repo": "acme/other-repo", "epics": []}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda _: None)
+
+    with pytest.raises(RuntimeError, match="declares repo 'acme/other-repo'"):
+        backlog_ops.apply_backlog(
+            repo_dir=repo_dir,
+            repo="acme/repo",
+            backlog_file=backlog_file,
+            dry_run=False,
+        )
+
+
+def test_apply_backlog_accepts_matching_repo_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    backlog_file = repo_dir / "backlog.json"
+    backlog_file.write_text(
+        json.dumps({"repo": "acme/repo", "epics": []}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda _: None)
+
+    def _fake_run_gh(
+        _repo_dir: Path, args: list[str]
+    ) -> subprocess.CompletedProcess[str]:
+        if args == ["api", "/user"]:
+            return _cp_ok('{"login":"octocat"}')
+        if args[:2] == ["api", "--paginate"] and "milestones" in args[2]:
+            return _cp_ok("[]")
+        if args[:2] == ["api", "--paginate"] and "labels" in args[2]:
+            return _cp_ok("[]")
+        raise AssertionError(f"Unexpected gh invocation: {args}")
+
+    monkeypatch.setattr(backlog_ops, "_run_gh", _fake_run_gh)
+
+    summary = backlog_ops.apply_backlog(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        backlog_file=backlog_file,
+        dry_run=False,
+        out=lambda _: None,
+    )
+    assert summary.failures == 0
+
+
 def test_apply_backlog_requires_epic_body_and_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
