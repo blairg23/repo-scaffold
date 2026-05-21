@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -212,7 +213,8 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert not (out_dir / "backlog").exists()
     first_time_setup = out_dir / "scripts" / "first_time_setup.sh"
     assert first_time_setup.exists()
-    assert first_time_setup.stat().st_mode & 0o111
+    if sys.platform != "win32":
+        assert first_time_setup.stat().st_mode & 0o111
     script_text = first_time_setup.read_text(encoding="utf-8")
     assert "alias ghp='GH_TOKEN=$PROJECT_TOKEN gh'" in script_text
     assert "GH_TOKEN=$PROJECT_TOKEN gh project item-list" in script_text
@@ -268,6 +270,59 @@ def test_react_only_codeql_is_noop(tmp_path: Path) -> None:
     assert 'package-ecosystem: "npm"' in dependabot
     assert 'package-ecosystem: "gomod"' not in dependabot
     assert 'package-ecosystem: "pip"' not in dependabot
+
+
+def test_react_vite_scaffold_file_contents(tmp_path: Path) -> None:
+    cfg = ScaffoldConfig(
+        name="my-app",
+        languages=("react",),
+        owner="acme",
+        license_id="apache-2.0",
+        out_dir=tmp_path / "my-app",
+    )
+    generate_scaffold(cfg)
+
+    pkg = (cfg.out_dir / "web" / "package.json").read_text(encoding="utf-8")
+    assert '"name": "my-app-web"' in pkg
+    assert '"dev": "vite"' in pkg
+    assert '"build": "vite build"' in pkg
+    assert '"preview": "vite preview"' in pkg
+    assert '"react": "^18' in pkg
+    assert '"react-dom": "^18' in pkg
+    assert '"vite": "^5' in pkg
+    assert '"@vitejs/plugin-react"' in pkg
+
+    vite_cfg = (cfg.out_dir / "web" / "vite.config.js").read_text(encoding="utf-8")
+    assert "defineConfig" in vite_cfg
+    assert "@vitejs/plugin-react" in vite_cfg
+    assert "plugins: [react()]" in vite_cfg
+
+    main_jsx = (cfg.out_dir / "web" / "src" / "main.jsx").read_text(encoding="utf-8")
+    assert "ReactDOM.createRoot" in main_jsx
+    assert "React.StrictMode" in main_jsx
+    assert "import App from './App'" in main_jsx
+
+    app_jsx = (cfg.out_dir / "web" / "src" / "App.jsx").read_text(encoding="utf-8")
+    assert "export default function App()" in app_jsx
+    assert "my-app scaffold" in app_jsx
+
+    index_html = (cfg.out_dir / "web" / "index.html").read_text(encoding="utf-8")
+    assert '<div id="root">' in index_html
+    assert 'src="/src/main.jsx"' in index_html
+    assert "<title>my-app</title>" in index_html
+
+    eslint_cfg = (cfg.out_dir / "web" / "eslint.config.js").read_text(encoding="utf-8")
+    assert "eslint-plugin-react-hooks" in eslint_cfg
+    assert "eslint-plugin-react-refresh" in eslint_cfg
+
+    ci = (cfg.out_dir / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "contains(env.LANGUAGES, 'react')" in ci
+    assert "hashFiles('web/package.json')" in ci
+
+    gitignore = (cfg.out_dir / ".gitignore").read_text(encoding="utf-8")
+    assert "web/node_modules/" in gitignore
+    assert "web/dist/" in gitignore
+    assert "web/.vite/" in gitignore
 
 
 def test_generate_scaffold_uses_custom_markdown_templates(
