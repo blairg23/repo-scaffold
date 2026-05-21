@@ -32,6 +32,8 @@ def _normalize(content: str) -> str:
 
 
 def _has_execute_bit(path: Path) -> bool:
+    if sys.platform == "win32":
+        return True
     return bool(path.stat().st_mode & 0o111)
 
 
