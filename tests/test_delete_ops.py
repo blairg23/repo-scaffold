@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -284,9 +283,8 @@ def test_delete_helpers_cover_owner_repo_and_root_validation(
     )
     assert roots == [(tmp_path / "a").resolve(), (tmp_path / "relative-root").resolve()]
 
-    if sys.platform != "win32":
-        with pytest.raises(RuntimeError, match="Refusing local cleanup root"):
-            delete_ops._resolve_local_roots(cwd=tmp_path, local_roots=("/",))
+    with pytest.raises(RuntimeError, match="Refusing local cleanup root"):
+        delete_ops._resolve_local_roots(cwd=tmp_path, local_roots=("/",))
 
 
 def test_delete_helpers_cover_gh_and_repo_list_errors(

@@ -3,14 +3,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
 from repo_scaffold.generator import ScaffoldFile
 from repo_scaffold.overwrite_policy import OverwritePolicy, apply_files
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32", reason="chmod executable bits not supported on Windows"
-)
 def test_apply_files_handles_create_skip_prompt_force_backup_and_failures(
     tmp_path: Path,
 ) -> None:
@@ -67,7 +63,8 @@ def test_apply_files_handles_create_skip_prompt_force_backup_and_failures(
     assert forced.skipped == 0
     assert forced.failures == 0
     assert forced_path.read_text(encoding="utf-8") == "echo newer\n"
-    assert forced_path.stat().st_mode & 0o111
+    if sys.platform != "win32":
+        assert forced_path.stat().st_mode & 0o111
     backups = list(tmp_path.glob("forced.sh.bak.*"))
     assert len(backups) == 1
     assert backups[0].read_text(encoding="utf-8") == "echo new\n"
