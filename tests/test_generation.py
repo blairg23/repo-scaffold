@@ -399,6 +399,7 @@ def test_gin_scaffold_generates_expected_files(tmp_path: Path) -> None:
     main_go = (out_dir / "cmd" / "myapi" / "main.go").read_text(encoding="utf-8")
     assert "routers.SetupRouter()" in main_go
     assert ":8080" in main_go
+    assert "log.Fatal" in main_go
 
     router_go = (out_dir / "routers" / "router.go").read_text(encoding="utf-8")
     assert "gin.Default()" in router_go
@@ -420,6 +421,12 @@ def test_gin_scaffold_generates_expected_files(tmp_path: Path) -> None:
     ci_yaml = (out_dir / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "gin:" in ci_yaml
     assert "go mod tidy" in ci_yaml
+
+    codeql_yaml = (out_dir / ".github" / "workflows" / "codeql.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "- go" in codeql_yaml
+    assert "No Go/Python selected" not in codeql_yaml
 
     dependabot = (out_dir / ".github" / "dependabot.yml").read_text(encoding="utf-8")
     assert 'package-ecosystem: "gomod"' in dependabot

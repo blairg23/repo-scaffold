@@ -324,7 +324,12 @@ jobs:
 
 
 def _render_codeql_yaml(languages: Iterable[str]) -> str:
-    codeql_langs = [lang for lang in languages if lang in {"go", "python"}]
+    codeql_langs = [
+        "go" if lang == "gin" else lang
+        for lang in languages
+        if lang in {"go", "gin", "python"}
+    ]
+    codeql_langs = list(dict.fromkeys(codeql_langs))
 
     if not codeql_langs:
         return """name: CodeQL
@@ -2481,12 +2486,16 @@ def _render_gin_main(name: str, owner: str | None) -> str:
     return f"""package main
 
 import (
+\t"log"
+
 \t"{module}/routers"
 )
 
 func main() {{
 \tr := routers.SetupRouter()
-\tr.Run(":8080")
+\tif err := r.Run(":8080"); err != nil {{
+\t\tlog.Fatal(err)
+\t}}
 }}
 """
 
