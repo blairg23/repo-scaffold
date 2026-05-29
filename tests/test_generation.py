@@ -368,3 +368,99 @@ def test_generate_scaffold_uses_custom_markdown_templates(
     assert (cfg.out_dir / ".github" / "ISSUE_TEMPLATE" / "ticket.md").read_text(
         encoding="utf-8"
     ) == ticket_template
+
+
+def test_gin_scaffold_generates_expected_files(tmp_path: Path) -> None:
+    out_dir = tmp_path / "myapi"
+    cfg = ScaffoldConfig(
+        name="myapi",
+        languages=("gin",),
+        owner="acme",
+        license_id="apache-2.0",
+        out_dir=out_dir,
+    )
+
+    generate_scaffold(cfg)
+
+    expected_files = [
+        "go.mod",
+        "cmd/myapi/main.go",
+        "routers/router.go",
+        "handlers/health.go",
+        "handlers/health_test.go",
+    ]
+    for rel in expected_files:
+        assert (out_dir / rel).exists(), f"missing: {rel}"
+
+    go_mod = (out_dir / "go.mod").read_text(encoding="utf-8")
+    assert "gin-gonic/gin" in go_mod
+    assert "module github.com/acme/myapi" in go_mod
+
+    main_go = (out_dir / "cmd" / "myapi" / "main.go").read_text(encoding="utf-8")
+    assert "routers.SetupRouter()" in main_go
+    assert ":8080" in main_go
+
+    router_go = (out_dir / "routers" / "router.go").read_text(encoding="utf-8")
+    assert "gin.Default()" in router_go
+    assert "handlers.HealthCheck" in router_go
+    assert "/health" in router_go
+
+    health_go = (out_dir / "handlers" / "health.go").read_text(encoding="utf-8")
+    assert "HealthCheck" in health_go
+    assert "gin.H{" in health_go
+    assert '"status"' in health_go
+
+    health_test_go = (out_dir / "handlers" / "health_test.go").read_text(
+        encoding="utf-8"
+    )
+    assert "TestHealthCheck" in health_test_go
+    assert "gin.TestMode" in health_test_go
+    assert "httptest.NewRecorder()" in health_test_go
+
+    ci_yaml = (out_dir / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "gin:" in ci_yaml
+    assert "go mod download" in ci_yaml
+
+    dependabot = (out_dir / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    assert 'package-ecosystem: "gomod"' in dependabot
+
+    readme = (out_dir / "README.md").read_text(encoding="utf-8")
+    assert "gin" in readme.lower()
+    assert ":8080" in readme
+    assert "/health" in readme
+
+
+def test_detect_languages_gin(tmp_path: Path) -> None:
+    go_mod = tmp_path / "go.mod"
+    go_mod.write_text(
+        "module example.com/myapi\n\ngo 1.22\n\nrequire (\n\tgithub.com/gin-gonic/gin v1.10.0\n)\n",
+        encoding="utf-8",
+    )
+
+    detected = generator_module.detect_languages_from_repo(tmp_path)
+
+    assert detected == ("gin",)
+
+
+def test_detect_languages_plain_go(tmp_path: Path) -> None:
+    go_mod = tmp_path / "go.mod"
+    go_mod.write_text("module example.com/myapp\n\ngo 1.22\n", encoding="utf-8")
+
+    detected = generator_module.detect_languages_from_repo(tmp_path)
+
+    assert detected == ("go",)
+
+
+def test_parse_language_csv_accepts_gin() -> None:
+    from repo_scaffold.generator import parse_language_csv
+
+    result = parse_language_csv("gin")
+    assert result == ("gin",)
+
+
+def test_parse_language_csv_rejects_unknown_still() -> None:
+    from repo_scaffold.generator import parse_language_csv
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown language"):
+        parse_language_csv("rust")

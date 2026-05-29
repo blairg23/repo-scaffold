@@ -442,7 +442,7 @@ def build_parser() -> argparse.ArgumentParser:
     apply_ci.add_argument(
         "--languages",
         required=True,
-        help="Comma-separated language list: go, python, react",
+        help="Comma-separated language list: go, gin, python, react",
     )
 
     apply_dependabot = apply_sub.add_parser(
