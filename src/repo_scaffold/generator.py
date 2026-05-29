@@ -239,7 +239,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Download dependencies
-        run: go mod download
+        run: go mod tidy
       - name: Check gofmt
         run: |
           unformatted="$(gofmt -l .)"
@@ -610,7 +610,7 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
                 "### Gin",
                 "",
                 "```bash",
-                "go mod download",
+                "go mod tidy",
                 "```",
                 "",
             ]

@@ -419,7 +419,7 @@ def test_gin_scaffold_generates_expected_files(tmp_path: Path) -> None:
 
     ci_yaml = (out_dir / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "gin:" in ci_yaml
-    assert "go mod download" in ci_yaml
+    assert "go mod tidy" in ci_yaml
 
     dependabot = (out_dir / ".github" / "dependabot.yml").read_text(encoding="utf-8")
     assert 'package-ecosystem: "gomod"' in dependabot
