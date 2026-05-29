@@ -423,6 +423,7 @@ def _render_gitignore(languages: Iterable[str]) -> str:
         ".env.*",
         "!.env.example",
         ".claude/settings.local.json",
+        ".claude/settings.json",
         "",
         "# Repo-scaffold local metadata",
         ".repo-scaffold/",

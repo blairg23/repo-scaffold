@@ -21,6 +21,7 @@ htmlcov/
 .env.*
 !.env.example
 .claude/settings.local.json
+.claude/settings.json
 
 # Local-only backlog data (do not commit)
 local/backlog/issues.json
