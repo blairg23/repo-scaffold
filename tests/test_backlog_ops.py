@@ -723,3 +723,78 @@ def test_apply_backlog_requires_epic_body_and_key(
     assert summary.failures == 1
     assert errors
     assert "epic.key, epic.title, epic.body are required" in errors[0]
+
+
+# ---------------------------------------------------------------------------
+# fetch_issue tests
+# ---------------------------------------------------------------------------
+
+
+def _cp_err(stderr: str, stdout: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=["gh"], returncode=1, stdout=stdout, stderr=stderr
+    )
+
+
+def test_fetch_issue_returns_detail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda repo_dir: None)
+    payload = json.dumps(
+        {
+            "number": 42,
+            "title": "Fix the bug",
+            "body": "Some body text.",
+            "state": "open",
+            "labels": [{"name": "bug"}, {"name": "high-priority"}],
+            "assignees": [{"login": "alice"}],
+        }
+    )
+    monkeypatch.setattr(
+        backlog_ops,
+        "_run_gh",
+        lambda repo_dir, args: _cp_ok(payload),
+    )
+
+    issue = backlog_ops.fetch_issue(repo_dir, "acme/repo", 42)
+
+    assert issue.number == 42
+    assert issue.title == "Fix the bug"
+    assert issue.body == "Some body text."
+    assert issue.state == "open"
+    assert issue.labels == ["bug", "high-priority"]
+    assert issue.assignees == ["alice"]
+
+
+def test_fetch_issue_not_found_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda repo_dir: None)
+    monkeypatch.setattr(
+        backlog_ops,
+        "_run_gh",
+        lambda repo_dir, args: _cp_err("404 Not Found"),
+    )
+
+    with pytest.raises(RuntimeError, match="not found"):
+        backlog_ops.fetch_issue(repo_dir, "acme/repo", 999)
+
+
+def test_fetch_issue_auth_error_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda repo_dir: None)
+    monkeypatch.setattr(
+        backlog_ops,
+        "_run_gh",
+        lambda repo_dir, args: _cp_err("requires authentication"),
+    )
+
+    with pytest.raises(RuntimeError, match="requires authentication"):
+        backlog_ops.fetch_issue(repo_dir, "acme/repo", 1)

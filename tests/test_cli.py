@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import repo_scaffold.cli as cli_module
 
-from repo_scaffold.backlog_ops import BacklogApplySummary
+from repo_scaffold.backlog_ops import BacklogApplySummary, IssueDetail
 from repo_scaffold.create_ops import CreateSummary, SettingsCheckSummary
 from repo_scaffold.cli import main
 from repo_scaffold.delete_ops import DeleteSummary
@@ -55,6 +55,7 @@ def test_root_help_shows_all_modes(capsys: pytest.CaptureFixture[str]) -> None:
     assert "delete" in stdout
     assert "import" in stdout
     assert "project" in stdout
+    assert "issue" in stdout
 
 
 def test_seed_env_from_dotenv_promotes_project_token_when_gh_token_is_placeholder(
@@ -1655,3 +1656,98 @@ def test_project_delete_subcommand_delegates_to_project_ops(
     stdout = capsys.readouterr().out
     assert "backup file:" in stdout
     assert "undo: undo-cmd" in stdout
+
+
+# ---------------------------------------------------------------------------
+# issue view tests
+# ---------------------------------------------------------------------------
+
+
+def test_issue_view_human_readable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    fake_issue = IssueDetail(
+        number=42,
+        title="Fix the bug",
+        body="This is the body.",
+        state="open",
+        labels=["bug", "high-priority"],
+        assignees=["alice"],
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.fetch_issue",
+        lambda repo_dir, repo, issue_number: fake_issue,
+    )
+
+    rc = main(["issue", "view", "--repo", "acme/repo", "--issue-number", "42"])
+
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "Issue #42: Fix the bug" in stdout
+    assert "State: open" in stdout
+    assert "bug" in stdout
+    assert "high-priority" in stdout
+    assert "alice" in stdout
+    assert "This is the body." in stdout
+
+
+def test_issue_view_json_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    fake_issue = IssueDetail(
+        number=7,
+        title="JSON issue",
+        body="Body text.",
+        state="closed",
+        labels=["wontfix"],
+        assignees=[],
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.fetch_issue",
+        lambda repo_dir, repo, issue_number: fake_issue,
+    )
+
+    rc = main(["issue", "view", "--repo", "acme/repo", "--issue-number", "7", "--json"])
+
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    data = json.loads(stdout)
+    assert data["number"] == 7
+    assert data["title"] == "JSON issue"
+    assert data["state"] == "closed"
+    assert data["labels"] == ["wontfix"]
+    assert data["assignees"] == []
+    assert data["body"] == "Body text."
+
+
+def test_issue_view_not_found_returns_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.fetch_issue",
+        lambda repo_dir, repo, issue_number: (_ for _ in ()).throw(
+            RuntimeError("Issue #999 not found in acme/repo.")
+        ),
+    )
+
+    rc = main(["issue", "view", "--repo", "acme/repo", "--issue-number", "999"])
+    assert rc == 1
+
+
+def test_issue_view_bad_repo_format_returns_2(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    rc = main(["issue", "view", "--repo", "not-valid", "--issue-number", "1"])
+    assert rc == 2
