@@ -1014,6 +1014,8 @@ def fetch_issue(repo_dir: Path, repo: str, issue_number: int) -> IssueDetail:
         raise RuntimeError(
             f"Unexpected response when fetching issue #{issue_number}."
         ) from exc
+    if "pull_request" in data:
+        raise RuntimeError(f"#{issue_number} is a pull request, not an issue.")
     return IssueDetail(
         number=int(data.get("number", issue_number)),
         title=str(data.get("title", "")),

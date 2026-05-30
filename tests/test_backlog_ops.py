@@ -798,3 +798,30 @@ def test_fetch_issue_auth_error_raises(
 
     with pytest.raises(RuntimeError, match="requires authentication"):
         backlog_ops.fetch_issue(repo_dir, "acme/repo", 1)
+
+
+def test_fetch_issue_rejects_pull_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    monkeypatch.setattr(backlog_ops, "_ensure_gh_auth", lambda repo_dir: None)
+    payload = json.dumps(
+        {
+            "number": 10,
+            "title": "Some PR",
+            "body": "PR body",
+            "state": "open",
+            "labels": [],
+            "assignees": [],
+            "pull_request": {"url": "https://api.github.com/repos/acme/repo/pulls/10"},
+        }
+    )
+    monkeypatch.setattr(
+        backlog_ops,
+        "_run_gh",
+        lambda repo_dir, args: _cp_ok(payload),
+    )
+
+    with pytest.raises(RuntimeError, match="pull request"):
+        backlog_ops.fetch_issue(repo_dir, "acme/repo", 10)
