@@ -7,12 +7,22 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 from .auth_tokens import is_placeholder_token, resolve_gh_token
 from .project_metadata import write_project_metadata
+
+
+@dataclass(frozen=True)
+class IssueDetail:
+    number: int
+    title: str
+    body: str
+    state: str
+    labels: list[str] = field(default_factory=list)
+    assignees: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -985,4 +995,40 @@ def apply_backlog(
         project_created=project_created,
         project_items_added=project_items_added,
         project_items_skipped=project_items_skipped,
+    )
+
+
+def fetch_issue(repo_dir: Path, repo: str, issue_number: int) -> IssueDetail:
+    _ensure_gh_auth(repo_dir)
+    cp = _run_gh(repo_dir, ["api", f"/repos/{repo}/issues/{issue_number}"])
+    if cp.returncode != 0:
+        stderr = cp.stderr.strip()
+        if "404" in stderr or "Not Found" in (cp.stdout or ""):
+            raise RuntimeError(f"Issue #{issue_number} not found in {repo}.")
+        raise RuntimeError(
+            stderr or f"Failed to fetch issue #{issue_number} from {repo}."
+        )
+    try:
+        data = json.loads(cp.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Unexpected response when fetching issue #{issue_number}."
+        ) from exc
+    if "pull_request" in data:
+        raise RuntimeError(f"#{issue_number} is a pull request, not an issue.")
+    return IssueDetail(
+        number=int(data.get("number", issue_number)),
+        title=str(data.get("title", "")),
+        body=str(data.get("body", "") or ""),
+        state=str(data.get("state", "")),
+        labels=[
+            lbl["name"]
+            for lbl in data.get("labels", [])
+            if isinstance(lbl, dict) and "name" in lbl
+        ],
+        assignees=[
+            a["login"]
+            for a in data.get("assignees", [])
+            if isinstance(a, dict) and "login" in a
+        ],
     )

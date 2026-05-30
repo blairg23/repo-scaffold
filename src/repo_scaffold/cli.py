@@ -10,7 +10,9 @@ from pathlib import Path
 from .auth_tokens import is_placeholder_token, resolve_gh_token
 from .backlog_ops import (
     BacklogApplySummary,
+    IssueDetail,
     apply_backlog,
+    fetch_issue,
     resolve_authenticated_login,
     resolve_project_target_for_auth_check,
 )
@@ -740,6 +742,29 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    issue_cmd = subparsers.add_parser("issue", help="Query GitHub issues")
+    issue_sub = issue_cmd.add_subparsers(dest="issue_command", required=True)
+    issue_view_cmd = issue_sub.add_parser(
+        "view", help="View details for a single issue"
+    )
+    issue_view_cmd.add_argument(
+        "--repo",
+        required=True,
+        help="Target GitHub repo (owner/repo)",
+    )
+    issue_view_cmd.add_argument(
+        "--issue-number",
+        type=int,
+        required=True,
+        help="Issue number to fetch",
+    )
+    issue_view_cmd.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output structured JSON instead of human-readable text",
+    )
+
     return parser
 
 
@@ -755,6 +780,7 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
         "delete",
         "import",
         "project",
+        "issue",
     }:
         return raw
     # Backward-compatible behavior: previous root command maps to init.
@@ -1494,6 +1520,51 @@ def main(argv: list[str] | None = None) -> int:
                 f"{'Dry-run complete for' if ns.dry_run else 'Imported backlog to'}: {output_file}"
             )
         return 1 if apply_summary.failures > 0 else 0
+
+    if ns.mode == "issue" and ns.issue_command == "view":
+        target_repo, repo_error = _resolve_repo_from_args_or_env(
+            repo=ns.repo, fallback_name=None
+        )
+        if repo_error:
+            print(repo_error, file=sys.stderr)
+            return 2
+        assert target_repo is not None
+        try:
+            issue: IssueDetail = fetch_issue(
+                repo_dir=Path.cwd(),
+                repo=target_repo,
+                issue_number=ns.issue_number,
+            )
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if ns.json_output:
+            import json as _json
+
+            print(
+                _json.dumps(
+                    {
+                        "number": issue.number,
+                        "title": issue.title,
+                        "body": issue.body,
+                        "labels": issue.labels,
+                        "assignees": issue.assignees,
+                        "state": issue.state,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print(f"Issue #{issue.number}: {issue.title}")
+            print(f"State: {issue.state}")
+            if issue.labels:
+                print(f"Labels: {', '.join(issue.labels)}")
+            if issue.assignees:
+                print(f"Assignees: {', '.join(issue.assignees)}")
+            if issue.body:
+                print("")
+                print(issue.body)
+        return 0
 
     parser.error("Unsupported command.")
     return 2
