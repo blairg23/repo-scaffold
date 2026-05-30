@@ -744,6 +744,39 @@ def issue_comment(
     )
 
 
+_GQL_ADD_REACTION = """
+mutation($subjectId: ID!, $content: ReactionContent!) {
+  addReaction(input: {subjectId: $subjectId, content: $content}) {
+    reaction { content }
+  }
+}
+"""
+
+
+def react_by_node_id(
+    node_id: str, content: str, token: str
+) -> subprocess.CompletedProcess[str]:
+    """Add a reaction to any reactionable GitHub object by its GraphQL node ID."""
+    return graphql(_GQL_ADD_REACTION, {"subjectId": node_id, "content": content}, token)
+
+
+def react(
+    repo: str,
+    subject: str,
+    subject_id: int,
+    content: str,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Add a reaction via REST. subject: 'issue_comment' or 'pull_request_review_comment'."""
+    if subject == "issue_comment":
+        endpoint = f"/repos/{repo}/issues/comments/{subject_id}/reactions"
+    elif subject == "pull_request_review_comment":
+        endpoint = f"/repos/{repo}/pulls/comments/{subject_id}/reactions"
+    else:
+        return _err(f"Use react_by_node_id() for subject: {subject}")
+    return rest("POST", endpoint, token, {"content": content})
+
+
 def issue_label(
     repo: str,
     number: int,
