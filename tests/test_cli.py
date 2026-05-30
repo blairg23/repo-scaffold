@@ -56,6 +56,7 @@ def test_root_help_shows_all_modes(capsys: pytest.CaptureFixture[str]) -> None:
     assert "import" in stdout
     assert "project" in stdout
     assert "issue" in stdout
+    assert "pr" in stdout
 
 
 def test_seed_env_from_dotenv_promotes_project_token_when_gh_token_is_placeholder(
@@ -1751,3 +1752,130 @@ def test_issue_view_bad_repo_format_returns_2(
     monkeypatch.chdir(tmp_path)
     rc = main(["issue", "view", "--repo", "not-valid", "--issue-number", "1"])
     assert rc == 2
+
+
+# ---------------------------------------------------------------------------
+# pr command tests
+# ---------------------------------------------------------------------------
+
+
+def test_pr_list_human_readable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    fake_prs = [
+        {
+            "number": 5,
+            "title": "Fix bug",
+            "state": "open",
+            "head": {"ref": "fix/bug"},
+            "base": {"ref": "main"},
+        },
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_list",
+        lambda repo, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(fake_prs), stderr=""
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(["pr", "list", "--repo", "acme/repo"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "#5" in out
+    assert "Fix bug" in out
+
+
+def test_pr_view_human_readable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    fake_pr = {
+        "number": 5,
+        "title": "Fix bug",
+        "state": "open",
+        "head": {"ref": "fix/bug"},
+        "base": {"ref": "main"},
+        "user": {"login": "alice"},
+        "body": "Fixes the thing.",
+    }
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_view",
+        lambda repo, number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(fake_pr), stderr=""
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(["pr", "view", "--repo", "acme/repo", "--pr-number", "5"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "PR #5: Fix bug" in out
+    assert "alice" in out
+
+
+def test_pr_comment_posts_and_prints_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_comment",
+        lambda repo, number, body, token, reply_to=None: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {"html_url": "https://github.com/acme/repo/pull/5#comment-1"}
+            ),
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(
+        ["pr", "comment", "--repo", "acme/repo", "--pr-number", "5", "--body", "LGTM"]
+    )
+    assert rc == 0
+    assert "Comment posted" in capsys.readouterr().out
+
+
+def test_pr_resolve_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_resolve_thread",
+        lambda thread_id, token: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({"id": "PRRT_abc", "isResolved": True}),
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(
+        ["pr", "resolve-thread", "--repo", "acme/repo", "--thread-id", "PRRT_abc"]
+    )
+    assert rc == 0
+    assert "resolved" in capsys.readouterr().out.lower()

@@ -16,6 +16,13 @@ from .backlog_ops import (
     resolve_authenticated_login,
     resolve_project_target_for_auth_check,
 )
+from .github_api import (
+    pr_comment,
+    pr_list,
+    pr_resolve_thread,
+    pr_view,
+    token_from_repo,
+)
 from .backlog_import import build_backlog_import_file
 from .create_ops import (
     CreateSummary,
@@ -765,6 +772,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output structured JSON instead of human-readable text",
     )
 
+    pr_cmd = subparsers.add_parser("pr", help="Interact with GitHub pull requests")
+    pr_sub = pr_cmd.add_subparsers(dest="pr_command", required=True)
+
+    pr_list_cmd = pr_sub.add_parser("list", help="List open pull requests")
+    pr_list_cmd.add_argument(
+        "--repo", required=True, help="Target GitHub repo (owner/repo)"
+    )
+    pr_list_cmd.add_argument("--json", action="store_true", dest="json_output")
+
+    pr_view_cmd = pr_sub.add_parser("view", help="View a single pull request")
+    pr_view_cmd.add_argument(
+        "--repo", required=True, help="Target GitHub repo (owner/repo)"
+    )
+    pr_view_cmd.add_argument("--pr-number", type=int, required=True)
+    pr_view_cmd.add_argument("--json", action="store_true", dest="json_output")
+
+    pr_comment_cmd = pr_sub.add_parser("comment", help="Post a review comment on a PR")
+    pr_comment_cmd.add_argument("--repo", required=True)
+    pr_comment_cmd.add_argument("--pr-number", type=int, required=True)
+    pr_comment_cmd.add_argument("--body", required=True)
+    pr_comment_cmd.add_argument(
+        "--reply-to", type=int, dest="reply_to", help="Comment ID to reply to"
+    )
+
+    pr_resolve_cmd = pr_sub.add_parser(
+        "resolve-thread", help="Resolve a PR review thread"
+    )
+    pr_resolve_cmd.add_argument("--repo", required=True)
+    pr_resolve_cmd.add_argument("--thread-id", required=True, dest="thread_id")
+
     return parser
 
 
@@ -781,6 +818,7 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
         "import",
         "project",
         "issue",
+        "pr",
     }:
         return raw
     # Backward-compatible behavior: previous root command maps to init.
@@ -1565,6 +1603,78 @@ def main(argv: list[str] | None = None) -> int:
                 print("")
                 print(issue.body)
         return 0
+
+    if ns.mode == "pr":
+        import json as _json
+
+        target_repo, repo_error = _resolve_repo_from_args_or_env(
+            repo=ns.repo, fallback_name=None
+        )
+        if repo_error:
+            print(repo_error, file=sys.stderr)
+            return 2
+        assert target_repo is not None
+        token = token_from_repo(Path.cwd()) or ""
+
+        if ns.pr_command == "list":
+            cp = pr_list(target_repo, token)
+            if cp.returncode != 0:
+                print(cp.stderr.strip() or "Failed listing PRs.", file=sys.stderr)
+                return 1
+            prs = _json.loads(cp.stdout)
+            if ns.json_output:
+                print(_json.dumps(prs, indent=2))
+            else:
+                if not prs:
+                    print("No open pull requests.")
+                for p in prs:
+                    print(
+                        f"  #{p['number']} [{p['state']}] {p['title']}  ({p['head']['ref']})"
+                    )
+            return 0
+
+        if ns.pr_command == "view":
+            cp = pr_view(target_repo, ns.pr_number, token)
+            if cp.returncode != 0:
+                print(
+                    cp.stderr.strip() or f"Failed fetching PR #{ns.pr_number}.",
+                    file=sys.stderr,
+                )
+                return 1
+            pr = _json.loads(cp.stdout)
+            if ns.json_output:
+                print(_json.dumps(pr, indent=2))
+            else:
+                print(f"PR #{pr['number']}: {pr['title']}")
+                print(f"State: {pr['state']}")
+                print(f"Branch: {pr['head']['ref']} -> {pr['base']['ref']}")
+                print(f"Author: {pr['user']['login']}")
+                if pr.get("body"):
+                    print("")
+                    print(pr["body"])
+            return 0
+
+        if ns.pr_command == "comment":
+            cp = pr_comment(
+                target_repo, ns.pr_number, ns.body, token, reply_to=ns.reply_to
+            )
+            if cp.returncode not in (0, 201):
+                print(cp.stderr.strip() or "Failed posting comment.", file=sys.stderr)
+                return 1
+            comment = _json.loads(cp.stdout)
+            print(f"Comment posted: {comment.get('html_url', '')}")
+            return 0
+
+        if ns.pr_command == "resolve-thread":
+            cp = pr_resolve_thread(ns.thread_id, token)
+            if cp.returncode != 0:
+                print(cp.stderr.strip() or "Failed resolving thread.", file=sys.stderr)
+                return 1
+            thread = _json.loads(cp.stdout)
+            print(
+                f"Thread resolved: {thread.get('id', ns.thread_id)} (isResolved: {thread.get('isResolved', True)})"
+            )
+            return 0
 
     parser.error("Unsupported command.")
     return 2

@@ -703,6 +703,79 @@ def _load_env_file(path: Path) -> dict[str, str]:
     return result
 
 
+# ---------------------------------------------------------------------------
+# Pull requests
+# ---------------------------------------------------------------------------
+
+_GQL_RESOLVE_THREAD = """
+mutation($threadId: ID!) {
+  resolveReviewThread(input: {threadId: $threadId}) {
+    thread { id isResolved }
+  }
+}
+"""
+
+_GQL_PR_REVIEW_THREADS = """
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 50) {
+        nodes { id isResolved }
+      }
+    }
+  }
+}
+"""
+
+
+def pr_list(repo: str, token: str) -> subprocess.CompletedProcess[str]:
+    return rest_paginated(f"/repos/{repo}/pulls?state=open&per_page=100", token)
+
+
+def pr_view(repo: str, number: int, token: str) -> subprocess.CompletedProcess[str]:
+    return rest("GET", f"/repos/{repo}/pulls/{number}", token)
+
+
+def pr_list_comments(
+    repo: str, number: int, token: str
+) -> subprocess.CompletedProcess[str]:
+    return rest_paginated(f"/repos/{repo}/pulls/{number}/comments?per_page=100", token)
+
+
+def pr_comment(
+    repo: str,
+    number: int,
+    body: str,
+    token: str,
+    reply_to: int | None = None,
+) -> subprocess.CompletedProcess[str]:
+    payload: dict[str, object] = {"body": body}
+    if reply_to is not None:
+        payload["in_reply_to"] = reply_to
+    return rest("POST", f"/repos/{repo}/pulls/{number}/comments", token, payload)
+
+
+def pr_review_threads(
+    owner: str, repo: str, number: int, token: str
+) -> subprocess.CompletedProcess[str]:
+    return graphql(
+        _GQL_PR_REVIEW_THREADS,
+        {"owner": owner, "repo": repo, "number": number},
+        token,
+    )
+
+
+def pr_resolve_thread(thread_id: str, token: str) -> subprocess.CompletedProcess[str]:
+    cp = graphql(_GQL_RESOLVE_THREAD, {"threadId": thread_id}, token)
+    if cp.returncode != 0:
+        return cp
+    try:
+        thread = json.loads(cp.stdout).get("resolveReviewThread", {}).get("thread", {})
+        return _ok(json.dumps(thread))
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response resolving thread.")
+
+
 def token_from_repo(repo_dir: Path) -> str | None:
     """Try to resolve a GH token from the repo .env and environment."""
     env = dict(os.environ)
