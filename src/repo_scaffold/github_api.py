@@ -749,10 +749,18 @@ def pr_comment(
     token: str,
     reply_to: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    payload: dict[str, object] = {"body": body}
     if reply_to is not None:
-        payload["in_reply_to"] = reply_to
-    return rest("POST", f"/repos/{repo}/pulls/{number}/comments", token, payload)
+        # Reply to an existing inline review comment
+        return rest(
+            "POST",
+            f"/repos/{repo}/pulls/{number}/comments/{reply_to}/replies",
+            token,
+            {"body": body},
+        )
+    # Regular PR timeline comment (visible in the conversation tab)
+    return rest(
+        "POST", f"/repos/{repo}/issues/{number}/comments", token, {"body": body}
+    )
 
 
 def pr_review_threads(
