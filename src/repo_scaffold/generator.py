@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-ALLOWED_LANGUAGES = ("go", "python", "react")
+ALLOWED_LANGUAGES = ("go", "gin", "python", "react")
 SUPPORTED_LICENSE = "apache-2.0"
 TEMPLATE_ROOT = Path(__file__).resolve().parent / "templates"
 
@@ -30,14 +30,14 @@ def parse_language_csv(raw: str) -> tuple[str, ...]:
     parts = [part.strip().lower() for part in raw.split(",")]
     if not parts or any(not part for part in parts):
         raise ValueError(
-            "--languages must be a comma-separated list containing only: go, python, react"
+            "--languages must be a comma-separated list containing only: go, gin, python, react"
         )
 
     unknown = [part for part in parts if part not in ALLOWED_LANGUAGES]
     if unknown:
         bad = ", ".join(sorted(set(unknown)))
         raise ValueError(
-            f"Unknown language value(s): {bad}. Allowed: go, python, react"
+            f"Unknown language value(s): {bad}. Allowed: go, gin, python, react"
         )
 
     selected = set(parts)
@@ -230,6 +230,31 @@ jobs:
         with:
           version: v1.61
 
+  gin:
+    if: contains(env.LANGUAGES, 'gin') && hashFiles('go.mod') != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Download dependencies
+        run: go mod tidy
+      - name: Check gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Files not formatted with gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Run tests
+        run: go test ./...
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.61
+
   python:
     if: contains(env.LANGUAGES, 'python') && hashFiles('pyproject.toml') != ''
     runs-on: ubuntu-latest
@@ -299,7 +324,12 @@ jobs:
 
 
 def _render_codeql_yaml(languages: Iterable[str]) -> str:
-    codeql_langs = [lang for lang in languages if lang in {"go", "python"}]
+    codeql_langs = [
+        "go" if lang == "gin" else lang
+        for lang in languages
+        if lang in {"go", "gin", "python"}
+    ]
+    codeql_langs = list(dict.fromkeys(codeql_langs))
 
     if not codeql_langs:
         return """name: CodeQL
@@ -371,7 +401,7 @@ def _render_dependabot_yaml(languages: Iterable[str]) -> str:
     selected = set(languages)
     if "react" in selected:
         entries.append(block("npm", "/web", "npm"))
-    if "go" in selected:
+    if "go" in selected or "gin" in selected:
         entries.append(block("gomod", "/", "gomod"))
     if "python" in selected:
         entries.append(block("pip", "/", "pip"))
@@ -398,6 +428,7 @@ def _render_gitignore(languages: Iterable[str]) -> str:
         ".env.*",
         "!.env.example",
         ".claude/settings.local.json",
+        ".claude/settings.json",
         "",
         "# Repo-scaffold local metadata",
         ".repo-scaffold/",
@@ -413,7 +444,7 @@ def _render_gitignore(languages: Iterable[str]) -> str:
         "",
     ]
 
-    if "go" in selected:
+    if "go" in selected or "gin" in selected:
         lines.extend(
             [
                 "# Go",
@@ -579,6 +610,18 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
             ]
         )
 
+    if "gin" in config.languages:
+        lines.extend(
+            [
+                "### Gin",
+                "",
+                "```bash",
+                "go mod tidy",
+                "```",
+                "",
+            ]
+        )
+
     if "react" in config.languages:
         lines.extend(
             [
@@ -649,6 +692,23 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
                 "golangci-lint run ./...",
                 "go test ./...",
                 "```",
+                "",
+            ]
+        )
+
+    if "gin" in config.languages:
+        lines.extend(
+            [
+                "### Gin",
+                "",
+                "```bash",
+                "go run ./cmd/...",
+                "go test ./...",
+                "gofmt -w .",
+                "golangci-lint run ./...",
+                "```",
+                "",
+                "Server starts on `:8080`. Hit `GET /health` to verify.",
                 "",
             ]
         )
@@ -2403,6 +2463,106 @@ go 1.22
 """
 
 
+def _module_path(name: str, owner: str | None) -> str:
+    if owner:
+        return f"github.com/{owner}/{name}"
+    return f"example.com/{name}"
+
+
+def _render_gin_go_mod(name: str, owner: str | None) -> str:
+    module = _module_path(name, owner)
+    return f"""module {module}
+
+go 1.22
+
+require (
+\tgithub.com/gin-gonic/gin v1.10.0
+)
+"""
+
+
+def _render_gin_main(name: str, owner: str | None) -> str:
+    module = _module_path(name, owner)
+    return f"""package main
+
+import (
+\t"log"
+
+\t"{module}/routers"
+)
+
+func main() {{
+\tr := routers.SetupRouter()
+\tif err := r.Run(":8080"); err != nil {{
+\t\tlog.Fatal(err)
+\t}}
+}}
+"""
+
+
+def _render_gin_router(name: str, owner: str | None) -> str:
+    module = _module_path(name, owner)
+    return f"""package routers
+
+import (
+\t"github.com/gin-gonic/gin"
+\t"{module}/handlers"
+)
+
+func SetupRouter() *gin.Engine {{
+\tr := gin.Default()
+\tr.GET("/health", handlers.HealthCheck)
+\treturn r
+}}
+"""
+
+
+def _render_gin_health_handler() -> str:
+    return """package handlers
+
+import (
+\t"net/http"
+
+\t"github.com/gin-gonic/gin"
+)
+
+func HealthCheck(c *gin.Context) {
+\tc.JSON(http.StatusOK, gin.H{
+\t\t"status": "ok",
+\t})
+}
+"""
+
+
+def _render_gin_health_test(name: str, owner: str | None) -> str:
+    module = _module_path(name, owner)
+    return f"""package handlers_test
+
+import (
+\t"net/http"
+\t"net/http/httptest"
+\t"testing"
+
+\t"github.com/gin-gonic/gin"
+\t"{module}/handlers"
+)
+
+func TestHealthCheck(t *testing.T) {{
+\tgin.SetMode(gin.TestMode)
+\tr := gin.New()
+\tr.GET("/health", handlers.HealthCheck)
+
+\tw := httptest.NewRecorder()
+\treq, _ := http.NewRequest(http.MethodGet, "/health", nil)
+\tr.ServeHTTP(w, req)
+
+\tif w.Code != http.StatusOK {{
+\t\tt.Fatalf("expected 200, got %d", w.Code)
+\t}}
+}}
+"""
+
+
 def _render_python_pyproject(name: str) -> str:
     return f"""[build-system]
 requires = ["setuptools>=69", "wheel"]
@@ -2831,6 +2991,32 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
             ]
         )
 
+    if "gin" in selected:
+        files.extend(
+            [
+                ScaffoldFile(
+                    config.out_dir / "go.mod",
+                    _render_gin_go_mod(config.name, config.owner),
+                ),
+                ScaffoldFile(
+                    config.out_dir / "cmd" / config.name / "main.go",
+                    _render_gin_main(config.name, config.owner),
+                ),
+                ScaffoldFile(
+                    config.out_dir / "routers" / "router.go",
+                    _render_gin_router(config.name, config.owner),
+                ),
+                ScaffoldFile(
+                    config.out_dir / "handlers" / "health.go",
+                    _render_gin_health_handler(),
+                ),
+                ScaffoldFile(
+                    config.out_dir / "handlers" / "health_test.go",
+                    _render_gin_health_test(config.name, config.owner),
+                ),
+            ]
+        )
+
     if "python" in selected:
         files.extend(
             [
@@ -2907,8 +3093,12 @@ def _filter_files_for_paths(
 
 def detect_languages_from_repo(repo_dir: Path) -> tuple[str, ...]:
     selected: list[str] = []
-    if (repo_dir / "go.mod").exists():
-        selected.append("go")
+    go_mod = repo_dir / "go.mod"
+    if go_mod.exists():
+        if "gin-gonic/gin" in go_mod.read_text(encoding="utf-8"):
+            selected.append("gin")
+        else:
+            selected.append("go")
     if (repo_dir / "pyproject.toml").exists():
         selected.append("python")
     if (repo_dir / "web" / "package.json").exists():
