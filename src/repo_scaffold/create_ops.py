@@ -934,6 +934,9 @@ def _create_or_push_repo(
                 cp.stderr.strip() or f"Failed creating repository: {repo}",
             )
 
+        _ensure_origin_remote(
+            repo_dir=repo_dir, env=env, repo=repo, dry_run=False, out=out
+        )
         out("push main to origin")
         pushed, push_error = _push_main(repo_dir=repo_dir, env=env)
         if not pushed:

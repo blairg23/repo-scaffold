@@ -936,6 +936,7 @@ def test_create_or_push_repo_uses_absolute_source_path(
 
     monkeypatch.setattr(create_ops, "_repo_exists", _fake_repo_exists)
     monkeypatch.setattr(create_ops, "_github_repo_create", _fake_repo_create)
+    monkeypatch.setattr(create_ops, "_ensure_origin_remote", lambda **_: None)
     monkeypatch.setattr(create_ops, "_push_main", _fake_push_main)
 
     created, pushed, error = create_ops._create_or_push_repo(

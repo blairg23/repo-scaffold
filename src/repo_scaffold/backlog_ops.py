@@ -13,6 +13,7 @@ from typing import Callable
 from .auth_tokens import is_placeholder_token, resolve_gh_token
 from .github_api import (
     issue_node_id,
+    link_project_to_repository,
     project_create,
     project_delete,
     project_edit,
@@ -726,6 +727,31 @@ def _gh_project(
                 args=[], returncode=1, stdout="", stderr="Could not resolve project ID."
             )
         return project_item_delete(project_id, item_id, token)
+
+    if sub == "link":
+        if number is None:
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Project number required."
+            )
+        repo = _get("--repo") or ""
+        pv = project_view(owner, number, token)
+        if pv.returncode != 0:
+            return pv
+        try:
+            project_id = json.loads(pv.stdout).get("id", "")
+        except (json.JSONDecodeError, AttributeError):
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Could not resolve project ID."
+            )
+        repo_owner, _, repo_name = repo.partition("/")
+        cp = link_project_to_repository(project_id, repo_owner, repo_name, token)
+        if cp.returncode != 0:
+            stderr = (cp.stderr or "").lower()
+            if "already" in stderr and "link" in stderr:
+                return subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout="already linked", stderr=""
+                )
+        return cp
 
     return subprocess.CompletedProcess(
         args=[],

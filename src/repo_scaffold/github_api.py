@@ -188,7 +188,7 @@ def resolve_owner_node_id(owner: str, token: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 _GQL_LIST_PROJECTS = """
-query($login: String!, $first: Int!, $after: String, $includeClosed: Boolean!) {
+query($login: String!, $first: Int!, $after: String) {
   user(login: $login) {
     projectsV2(
       first: $first
@@ -206,7 +206,7 @@ query($login: String!, $first: Int!, $after: String, $includeClosed: Boolean!) {
 """
 
 _GQL_LIST_PROJECTS_ORG = """
-query($login: String!, $first: Int!, $after: String, $includeClosed: Boolean!) {
+query($login: String!, $first: Int!, $after: String) {
   organization(login: $login) {
     projectsV2(
       first: $first
@@ -366,12 +366,7 @@ def project_list(
         while True:
             cp = graphql(
                 query,
-                {
-                    "login": owner,
-                    "first": 100,
-                    "after": after,
-                    "includeClosed": include_closed,
-                },
+                {"login": owner, "first": 100, "after": after},
                 token,
             )
             if cp.returncode != 0:
@@ -551,6 +546,51 @@ def project_item_delete(
 ) -> subprocess.CompletedProcess[str]:
     return graphql(
         _GQL_DELETE_ITEM, {"projectId": project_id, "itemId": item_id}, token
+    )
+
+
+# ---------------------------------------------------------------------------
+# Link project to repository
+# ---------------------------------------------------------------------------
+
+_GQL_LINK_PROJECT = """
+mutation($projectId: ID!, $repositoryId: ID!) {
+  linkProjectV2ToRepository(input: {projectId: $projectId, repositoryId: $repositoryId}) {
+    repository { id }
+  }
+}
+"""
+
+_GQL_REPO_NODE_ID = """
+query($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) { id }
+}
+"""
+
+
+def repo_node_id(owner: str, repo: str, token: str) -> str | None:
+    cp = graphql(_GQL_REPO_NODE_ID, {"owner": owner, "repo": repo}, token)
+    if cp.returncode != 0:
+        return None
+    try:
+        return json.loads(cp.stdout).get("repository", {}).get("id")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+
+def link_project_to_repository(
+    project_id: str,
+    owner: str,
+    repo: str,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    repository_id = repo_node_id(owner, repo, token)
+    if not repository_id:
+        return _err(f"Could not resolve node ID for repository {owner}/{repo}.")
+    return graphql(
+        _GQL_LINK_PROJECT,
+        {"projectId": project_id, "repositoryId": repository_id},
+        token,
     )
 
 
