@@ -1754,6 +1754,152 @@ def test_issue_view_bad_repo_format_returns_2(
     assert rc == 2
 
 
+def _fake_issue_cp(data: object) -> object:
+    import json
+    import subprocess
+
+    return subprocess.CompletedProcess(
+        args=[], returncode=201, stdout=json.dumps(data), stderr=""
+    )
+
+
+def test_issue_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    issues = [
+        {"number": 1, "title": "Bug", "state": "open", "labels": [{"name": "bug"}]}
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_list",
+        lambda repo, token, state="open": subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(issues), stderr=""
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(["issue", "list", "--repo", "acme/repo"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "#1" in out and "Bug" in out
+
+
+def test_issue_create(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_create",
+        lambda repo, title, token, **kw: _fake_issue_cp(
+            {
+                "number": 10,
+                "title": title,
+                "html_url": "https://github.com/acme/repo/issues/10",
+            }
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(["issue", "create", "--repo", "acme/repo", "--title", "New bug"])
+    assert rc == 0
+    assert "#10" in capsys.readouterr().out
+
+
+def test_issue_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_close",
+        lambda repo, number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="{}", stderr=""
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(["issue", "close", "--repo", "acme/repo", "--issue-number", "5"])
+    assert rc == 0
+    assert "closed" in capsys.readouterr().out
+
+
+def test_issue_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_comment",
+        lambda repo, number, body, token: _fake_issue_cp(
+            {"html_url": "https://github.com/acme/repo/issues/5#comment-1"}
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(
+        [
+            "issue",
+            "comment",
+            "--repo",
+            "acme/repo",
+            "--issue-number",
+            "5",
+            "--body",
+            "LGTM",
+        ]
+    )
+    assert rc == 0
+    assert "Comment posted" in capsys.readouterr().out
+
+
+def test_issue_label(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_label",
+        lambda repo, number, token, add=None, remove=None: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="{}", stderr=""
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(
+        ["issue", "label", "--repo", "acme/repo", "--issue-number", "5", "--add", "bug"]
+    )
+    assert rc == 0
+    assert "Labels updated" in capsys.readouterr().out
+
+
+def test_issue_assign(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_assign",
+        lambda repo, number, token, add=None, remove=None: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="{}", stderr=""
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(
+        [
+            "issue",
+            "assign",
+            "--repo",
+            "acme/repo",
+            "--issue-number",
+            "5",
+            "--add",
+            "alice",
+        ]
+    )
+    assert rc == 0
+    assert "Assignees updated" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # pr command tests
 # ---------------------------------------------------------------------------

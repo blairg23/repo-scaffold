@@ -17,6 +17,12 @@ from .backlog_ops import (
     resolve_project_target_for_auth_check,
 )
 from .github_api import (
+    issue_assign,
+    issue_close,
+    issue_comment,
+    issue_create,
+    issue_label,
+    issue_list,
     pr_comment,
     pr_create,
     pr_list,
@@ -771,6 +777,59 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="json_output",
         help="Output structured JSON instead of human-readable text",
+    )
+
+    issue_list_cmd = issue_sub.add_parser("list", help="List issues")
+    issue_list_cmd.add_argument("--repo", required=True)
+    issue_list_cmd.add_argument(
+        "--state", default="open", choices=["open", "closed", "all"]
+    )
+    issue_list_cmd.add_argument("--json", action="store_true", dest="json_output")
+
+    issue_create_cmd = issue_sub.add_parser("create", help="Create a new issue")
+    issue_create_cmd.add_argument("--repo", required=True)
+    issue_create_cmd.add_argument("--title", required=True)
+    issue_create_cmd.add_argument("--body", default="")
+    issue_create_cmd.add_argument(
+        "--label", action="append", dest="labels", metavar="LABEL"
+    )
+    issue_create_cmd.add_argument(
+        "--assignee", action="append", dest="assignees", metavar="USER"
+    )
+
+    issue_close_cmd = issue_sub.add_parser("close", help="Close an issue")
+    issue_close_cmd.add_argument("--repo", required=True)
+    issue_close_cmd.add_argument("--issue-number", type=int, required=True)
+
+    issue_comment_cmd = issue_sub.add_parser(
+        "comment", help="Post a comment on an issue"
+    )
+    issue_comment_cmd.add_argument("--repo", required=True)
+    issue_comment_cmd.add_argument("--issue-number", type=int, required=True)
+    issue_comment_cmd.add_argument("--body", required=True)
+
+    issue_label_cmd = issue_sub.add_parser(
+        "label", help="Add or remove labels on an issue"
+    )
+    issue_label_cmd.add_argument("--repo", required=True)
+    issue_label_cmd.add_argument("--issue-number", type=int, required=True)
+    issue_label_cmd.add_argument(
+        "--add", action="append", dest="add_labels", metavar="LABEL"
+    )
+    issue_label_cmd.add_argument(
+        "--remove", action="append", dest="remove_labels", metavar="LABEL"
+    )
+
+    issue_assign_cmd = issue_sub.add_parser(
+        "assign", help="Add or remove assignees on an issue"
+    )
+    issue_assign_cmd.add_argument("--repo", required=True)
+    issue_assign_cmd.add_argument("--issue-number", type=int, required=True)
+    issue_assign_cmd.add_argument(
+        "--add", action="append", dest="add_users", metavar="USER"
+    )
+    issue_assign_cmd.add_argument(
+        "--remove", action="append", dest="remove_users", metavar="USER"
     )
 
     pr_cmd = subparsers.add_parser("pr", help="Interact with GitHub pull requests")
@@ -1614,6 +1673,99 @@ def main(argv: list[str] | None = None) -> int:
                 print("")
                 print(issue.body)
         return 0
+
+    if ns.mode == "issue" and ns.issue_command != "view":
+        import json as _json
+
+        target_repo, repo_error = _resolve_repo_from_args_or_env(
+            repo=ns.repo, fallback_name=None
+        )
+        if repo_error:
+            print(repo_error, file=sys.stderr)
+            return 2
+        assert target_repo is not None
+        token = token_from_repo(Path.cwd()) or ""
+
+        if ns.issue_command == "list":
+            cp = issue_list(target_repo, token, state=ns.state)
+            if cp.returncode != 0:
+                print(cp.stderr.strip() or "Failed listing issues.", file=sys.stderr)
+                return 1
+            issues = [i for i in _json.loads(cp.stdout) if "pull_request" not in i]
+            if ns.json_output:
+                print(_json.dumps(issues, indent=2))
+            else:
+                if not issues:
+                    print("No issues found.")
+                for i in issues:
+                    labels = ", ".join(lb["name"] for lb in i.get("labels", []))
+                    suffix = f"  [{labels}]" if labels else ""
+                    print(f"  #{i['number']} [{i['state']}] {i['title']}{suffix}")
+            return 0
+
+        if ns.issue_command == "create":
+            cp = issue_create(
+                target_repo,
+                ns.title,
+                token,
+                body=ns.body,
+                labels=ns.labels,
+                assignees=ns.assignees,
+            )
+            if cp.returncode not in (0, 201):
+                print(cp.stderr.strip() or "Failed creating issue.", file=sys.stderr)
+                return 1
+            created = _json.loads(cp.stdout)
+            print(f"Issue created: #{created['number']} {created['title']}")
+            print(f"URL: {created['html_url']}")
+            return 0
+
+        if ns.issue_command == "close":
+            cp = issue_close(target_repo, ns.issue_number, token)
+            if cp.returncode != 0:
+                print(cp.stderr.strip() or "Failed closing issue.", file=sys.stderr)
+                return 1
+            print(f"Issue #{ns.issue_number} closed.")
+            return 0
+
+        if ns.issue_command == "comment":
+            cp = issue_comment(target_repo, ns.issue_number, ns.body, token)
+            if cp.returncode not in (0, 201):
+                print(cp.stderr.strip() or "Failed posting comment.", file=sys.stderr)
+                return 1
+            url = _json.loads(cp.stdout).get("html_url", "")
+            print(f"Comment posted: {url}")
+            return 0
+
+        if ns.issue_command == "label":
+            cp = issue_label(
+                target_repo,
+                ns.issue_number,
+                token,
+                add=ns.add_labels,
+                remove=ns.remove_labels,
+            )
+            if cp.returncode != 0:
+                print(cp.stderr.strip() or "Failed updating labels.", file=sys.stderr)
+                return 1
+            print(f"Labels updated on #{ns.issue_number}.")
+            return 0
+
+        if ns.issue_command == "assign":
+            cp = issue_assign(
+                target_repo,
+                ns.issue_number,
+                token,
+                add=ns.add_users,
+                remove=ns.remove_users,
+            )
+            if cp.returncode != 0:
+                print(
+                    cp.stderr.strip() or "Failed updating assignees.", file=sys.stderr
+                )
+                return 1
+            print(f"Assignees updated on #{ns.issue_number}.")
+            return 0
 
     if ns.mode == "pr":
         import json as _json

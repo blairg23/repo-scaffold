@@ -45,8 +45,13 @@ Before writing any code, verify every item below. These are non-negotiable and a
 
 ```bash
 # Issues
-poetry run repo-scaffold issue view --repo OWNER/REPO --issue-number N
-poetry run repo-scaffold issue view --repo OWNER/REPO --issue-number N --json
+poetry run repo-scaffold issue view --repo OWNER/REPO --issue-number N [--json]
+poetry run repo-scaffold issue list --repo OWNER/REPO [--state open|closed|all] [--json]
+poetry run repo-scaffold issue create --repo OWNER/REPO --title "TITLE" [--body "TEXT"] [--label L] [--assignee U]
+poetry run repo-scaffold issue close --repo OWNER/REPO --issue-number N
+poetry run repo-scaffold issue comment --repo OWNER/REPO --issue-number N --body "TEXT"
+poetry run repo-scaffold issue label --repo OWNER/REPO --issue-number N [--add L] [--remove L]
+poetry run repo-scaffold issue assign --repo OWNER/REPO --issue-number N [--add USER] [--remove USER]
 
 # Pull requests
 poetry run repo-scaffold pr list --repo OWNER/REPO [--json]
@@ -86,8 +91,8 @@ poetry run repo-scaffold check rules --repo OWNER/REPO
 ## GitHub auth
 Token lives in `.env` as `GH_TOKEN`. Commands pick it up automatically via `_seed_env_from_dotenv`.
 
-## Still missing (file tickets, do NOT work around with gh/PS)
-- `repo-scaffold issue create/list/close/comment/label/assign` (see #96)
+## Nothing missing — full lifecycle coverage
+All GitHub operations (repos, issues, PRs, projects, backlog) are implemented via GH_TOKEN + urllib. No `gh` CLI required.
 
 ## Running tests
 ```bash

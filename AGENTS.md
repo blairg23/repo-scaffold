@@ -45,6 +45,12 @@ Before writing any code, verify every item below. These are non-negotiable and a
 
 ```bash
 poetry run repo-scaffold issue view --repo OWNER/REPO --issue-number N [--json]
+poetry run repo-scaffold issue list --repo OWNER/REPO [--state open|closed|all] [--json]
+poetry run repo-scaffold issue create --repo OWNER/REPO --title "TITLE" [--body "TEXT"] [--label L] [--assignee U]
+poetry run repo-scaffold issue close --repo OWNER/REPO --issue-number N
+poetry run repo-scaffold issue comment --repo OWNER/REPO --issue-number N --body "TEXT"
+poetry run repo-scaffold issue label --repo OWNER/REPO --issue-number N [--add L] [--remove L]
+poetry run repo-scaffold issue assign --repo OWNER/REPO --issue-number N [--add USER] [--remove USER]
 poetry run repo-scaffold pr list --repo OWNER/REPO [--json]
 poetry run repo-scaffold pr view --repo OWNER/REPO --pr-number N [--json]
 poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N --body "TEXT" [--reply-to COMMENT_ID]
@@ -77,5 +83,5 @@ poetry run tox -e precommit   # full gate: format + lint + type + coverage
 - `generator.py` — scaffold file generation (go, gin, python, react)
 - `cli.py` — argparse entry point
 
-## Still missing (file tickets, do NOT work around)
-- `repo-scaffold issue create/list/close/comment/label/assign` (see #96)
+## Full lifecycle coverage
+All GitHub operations are implemented via GH_TOKEN + urllib. No `gh` CLI required anywhere.

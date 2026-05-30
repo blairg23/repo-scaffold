@@ -704,6 +704,127 @@ def _load_env_file(path: Path) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Issues
+# ---------------------------------------------------------------------------
+
+
+def issue_create(
+    repo: str,
+    title: str,
+    token: str,
+    body: str = "",
+    labels: list[str] | None = None,
+    assignees: list[str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    payload: dict[str, object] = {"title": title, "body": body}
+    if labels:
+        payload["labels"] = labels
+    if assignees:
+        payload["assignees"] = assignees
+    return rest("POST", f"/repos/{repo}/issues", token, payload)
+
+
+def issue_list(
+    repo: str,
+    token: str,
+    state: str = "open",
+) -> subprocess.CompletedProcess[str]:
+    return rest_paginated(f"/repos/{repo}/issues?state={state}&per_page=100", token)
+
+
+def issue_close(repo: str, number: int, token: str) -> subprocess.CompletedProcess[str]:
+    return rest("PATCH", f"/repos/{repo}/issues/{number}", token, {"state": "closed"})
+
+
+def issue_comment(
+    repo: str, number: int, body: str, token: str
+) -> subprocess.CompletedProcess[str]:
+    return rest(
+        "POST", f"/repos/{repo}/issues/{number}/comments", token, {"body": body}
+    )
+
+
+_GQL_ADD_REACTION = """
+mutation($subjectId: ID!, $content: ReactionContent!) {
+  addReaction(input: {subjectId: $subjectId, content: $content}) {
+    reaction { content }
+  }
+}
+"""
+
+
+def react_by_node_id(
+    node_id: str, content: str, token: str
+) -> subprocess.CompletedProcess[str]:
+    """Add a reaction to any reactionable GitHub object by its GraphQL node ID."""
+    return graphql(_GQL_ADD_REACTION, {"subjectId": node_id, "content": content}, token)
+
+
+def react(
+    repo: str,
+    subject: str,
+    subject_id: int,
+    content: str,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Add a reaction via REST. subject: 'issue_comment' or 'pull_request_review_comment'."""
+    if subject == "issue_comment":
+        endpoint = f"/repos/{repo}/issues/comments/{subject_id}/reactions"
+    elif subject == "pull_request_review_comment":
+        endpoint = f"/repos/{repo}/pulls/comments/{subject_id}/reactions"
+    else:
+        return _err(f"Use react_by_node_id() for subject: {subject}")
+    return rest("POST", endpoint, token, {"content": content})
+
+
+def issue_label(
+    repo: str,
+    number: int,
+    token: str,
+    add: list[str] | None = None,
+    remove: list[str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    if add:
+        cp = rest("POST", f"/repos/{repo}/issues/{number}/labels", token, add)
+        if cp.returncode not in (0, 200):
+            return cp
+    for label in remove or []:
+        encoded = urllib.parse.quote(label, safe="")
+        cp = rest("DELETE", f"/repos/{repo}/issues/{number}/labels/{encoded}", token)
+        if cp.returncode not in (0, 200, 204):
+            return cp
+    return _ok("{}")
+
+
+def issue_assign(
+    repo: str,
+    number: int,
+    token: str,
+    add: list[str] | None = None,
+    remove: list[str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    if add:
+        cp = rest(
+            "POST",
+            f"/repos/{repo}/issues/{number}/assignees",
+            token,
+            {"assignees": add},
+        )
+        if cp.returncode not in (0, 200, 201):
+            return cp
+    if remove:
+        cp = rest(
+            "DELETE",
+            f"/repos/{repo}/issues/{number}/assignees",
+            token,
+            {"assignees": remove},
+        )
+        if cp.returncode not in (0, 200, 204):
+            return cp
+    return _ok("{}")
+
+
+# ---------------------------------------------------------------------------
 # Pull requests
 # ---------------------------------------------------------------------------
 
