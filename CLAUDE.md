@@ -39,7 +39,7 @@ Before writing any code, verify every item below. These are non-negotiable and a
 
 ## Golden rule: use repo-scaffold for everything GitHub
 
-**Never use PowerShell + `gh.exe` directly.** Always use `poetry run repo-scaffold` commands (via Bash/WSL). The CLI should NEVER require `gh` on the PATH — it must use GH_TOKEN/GitHub API directly for all operations.
+**Never call `gh` CLI directly.** Always use `poetry run repo-scaffold` commands. The CLI uses GH_TOKEN and the GitHub REST/GraphQL API directly — no `gh` binary, no shell assumptions, no OS dependencies. Commands can be queued as CueQueue HTTP or build-tool jobs on any platform.
 
 ## Available commands
 
