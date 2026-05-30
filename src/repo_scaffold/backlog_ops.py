@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 import time
@@ -12,6 +11,20 @@ from pathlib import Path
 from typing import Callable
 
 from .auth_tokens import is_placeholder_token, resolve_gh_token
+from .github_api import (
+    issue_node_id,
+    project_create,
+    project_delete,
+    project_edit,
+    project_item_add,
+    project_item_delete,
+    project_item_list,
+    project_list,
+    project_view,
+    rest,
+    rest_paginated,
+    token_from_repo,
+)
 from .project_metadata import write_project_metadata
 
 
@@ -395,9 +408,6 @@ def _load_token_from_env_file(env_file: Path) -> None:
 
 
 def _ensure_gh_auth(repo_dir: Path) -> None:
-    if shutil.which("gh") is None:
-        raise RuntimeError("GitHub CLI (gh) is required.")
-
     for env_file in (Path.cwd() / ".env", repo_dir / ".env"):
         _load_token_from_env_file(env_file)
     resolved_token = resolve_gh_token(os.environ)
@@ -407,31 +417,336 @@ def _ensure_gh_auth(repo_dir: Path) -> None:
     ):
         os.environ["GH_TOKEN"] = resolved_token
 
-    if os.environ.get("GH_TOKEN") and not is_placeholder_token(os.environ["GH_TOKEN"]):
+    token = os.environ.get("GH_TOKEN")
+    if token and not is_placeholder_token(token):
         return
 
-    status = subprocess.run(
-        ["gh", "auth", "status"],
-        cwd=repo_dir,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        text=True,
+    raise RuntimeError(
+        "Authenticate first: set GH_TOKEN/GITHUB_TOKEN or github_token in .env."
     )
-    if status.returncode != 0:
+
+
+def _get_token(repo_dir: Path) -> str:
+    token = token_from_repo(repo_dir)
+    if not token or is_placeholder_token(token):
         raise RuntimeError(
-            "Authenticate first: gh auth login (or set GH_TOKEN/GITHUB_TOKEN or github_token in .env)."
+            "Authenticate first: set GH_TOKEN/GITHUB_TOKEN or github_token in .env."
         )
+    return token
 
 
 def _run_gh(repo_dir: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["gh", *args],
-        cwd=repo_dir,
-        text=True,
-        capture_output=True,
-        check=False,
+    """Route gh CLI args to direct GitHub API calls — no gh binary required."""
+    token = token_from_repo(repo_dir) or ""
+
+    if not args:
+        return subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="Empty gh args."
+        )
+
+    subcmd = args[0]
+
+    # ---- REST API calls: gh api [--paginate] [--method M] endpoint [-f k=v ...] ----
+    if subcmd == "api":
+        rest_args = args[1:]
+        paginate = "--paginate" in rest_args
+        if paginate:
+            rest_args = [a for a in rest_args if a != "--paginate"]
+
+        method = "GET"
+        endpoint = ""
+        fields: dict[str, str] = {}
+        skip_next = False
+        positional: list[str] = []
+
+        i = 0
+        while i < len(rest_args):
+            a = rest_args[i]
+            if skip_next:
+                skip_next = False
+                i += 1
+                continue
+            if a in ("--method", "-X") and i + 1 < len(rest_args):
+                method = rest_args[i + 1]
+                i += 2
+                continue
+            if a in ("-f", "--field") and i + 1 < len(rest_args):
+                kv = rest_args[i + 1]
+                if "=" in kv:
+                    k, v = kv.split("=", 1)
+                    fields[k] = v
+                i += 2
+                continue
+            if a in ("--input", "-") and i + 1 < len(rest_args):
+                # skip --input - (we don't support stdin piping here)
+                i += 2
+                continue
+            if not a.startswith("-"):
+                positional.append(a)
+            i += 1
+
+        endpoint = positional[0] if positional else ""
+
+        if paginate:
+            return rest_paginated(endpoint, token)
+        if fields:
+            return rest(method, endpoint, token, fields)
+        return rest(method, endpoint, token)
+
+    # ---- gh issue create ----
+    if subcmd == "issue" and len(args) > 1 and args[1] == "create":
+        return _gh_issue_create(args[2:], token)
+
+    # ---- gh project subcommands ----
+    if subcmd == "project":
+        return _gh_project(args[1:], repo_dir, token)
+
+    return subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="", stderr=f"Unsupported gh subcommand: {subcmd}"
     )
+
+
+def _gh_issue_create(args: list[str], token: str) -> subprocess.CompletedProcess[str]:
+    repo = title = body_file = milestone = labels = assignees = None
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--repo" and i + 1 < len(args):
+            repo = args[i + 1]
+            i += 2
+            continue
+        if a == "--title" and i + 1 < len(args):
+            title = args[i + 1]
+            i += 2
+            continue
+        if a == "--body-file" and i + 1 < len(args):
+            body_file = args[i + 1]
+            i += 2
+            continue
+        if a == "--milestone" and i + 1 < len(args):
+            milestone = args[i + 1]
+            i += 2
+            continue
+        if a == "--label" and i + 1 < len(args):
+            labels = args[i + 1]
+            i += 2
+            continue
+        if a == "--assignee" and i + 1 < len(args):
+            assignees = args[i + 1]
+            i += 2
+            continue
+        i += 1
+
+    if not repo or not title:
+        return subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="--repo and --title are required."
+        )
+
+    body = ""
+    if body_file:
+        try:
+            body = Path(body_file).read_text(encoding="utf-8")
+        except OSError:
+            pass
+
+    payload: dict[str, object] = {"title": title, "body": body}
+    if labels:
+        label_list = [lb.strip() for lb in labels.split(",") if lb.strip()]
+        if label_list:
+            payload["labels"] = label_list
+    if assignees:
+        assignee_list = [a.strip() for a in assignees.split(",") if a.strip()]
+        if assignee_list:
+            payload["assignees"] = assignee_list
+    if milestone:
+        # resolve milestone number
+        owner_repo = repo
+        ms_cp = rest_paginated(
+            f"/repos/{owner_repo}/milestones?state=all&per_page=100", token
+        )
+        if ms_cp.returncode == 0:
+            try:
+                for ms in json.loads(ms_cp.stdout):
+                    if isinstance(ms, dict) and ms.get("title") == milestone:
+                        payload["milestone"] = ms["number"]
+                        break
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+    cp = rest("POST", f"/repos/{repo}/issues", token, payload)
+    if cp.returncode not in (200, 201):
+        return cp
+    try:
+        url = json.loads(cp.stdout).get("html_url", "")
+        return subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=url + "\n", stderr=""
+        )
+    except (json.JSONDecodeError, AttributeError):
+        return cp
+
+
+def _gh_project(
+    args: list[str], repo_dir: Path, token: str
+) -> subprocess.CompletedProcess[str]:
+    if not args:
+        return subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="Missing project subcommand."
+        )
+
+    sub = args[0]
+    rest_args = args[1:]
+
+    def _get(flag: str) -> str | None:
+        try:
+            idx = rest_args.index(flag)
+            return rest_args[idx + 1] if idx + 1 < len(rest_args) else None
+        except ValueError:
+            return None
+
+    owner = _get("--owner") or ""
+    number_str = (
+        rest_args[0] if rest_args and not rest_args[0].startswith("-") else None
+    )
+    number = int(number_str) if number_str and number_str.isdigit() else None
+
+    if sub == "list":
+        include_closed = "--closed" in rest_args
+        return project_list(owner, token, include_closed=include_closed)
+
+    if sub == "view":
+        if number is None:
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Project number required."
+            )
+        return project_view(owner, number, token)
+
+    if sub == "create":
+        title = _get("--title") or ""
+        return project_create(owner, title, token)
+
+    if sub == "edit":
+        if number is None:
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Project number required."
+            )
+        # Get project ID first
+        pv = project_view(owner, number, token)
+        if pv.returncode != 0:
+            return pv
+        try:
+            project_id = json.loads(pv.stdout).get("id", "")
+        except (json.JSONDecodeError, AttributeError):
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Could not resolve project ID."
+            )
+        visibility = _get("--visibility")
+        return project_edit(
+            project_id,
+            token,
+            title=_get("--title"),
+            description=_get("--description"),
+            readme=_get("--readme"),
+            visibility=visibility,
+        )
+
+    if sub == "delete":
+        if number is None:
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Project number required."
+            )
+        pv = project_view(owner, number, token)
+        if pv.returncode != 0:
+            return pv
+        try:
+            project_id = json.loads(pv.stdout).get("id", "")
+        except (json.JSONDecodeError, AttributeError):
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Could not resolve project ID."
+            )
+        return project_delete(project_id, token)
+
+    if sub == "item-list":
+        if number is None:
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Project number required."
+            )
+        limit_str = _get("--limit")
+        limit = int(limit_str) if limit_str and limit_str.isdigit() else 100
+        pv = project_view(owner, number, token)
+        if pv.returncode != 0:
+            return pv
+        try:
+            project_id = json.loads(pv.stdout).get("id", "")
+        except (json.JSONDecodeError, AttributeError):
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Could not resolve project ID."
+            )
+        return project_item_list(project_id, token, limit=limit)
+
+    if sub == "item-add":
+        if number is None:
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Project number required."
+            )
+        url = _get("--url") or ""
+        # Extract issue number and repo from URL
+        # e.g. https://github.com/owner/repo/issues/42
+        content_id = _resolve_content_node_id(url, token)
+        if not content_id:
+            return subprocess.CompletedProcess(
+                args=[],
+                returncode=1,
+                stdout="",
+                stderr=f"Could not resolve content ID for: {url}",
+            )
+        pv = project_view(owner, number, token)
+        if pv.returncode != 0:
+            return pv
+        try:
+            project_id = json.loads(pv.stdout).get("id", "")
+        except (json.JSONDecodeError, AttributeError):
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Could not resolve project ID."
+            )
+        return project_item_add(project_id, content_id, token)
+
+    if sub == "item-delete":
+        if number is None:
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Project number required."
+            )
+        item_id = _get("--id") or ""
+        pv = project_view(owner, number, token)
+        if pv.returncode != 0:
+            return pv
+        try:
+            project_id = json.loads(pv.stdout).get("id", "")
+        except (json.JSONDecodeError, AttributeError):
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="Could not resolve project ID."
+            )
+        return project_item_delete(project_id, item_id, token)
+
+    return subprocess.CompletedProcess(
+        args=[],
+        returncode=1,
+        stdout="",
+        stderr=f"Unsupported project subcommand: {sub}",
+    )
+
+
+def _resolve_content_node_id(url: str, token: str) -> str | None:
+    """Extract issue/PR node ID from a GitHub URL."""
+    # https://github.com/owner/repo/issues/42
+    parts = url.rstrip("/").split("/")
+    try:
+        idx = parts.index("issues") if "issues" in parts else parts.index("pull")
+        number = int(parts[idx + 1])
+        repo_owner = parts[idx - 2]
+        repo_name = parts[idx - 1]
+    except (ValueError, IndexError):
+        return None
+    return issue_node_id(repo_owner, repo_name, number, token)
 
 
 def _parse_concatenated_json_arrays(raw: str) -> list[dict[str, object]]:

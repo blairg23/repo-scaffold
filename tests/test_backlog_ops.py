@@ -215,12 +215,7 @@ def test_load_token_from_env_file_and_ensure_gh_auth(
     backlog_ops._load_token_from_env_file(env_file)
     assert os.environ["GH_TOKEN"] == "token-from-env"
 
-    monkeypatch.setattr(
-        backlog_ops.shutil,
-        "which",
-        lambda tool: "/usr/bin/gh" if tool == "gh" else None,
-    )
-    monkeypatch.setattr(backlog_ops.subprocess, "run", lambda *args, **kwargs: _cp_ok())
+    # GH_TOKEN is now set from env file — _ensure_gh_auth should pass
     backlog_ops._ensure_gh_auth(repo_dir)
 
     monkeypatch.delenv("GH_TOKEN", raising=False)
@@ -229,13 +224,6 @@ def test_load_token_from_env_file_and_ensure_gh_auth(
     clean_repo_dir = tmp_path / "clean-repo"
     clean_repo_dir.mkdir()
     monkeypatch.chdir(clean_repo_dir)
-    monkeypatch.setattr(
-        backlog_ops.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args=["gh", "auth", "status"], returncode=1, stdout="", stderr=""
-        ),
-    )
     with pytest.raises(RuntimeError, match="Authenticate first"):
         backlog_ops._ensure_gh_auth(clean_repo_dir)
 

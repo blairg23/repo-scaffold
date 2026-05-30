@@ -11,6 +11,11 @@ from typing import Callable
 from urllib.parse import quote
 
 from .auth_tokens import is_placeholder_token, resolve_gh_token
+from .github_api import (
+    repo_create as _github_repo_create,
+    rest as _github_rest,
+    token_from_repo as _token_from_repo,
+)
 
 
 @dataclass(frozen=True)
@@ -49,12 +54,7 @@ def _is_managed_ruleset_name(name: object) -> bool:
 
 
 def _api_headers() -> list[str]:
-    return [
-        "-H",
-        "Accept: application/vnd.github+json",
-        "-H",
-        f"X-GitHub-Api-Version: {_API_VERSION}",
-    ]
+    return []  # kept for any residual callers; not used by _api anymore
 
 
 def _repo_patch_payload() -> str:
@@ -207,10 +207,14 @@ def _api(
     endpoint: str,
     stdin_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    args = ["gh", "api", "--method", method, *_api_headers(), endpoint]
-    if stdin_text is not None:
-        args.extend(["--input", "-"])
-    return _run(args, cwd=repo_dir, env=env, stdin_text=stdin_text)
+    token = (
+        _token_from_repo(repo_dir)
+        or env.get("GH_TOKEN")
+        or env.get("GITHUB_TOKEN")
+        or ""
+    )
+    data = json.loads(stdin_text) if stdin_text else None
+    return _github_rest(method, endpoint, token, data)
 
 
 def _load_json(text: str, *, error_message: str) -> object:
@@ -596,21 +600,17 @@ def _compare_ruleset_against_baseline(
 
 
 def _ensure_tools() -> None:
-    if shutil.which("gh") is None:
-        raise RuntimeError("GitHub CLI (gh) is required.")
     if shutil.which("git") is None:
         raise RuntimeError("git is required.")
 
 
 def _ensure_gh_auth(repo_dir: Path, env: dict[str, str]) -> None:
-    if env.get("GH_TOKEN"):
+    token = _token_from_repo(repo_dir) or env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")
+    if token and not is_placeholder_token(token):
         return
-
-    cp = _run(["gh", "auth", "status"], cwd=repo_dir, env=env)
-    if cp.returncode != 0:
-        raise RuntimeError(
-            "Authenticate first: gh auth login (or set GH_TOKEN/GITHUB_TOKEN; legacy alias github_token is supported)."
-        )
+    raise RuntimeError(
+        "Authenticate first: set GH_TOKEN/GITHUB_TOKEN or github_token in .env."
+    )
 
 
 def _resolve_repo(
@@ -734,14 +734,19 @@ def _ensure_git_repo(
 
 
 def _repo_exists(*, repo_dir: Path, env: dict[str, str], repo: str) -> bool:
-    cp = _run(
-        ["gh", "repo", "view", repo, "--json", "nameWithOwner"], cwd=repo_dir, env=env
+    token = (
+        _token_from_repo(repo_dir)
+        or env.get("GH_TOKEN")
+        or env.get("GITHUB_TOKEN")
+        or ""
     )
-    if cp.returncode == 0:
+    cp = _github_rest("GET", f"/repos/{repo}", token)
+    if cp.returncode == 200 or cp.returncode == 0:
         return True
-
+    if cp.returncode == 404:
+        return False
     stderr = (cp.stderr or "").lower()
-    not_found_markers = ("not found", "http 404", "could not resolve to a repository")
+    not_found_markers = ("not found", "404")
     if any(marker in stderr for marker in not_found_markers):
         return False
     raise RuntimeError(cp.stderr.strip() or f"Failed checking repository: {repo}")
@@ -787,15 +792,8 @@ def _ensure_origin_remote(
 
 
 def _resolve_push_token(*, repo_dir: Path, env: dict[str, str]) -> str | None:
-    token = env.get("GH_TOKEN")
-    if token:
-        return token
-
-    cp = _run(["gh", "auth", "token"], cwd=repo_dir, env=env)
-    if cp.returncode != 0:
-        return None
-    resolved = cp.stdout.strip()
-    return resolved or None
+    token = _token_from_repo(repo_dir) or env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")
+    return token or None
 
 
 def _push_main(*, repo_dir: Path, env: dict[str, str]) -> tuple[bool, str | None]:
@@ -921,22 +919,15 @@ def _create_or_push_repo(
 
     out(f"{'[dry-run] ' if dry_run else ''}create repository: {repo} ({visibility})")
     if not dry_run:
-        cp = _run(
-            [
-                "gh",
-                "repo",
-                "create",
-                repo,
-                f"--{visibility}",
-                "--source",
-                str(repo_dir),
-                "--remote",
-                "origin",
-            ],
-            cwd=repo_dir,
-            env=env,
+        token = (
+            _token_from_repo(repo_dir)
+            or env.get("GH_TOKEN")
+            or env.get("GITHUB_TOKEN")
+            or ""
         )
-        if cp.returncode != 0:
+        owner, name = repo.split("/", 1)
+        cp = _github_repo_create(owner, name, token, visibility=visibility)
+        if cp.returncode not in (0, 201):
             return (
                 False,
                 False,
