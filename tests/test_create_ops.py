@@ -505,51 +505,43 @@ def test_tool_auth_remote_and_push_helpers_cover_common_error_paths(
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
 
-    monkeypatch.setattr(
-        create_ops.shutil,
-        "which",
-        lambda tool: None if tool == "gh" else "/usr/bin/git",
-    )
-    with pytest.raises(RuntimeError, match="GitHub CLI"):
-        create_ops._ensure_tools()
-
-    monkeypatch.setattr(
-        create_ops.shutil, "which", lambda tool: "/usr/bin/gh" if tool == "gh" else None
-    )
+    monkeypatch.setattr(create_ops.shutil, "which", lambda tool: None)
     with pytest.raises(RuntimeError, match="git is required"):
         create_ops._ensure_tools()
 
-    monkeypatch.setattr(create_ops.shutil, "which", lambda _tool: "/usr/bin/tool")
+    monkeypatch.setattr(create_ops.shutil, "which", lambda _tool: "/usr/bin/git")
     create_ops._ensure_tools()
 
-    monkeypatch.setattr(
-        create_ops,
-        "_run",
-        lambda args, **kwargs: (
-            subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="")
-            if args[:3] == ["gh", "auth", "status"]
-            else subprocess.CompletedProcess(
-                args=args, returncode=0, stdout="", stderr=""
-            )
-        ),
-    )
+    import repo_scaffold.github_api as github_api_module
+
+    monkeypatch.setattr(github_api_module, "token_from_repo", lambda _repo_dir: None)
+    monkeypatch.setattr(create_ops, "_token_from_repo", lambda _repo_dir: None)
     with pytest.raises(RuntimeError, match="Authenticate first"):
         create_ops._ensure_gh_auth(repo_dir, {})
 
-    assert create_ops._repo_exists(repo_dir=repo_dir, env={}, repo="acme/repo") is True
     monkeypatch.setattr(
-        create_ops,
-        "_run",
-        lambda args, **kwargs: subprocess.CompletedProcess(
-            args=args, returncode=1, stdout="", stderr="not found"
+        github_api_module,
+        "_http",
+        lambda method, url, token, data=None: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout='{"nameWithOwner":"acme/repo"}', stderr=""
+        ),
+    )
+    assert create_ops._repo_exists(repo_dir=repo_dir, env={}, repo="acme/repo") is True
+
+    monkeypatch.setattr(
+        github_api_module,
+        "_http",
+        lambda method, url, token, data=None: subprocess.CompletedProcess(
+            args=[], returncode=404, stdout="", stderr="not found"
         ),
     )
     assert create_ops._repo_exists(repo_dir=repo_dir, env={}, repo="acme/repo") is False
+
     monkeypatch.setattr(
-        create_ops,
-        "_run",
-        lambda args, **kwargs: subprocess.CompletedProcess(
-            args=args, returncode=1, stdout="", stderr="boom"
+        github_api_module,
+        "_http",
+        lambda method, url, token, data=None: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="boom"
         ),
     )
     with pytest.raises(RuntimeError, match="boom"):
@@ -608,17 +600,12 @@ def test_tool_auth_remote_and_push_helpers_cover_common_error_paths(
         out=lambda _line: None,
     )
 
-    monkeypatch.setattr(
-        create_ops,
-        "_run",
-        lambda args, **kwargs: subprocess.CompletedProcess(
-            args=args,
-            returncode=0 if args[:3] == ["gh", "auth", "token"] else 1,
-            stdout="gh-token\n" if args[:3] == ["gh", "auth", "token"] else "",
-            stderr="",
-        ),
+    assert (
+        create_ops._resolve_push_token(repo_dir=repo_dir, env={"GH_TOKEN": "gh-token"})
+        == "gh-token"
     )
-    assert create_ops._resolve_push_token(repo_dir=repo_dir, env={}) == "gh-token"
+    monkeypatch.setattr(create_ops, "_token_from_repo", lambda _: None)
+    assert create_ops._resolve_push_token(repo_dir=repo_dir, env={}) is None
     assert "workflow write permission" in create_ops._format_push_failure(
         "workflow missing scope"
     )
@@ -649,9 +636,9 @@ def test_create_or_push_repo_covers_existing_and_create_failures(
     monkeypatch.setattr(create_ops, "_repo_exists", lambda **_: False)
     monkeypatch.setattr(
         create_ops,
-        "_run",
-        lambda args, **kwargs: subprocess.CompletedProcess(
-            args=args, returncode=1, stdout="", stderr="create failed"
+        "_github_repo_create",
+        lambda owner, name, token, visibility="private": subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="create failed"
         ),
     )
     created, pushed, error = create_ops._create_or_push_repo(
@@ -928,22 +915,18 @@ def test_create_or_push_repo_uses_absolute_source_path(
     repo_dir = Path("rel-repo")
     repo_dir.mkdir(parents=True)
 
-    run_calls: list[tuple[list[str], Path]] = []
+    create_calls: list[tuple[str, str, str, str]] = []
 
     def _fake_repo_exists(*, repo_dir: Path, env: dict[str, str], repo: str) -> bool:
         assert repo_dir == repo_dir.resolve()
         return False
 
-    def _fake_run(
-        args: list[str],
-        *,
-        cwd: Path,
-        env: dict[str, str],
-        stdin_text: str | None = None,
+    def _fake_repo_create(
+        owner: str, name: str, token: str, visibility: str = "private"
     ) -> subprocess.CompletedProcess[str]:
-        run_calls.append((args, cwd))
+        create_calls.append((owner, name, token, visibility))
         return subprocess.CompletedProcess(
-            args=args, returncode=0, stdout="", stderr=""
+            args=[], returncode=201, stdout="{}", stderr=""
         )
 
     def _fake_push_main(
@@ -952,7 +935,8 @@ def test_create_or_push_repo_uses_absolute_source_path(
         return True, None
 
     monkeypatch.setattr(create_ops, "_repo_exists", _fake_repo_exists)
-    monkeypatch.setattr(create_ops, "_run", _fake_run)
+    monkeypatch.setattr(create_ops, "_github_repo_create", _fake_repo_create)
+    monkeypatch.setattr(create_ops, "_ensure_origin_remote", lambda **_: None)
     monkeypatch.setattr(create_ops, "_push_main", _fake_push_main)
 
     created, pushed, error = create_ops._create_or_push_repo(
@@ -967,13 +951,11 @@ def test_create_or_push_repo_uses_absolute_source_path(
     assert created is True
     assert pushed is True
     assert error is None
-    assert run_calls, "Expected gh repo create call"
-    gh_call_args, gh_call_cwd = run_calls[0]
-    assert gh_call_args[:4] == ["gh", "repo", "create", "acme/example"]
-    assert "--source" in gh_call_args
-    source_idx = gh_call_args.index("--source") + 1
-    assert Path(gh_call_args[source_idx]).is_absolute()
-    assert gh_call_cwd.is_absolute()
+    assert create_calls, "Expected repo create call"
+    owner, name, _, visibility = create_calls[0]
+    assert owner == "acme"
+    assert name == "example"
+    assert visibility == "public"
 
 
 def test_ensure_git_repo_initializes_when_inside_parent_repo(

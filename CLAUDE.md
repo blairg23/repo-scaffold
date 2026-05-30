@@ -2,7 +2,7 @@
 
 ## Golden rule: use repo-scaffold for everything GitHub
 
-**Never use PowerShell + `gh.exe` directly.** Always use `poetry run repo-scaffold` commands (via Bash/WSL). The CLI wraps `gh` internally with proper auth from `.env`.
+**Never use PowerShell + `gh.exe` directly.** Always use `poetry run repo-scaffold` commands (via Bash/WSL). The CLI should NEVER require `gh` on the PATH — it must use GH_TOKEN/GitHub API directly for all operations.
 
 ## Available commands
 
@@ -26,7 +26,10 @@ poetry run repo-scaffold apply ci --path . --languages go,gin,python,react
 poetry run repo-scaffold apply templates --path . --name NAME --owner OWNER
 
 # Repo management
-poetry run repo-scaffold create --repo OWNER/REPO
+# Both flows use the same command — create handles git init + initial commit internally:
+# New project OR existing local code with no .git:
+poetry run repo-scaffold create --repo OWNER/REPO --visibility public --path /path/to/code
+
 poetry run repo-scaffold check rules --repo OWNER/REPO
 ```
 
@@ -39,7 +42,7 @@ poetry run repo-scaffold check rules --repo OWNER/REPO
 ## GitHub auth
 Token lives in `.env` as `GH_TOKEN`. Commands pick it up automatically via `_seed_env_from_dotenv`.
 
-## Still missing (potential future tickets)
+## Still missing (file tickets, do NOT work around with gh/PS)
 - `repo-scaffold pr list`
 - `repo-scaffold pr create`
 - `repo-scaffold pr comment --reply-to <id>`
