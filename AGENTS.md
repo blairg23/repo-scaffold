@@ -45,6 +45,10 @@ Before writing any code, verify every item below. These are non-negotiable and a
 
 ```bash
 poetry run repo-scaffold issue view --repo OWNER/REPO --issue-number N [--json]
+poetry run repo-scaffold pr list --repo OWNER/REPO [--json]
+poetry run repo-scaffold pr view --repo OWNER/REPO --pr-number N [--json]
+poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N --body "TEXT" [--reply-to COMMENT_ID]
+poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_ID
 poetry run repo-scaffold project items --project-title "TITLE" --limit 40
 poetry run repo-scaffold create --repo OWNER/REPO --visibility public --path /path/to/code
 poetry run repo-scaffold apply backlog --repo OWNER/REPO --path .
@@ -73,7 +77,5 @@ poetry run tox -e precommit   # full gate: format + lint + type + coverage
 - `cli.py` — argparse entry point
 
 ## Still missing (file tickets, do NOT work around)
-- `repo-scaffold pr list`
-- `repo-scaffold pr create`
-- `repo-scaffold pr comment`
-- `repo-scaffold pr resolve-thread`
+- `repo-scaffold pr create` (open a new PR)
+- `repo-scaffold issue create` (open a new issue)
