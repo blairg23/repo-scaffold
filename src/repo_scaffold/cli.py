@@ -18,6 +18,7 @@ from .backlog_ops import (
 )
 from .github_api import (
     pr_comment,
+    pr_create,
     pr_list,
     pr_resolve_thread,
     pr_view,
@@ -795,6 +796,16 @@ def build_parser() -> argparse.ArgumentParser:
     pr_comment_cmd.add_argument(
         "--reply-to", type=int, dest="reply_to", help="Comment ID to reply to"
     )
+
+    pr_create_cmd = pr_sub.add_parser("create", help="Open a new pull request")
+    pr_create_cmd.add_argument("--repo", required=True)
+    pr_create_cmd.add_argument("--title", required=True)
+    pr_create_cmd.add_argument("--body", default="")
+    pr_create_cmd.add_argument("--head", required=True, help="Source branch")
+    pr_create_cmd.add_argument(
+        "--base", default="main", help="Target branch (default: main)"
+    )
+    pr_create_cmd.add_argument("--draft", action="store_true")
 
     pr_resolve_cmd = pr_sub.add_parser(
         "resolve-thread", help="Resolve a PR review thread"
@@ -1674,6 +1685,24 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"Thread resolved: {thread.get('id', ns.thread_id)} (isResolved: {thread.get('isResolved', True)})"
             )
+            return 0
+
+        if ns.pr_command == "create":
+            cp = pr_create(
+                target_repo,
+                title=ns.title,
+                body=ns.body,
+                head=ns.head,
+                base=ns.base,
+                token=token,
+                draft=ns.draft,
+            )
+            if cp.returncode not in (0, 201):
+                print(cp.stderr.strip() or "Failed creating PR.", file=sys.stderr)
+                return 1
+            created = _json.loads(cp.stdout)
+            print(f"PR created: #{created['number']} {created['title']}")
+            print(f"URL: {created['html_url']}")
             return 0
 
     parser.error("Unsupported command.")

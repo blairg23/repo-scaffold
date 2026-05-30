@@ -1879,3 +1879,47 @@ def test_pr_resolve_thread(
     )
     assert rc == 0
     assert "resolved" in capsys.readouterr().out.lower()
+
+
+def test_pr_create(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_create",
+        lambda repo, title, body, head, base, token, draft=False: subprocess.CompletedProcess(
+            args=[],
+            returncode=201,
+            stdout=json.dumps(
+                {
+                    "number": 10,
+                    "title": "My PR",
+                    "html_url": "https://github.com/acme/repo/pull/10",
+                }
+            ),
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(
+        [
+            "pr",
+            "create",
+            "--repo",
+            "acme/repo",
+            "--title",
+            "My PR",
+            "--head",
+            "feat/my-branch",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "PR created: #10" in out
+    assert "https://github.com/acme/repo/pull/10" in out

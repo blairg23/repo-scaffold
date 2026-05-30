@@ -53,6 +53,7 @@ poetry run repo-scaffold pr list --repo OWNER/REPO [--json]
 poetry run repo-scaffold pr view --repo OWNER/REPO --pr-number N [--json]
 poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N --body "TEXT" [--reply-to COMMENT_ID]
 poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_ID
+poetry run repo-scaffold pr create --repo OWNER/REPO --title "TITLE" --head BRANCH [--base main] [--body "TEXT"] [--draft]
 
 # Projects
 poetry run repo-scaffold project items --project-title "TITLE" --limit 40
@@ -86,8 +87,7 @@ poetry run repo-scaffold check rules --repo OWNER/REPO
 Token lives in `.env` as `GH_TOKEN`. Commands pick it up automatically via `_seed_env_from_dotenv`.
 
 ## Still missing (file tickets, do NOT work around with gh/PS)
-- `repo-scaffold pr create` (open a new PR)
-- `repo-scaffold issue create` (open a new issue)
+- `repo-scaffold issue create/list/close/comment/label/assign` (see #96)
 
 ## Running tests
 ```bash

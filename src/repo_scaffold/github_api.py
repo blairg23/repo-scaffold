@@ -776,6 +776,25 @@ def pr_resolve_thread(thread_id: str, token: str) -> subprocess.CompletedProcess
         return _err("Unexpected response resolving thread.")
 
 
+def pr_create(
+    repo: str,
+    title: str,
+    body: str,
+    head: str,
+    base: str,
+    token: str,
+    draft: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    payload: dict[str, object] = {
+        "title": title,
+        "body": body,
+        "head": head,
+        "base": base,
+        "draft": draft,
+    }
+    return rest("POST", f"/repos/{repo}/pulls", token, payload)
+
+
 def token_from_repo(repo_dir: Path) -> str | None:
     """Try to resolve a GH token from the repo .env and environment."""
     env = dict(os.environ)
