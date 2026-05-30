@@ -756,7 +756,8 @@ def issue_label(
         if cp.returncode not in (0, 200):
             return cp
     for label in remove or []:
-        cp = rest("DELETE", f"/repos/{repo}/issues/{number}/labels/{label}", token)
+        encoded = urllib.parse.quote(label, safe="")
+        cp = rest("DELETE", f"/repos/{repo}/issues/{number}/labels/{encoded}", token)
         if cp.returncode not in (0, 200, 204):
             return cp
     return _ok("{}")
