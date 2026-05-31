@@ -446,6 +446,56 @@ def sync_project_metadata(
     )
 
 
+def add_project_item(
+    *,
+    repo_dir: Path,
+    owner: str | None,
+    project_number: int | None,
+    project_title: str | None,
+    issue_repo: str,
+    issue_number: int,
+    out: Callable[[str], None] = print,
+) -> ProjectMutationSummary:
+    from .github_api import issue_node_id, project_item_add, token_from_repo
+
+    token = token_from_repo(repo_dir) or ""
+    project = _find_existing_project(
+        repo_dir=repo_dir,
+        owner=owner,
+        project_number=project_number,
+        project_title=project_title,
+    )
+    if not project.id:
+        raise RuntimeError(f"Could not resolve project ID for '{project.title}'.")
+
+    repo_parts = issue_repo.split("/", 1)
+    if len(repo_parts) != 2:
+        raise RuntimeError(f"--repo must be in owner/repo format, got: {issue_repo}")
+    repo_owner, repo_name = repo_parts
+
+    content_id = issue_node_id(repo_owner, repo_name, issue_number, token)
+    if not content_id:
+        raise RuntimeError(
+            f"Could not resolve node ID for {issue_repo}#{issue_number}. "
+            "Check the issue number and repo."
+        )
+
+    cp = project_item_add(project.id, content_id, token)
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr.strip() or "Failed adding item to project.")
+
+    out(f"Added {issue_repo}#{issue_number} to project '{project.title}'.")
+    return ProjectMutationSummary(
+        action="item-add",
+        owner=project.owner,
+        project_number=project.number,
+        project_title=project.title,
+        failures=0,
+        changed=True,
+        metadata_file=None,
+    )
+
+
 def create_project(
     *,
     repo_dir: Path,
