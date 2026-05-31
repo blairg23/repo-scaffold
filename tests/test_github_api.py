@@ -555,12 +555,18 @@ def test_pr_merge_success() -> None:
 
 def test_pr_checks_success() -> None:
     pr_data = {"head": {"sha": "abc123"}}
-    runs = [{"id": 1, "name": "CI", "status": "completed", "conclusion": "success"}]
+    # Real API returns {total_count, check_runs: [...]} not a bare array
+    runs_payload = {
+        "total_count": 1,
+        "check_runs": [
+            {"id": 1, "name": "CI", "status": "completed", "conclusion": "success"}
+        ],
+    }
     with patch(
         "urllib.request.urlopen",
         side_effect=[
             _mock_resp(200, json.dumps(pr_data)),
-            _mock_resp(200, json.dumps(runs)),
+            _mock_resp(200, json.dumps(runs_payload)),
         ],
     ):
         cp = github_api.pr_checks("owner/repo", 42, "tok")

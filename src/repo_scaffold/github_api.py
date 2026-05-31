@@ -1091,11 +1091,12 @@ def pr_checks(
         sha = json.loads(cp.stdout)["head"]["sha"]
     except (json.JSONDecodeError, KeyError):
         return _err("Could not extract head SHA from PR.")
-    cp2 = rest_paginated(f"/repos/{repo}/commits/{sha}/check-runs?per_page=100", token)
+    cp2 = rest("GET", f"/repos/{repo}/commits/{sha}/check-runs?per_page=100", token)
     if cp2.returncode != 0:
         return cp2
     try:
-        items = json.loads(cp2.stdout)
+        payload = json.loads(cp2.stdout)
+        items = payload.get("check_runs", []) if isinstance(payload, dict) else payload
         # Deduplicate by name, keeping latest by id
         seen: dict[str, dict[str, object]] = {}
         for run in items:
