@@ -215,6 +215,7 @@ poetry run repo-scaffold issue list --repo OWNER/REPO [--state open|closed|all] 
 poetry run repo-scaffold issue view --repo OWNER/REPO --issue-number N [--json]
 poetry run repo-scaffold issue create --repo OWNER/REPO --title "TITLE" [--body "TEXT"] [--label L] [--assignee U]
 poetry run repo-scaffold issue close --repo OWNER/REPO --issue-number N
+poetry run repo-scaffold issue update --repo OWNER/REPO --issue-number N [--title "TITLE"] [--body "TEXT"]
 poetry run repo-scaffold issue comment --repo OWNER/REPO --issue-number N --body "TEXT"
 poetry run repo-scaffold issue label --repo OWNER/REPO --issue-number N [--add L] [--remove L]
 poetry run repo-scaffold issue assign --repo OWNER/REPO --issue-number N [--add USER] [--remove USER]

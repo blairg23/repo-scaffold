@@ -496,6 +496,98 @@ def add_project_item(
     )
 
 
+def update_project_item_status(
+    *,
+    repo_dir: Path,
+    owner: str | None,
+    project_number: int | None,
+    project_title: str | None,
+    issue_repo: str,
+    issue_number: int,
+    status: str,
+    out: Callable[[str], None] = print,
+) -> ProjectMutationSummary:
+    from .github_api import (
+        project_fields,
+        project_item_list,
+        project_item_update_field,
+        token_from_repo,
+    )
+
+    token = token_from_repo(repo_dir) or ""
+    project = _find_existing_project(
+        repo_dir=repo_dir,
+        owner=owner,
+        project_number=project_number,
+        project_title=project_title,
+    )
+    if not project.id:
+        raise RuntimeError(f"Could not resolve project ID for '{project.title}'.")
+
+    cp = project_item_list(project.id, token, limit=500)
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr.strip() or "Failed fetching project items.")
+    items_data: list[dict[str, object]] = json.loads(cp.stdout).get("items", [])
+    item_id: str | None = None
+    for raw_item in items_data:
+        content = raw_item.get("content")
+        if isinstance(content, dict) and content.get("number") == issue_number:
+            raw_id = raw_item.get("id")
+            item_id = str(raw_id) if raw_id is not None else None
+            break
+    if not item_id:
+        raise RuntimeError(
+            f"Issue #{issue_number} not found in project '{project.title}'."
+        )
+
+    cp = project_fields(project.id, token)
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr.strip() or "Failed fetching project fields.")
+    fields: list[dict[str, object]] = json.loads(cp.stdout).get("fields", [])
+    status_field: dict[str, object] | None = None
+    for f in fields:
+        fname = f.get("name")
+        if isinstance(fname, str) and fname.lower() == "status":
+            status_field = f
+            break
+    if not status_field:
+        raise RuntimeError("No 'Status' single-select field found on this project.")
+
+    option_id: str | None = None
+    raw_options = status_field.get("options")
+    options: list[dict[str, object]] = (
+        raw_options if isinstance(raw_options, list) else []
+    )
+    for opt in options:
+        opt_name = opt.get("name")
+        if isinstance(opt_name, str) and opt_name.lower() == status.lower():
+            raw_oid = opt.get("id")
+            option_id = str(raw_oid) if raw_oid is not None else None
+            break
+    if not option_id:
+        available = [str(o.get("name", "")) for o in options]
+        raise RuntimeError(
+            f"Status '{status}' not found. Available: {', '.join(available)}"
+        )
+
+    cp = project_item_update_field(
+        project.id, item_id, str(status_field["id"]), option_id, token
+    )
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr.strip() or "Failed updating item status.")
+
+    out(f"#{issue_number} in '{project.title}' -> {status}")
+    return ProjectMutationSummary(
+        action="item-status",
+        owner=project.owner,
+        project_number=project.number,
+        project_title=project.title,
+        failures=0,
+        changed=True,
+        metadata_file=None,
+    )
+
+
 def link_project_repo(
     *,
     repo_dir: Path,

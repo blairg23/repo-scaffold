@@ -23,6 +23,7 @@ from .github_api import (
     issue_create,
     issue_label,
     issue_list,
+    issue_update,
     pr_comment,
     pr_create,
     pr_list,
@@ -67,6 +68,7 @@ from .project_ops import (
     list_projects,
     sync_project_metadata,
     undo_project_backup,
+    update_project_item_status,
     view_project,
 )
 
@@ -704,6 +706,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Repo containing the issue (owner/repo)",
     )
 
+    project_item_status_cmd = project_sub.add_parser(
+        "item-status",
+        help="Move a project board card to a different status column",
+    )
+    project_item_status_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution (default: .)",
+    )
+    _add_project_target_args(project_item_status_cmd)
+    project_item_status_cmd.add_argument(
+        "--repo",
+        required=True,
+        help="Repo containing the issue (owner/repo)",
+    )
+    project_item_status_cmd.add_argument(
+        "--issue-number",
+        required=True,
+        type=int,
+        dest="issue_number",
+        help="Issue number to update",
+    )
+    project_item_status_cmd.add_argument(
+        "--status",
+        required=True,
+        help="Target status column name (e.g. 'In Progress', 'Done')",
+    )
+
     project_item_delete_cmd = project_sub.add_parser(
         "item-delete",
         help="Delete a project item by item id or linked issue number (dangerous)",
@@ -872,6 +902,14 @@ def build_parser() -> argparse.ArgumentParser:
     issue_assign_cmd.add_argument(
         "--remove", action="append", dest="remove_users", metavar="USER"
     )
+
+    issue_update_cmd = issue_sub.add_parser("update", help="Update an existing issue")
+    issue_update_cmd.add_argument("--repo", required=True)
+    issue_update_cmd.add_argument(
+        "--issue-number", type=int, required=True, dest="issue_number"
+    )
+    issue_update_cmd.add_argument("--title", default=None)
+    issue_update_cmd.add_argument("--body", default=None)
 
     pr_cmd = subparsers.add_parser("pr", help="Interact with GitHub pull requests")
     pr_sub = pr_cmd.add_subparsers(dest="pr_command", required=True)
@@ -1558,6 +1596,17 @@ def main(argv: list[str] | None = None) -> int:
                     issue_number=ns.issue_number,
                     out=print,
                 )
+            elif ns.project_command == "item-status":
+                mutation_summary = update_project_item_status(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    issue_repo=ns.repo,
+                    issue_number=ns.issue_number,
+                    status=ns.status,
+                    out=print,
+                )
             elif ns.project_command == "item-delete":
                 mutation_summary = delete_project_item(
                     repo_dir=repo_dir,
@@ -1831,6 +1880,25 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 1
             print(f"Assignees updated on #{ns.issue_number}.")
+            return 0
+
+        if ns.issue_command == "update":
+            if ns.title is None and ns.body is None:
+                print("Provide at least --title or --body.", file=sys.stderr)
+                return 2
+            cp = issue_update(
+                target_repo,
+                ns.issue_number,
+                token,
+                title=ns.title,
+                body=ns.body,
+            )
+            if cp.returncode != 0:
+                print(cp.stderr.strip() or "Failed updating issue.", file=sys.stderr)
+                return 1
+            updated = _json.loads(cp.stdout)
+            print(f"Issue updated: #{updated['number']} {updated['title']}")
+            print(f"URL: {updated['html_url']}")
             return 0
 
     if ns.mode == "pr":

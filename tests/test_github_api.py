@@ -421,3 +421,86 @@ def test_link_project_to_repository_no_repo_id() -> None:
     with patch("urllib.request.urlopen", return_value=_graphql_ok(repo_id_data)):
         cp = github_api.link_project_to_repository("PV2_1", "acme", "missing", "tok")
     assert cp.returncode != 0
+
+
+def test_issue_update_body_only() -> None:
+    response = {
+        "number": 42,
+        "title": "My Issue",
+        "html_url": "https://github.com/a/b/issues/42",
+    }
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(response))
+    ):
+        cp = github_api.issue_update("owner/repo", 42, "tok", body="new body")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert result["number"] == 42
+
+
+def test_issue_update_title_only() -> None:
+    response = {
+        "number": 7,
+        "title": "New Title",
+        "html_url": "https://github.com/a/b/issues/7",
+    }
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(response))
+    ):
+        cp = github_api.issue_update("owner/repo", 7, "tok", title="New Title")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert result["title"] == "New Title"
+
+
+def test_issue_update_title_and_body() -> None:
+    response = {
+        "number": 3,
+        "title": "T",
+        "html_url": "https://github.com/a/b/issues/3",
+    }
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(response))
+    ):
+        cp = github_api.issue_update("owner/repo", 3, "tok", title="T", body="B")
+    assert cp.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# project_fields / project_item_update_field
+# ---------------------------------------------------------------------------
+
+
+def test_project_fields_returns_single_select_fields() -> None:
+    data = {
+        "node": {
+            "fields": {
+                "nodes": [
+                    {
+                        "id": "F_1",
+                        "name": "Status",
+                        "options": [
+                            {"id": "opt_todo", "name": "Todo"},
+                            {"id": "opt_prog", "name": "In Progress"},
+                            {"id": "opt_done", "name": "Done"},
+                        ],
+                    }
+                ]
+            }
+        }
+    }
+    with patch("urllib.request.urlopen", return_value=_graphql_ok(data)):
+        cp = github_api.project_fields("PV2_1", "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert len(result["fields"]) == 1
+    assert result["fields"][0]["name"] == "Status"
+
+
+def test_project_item_update_field_success() -> None:
+    data = {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "PVTI_1"}}}
+    with patch("urllib.request.urlopen", return_value=_graphql_ok(data)):
+        cp = github_api.project_item_update_field(
+            "PV2_1", "PVTI_1", "F_1", "opt_prog", "tok"
+        )
+    assert cp.returncode == 0
