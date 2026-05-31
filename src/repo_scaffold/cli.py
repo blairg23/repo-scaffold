@@ -63,10 +63,12 @@ from .project_ops import (
     delete_project,
     delete_project_item,
     edit_project,
+    link_project_repo,
     list_project_items,
     list_projects,
     sync_project_metadata,
     undo_project_backup,
+    update_project_item_status,
     view_project,
 )
 
@@ -704,6 +706,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Repo containing the issue (owner/repo)",
     )
 
+    project_item_status_cmd = project_sub.add_parser(
+        "item-status",
+        help="Move a project board card to a different status column",
+    )
+    project_item_status_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution (default: .)",
+    )
+    _add_project_target_args(project_item_status_cmd)
+    project_item_status_cmd.add_argument(
+        "--repo",
+        required=True,
+        help="Repo containing the issue (owner/repo)",
+    )
+    project_item_status_cmd.add_argument(
+        "--issue-number",
+        required=True,
+        type=int,
+        dest="issue_number",
+        help="Issue number to update",
+    )
+    project_item_status_cmd.add_argument(
+        "--status",
+        required=True,
+        help="Target status column name (e.g. 'In Progress', 'Done')",
+    )
+
     project_item_delete_cmd = project_sub.add_parser(
         "item-delete",
         help="Delete a project item by item id or linked issue number (dangerous)",
@@ -725,6 +755,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Linked GitHub issue number for the project item to delete",
     )
     _add_danger_args(project_item_delete_cmd)
+
+    project_link_repo_cmd = project_sub.add_parser(
+        "link-repo", help="Link a project to a GitHub repository"
+    )
+    project_link_repo_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution (default: .)",
+    )
+    _add_project_target_args(project_link_repo_cmd)
+    project_link_repo_cmd.add_argument(
+        "--repo",
+        required=True,
+        help="Repository to link (owner/repo)",
+    )
 
     project_undo_cmd = project_sub.add_parser(
         "undo", help="Undo a destructive project backup snapshot"
@@ -1551,6 +1596,17 @@ def main(argv: list[str] | None = None) -> int:
                     issue_number=ns.issue_number,
                     out=print,
                 )
+            elif ns.project_command == "item-status":
+                mutation_summary = update_project_item_status(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    issue_repo=ns.repo,
+                    issue_number=ns.issue_number,
+                    status=ns.status,
+                    out=print,
+                )
             elif ns.project_command == "item-delete":
                 mutation_summary = delete_project_item(
                     repo_dir=repo_dir,
@@ -1567,6 +1623,15 @@ def main(argv: list[str] | None = None) -> int:
                     is_tty=sys.stdin.isatty(),
                     out=print,
                     err=lambda line: print(line, file=sys.stderr),
+                )
+            elif ns.project_command == "link-repo":
+                mutation_summary = link_project_repo(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    repo=ns.repo,
+                    out=print,
                 )
             elif ns.project_command == "undo":
                 backup_file = Path(ns.backup_file)
