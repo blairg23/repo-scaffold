@@ -615,17 +615,23 @@ def link_project_repo(
     repo_owner, repo_name = repo_parts
 
     cp = link_project_to_repository(project.id, repo_owner, repo_name, token)
-    if cp.returncode != 0:
+    already_linked = cp.returncode != 0 and (
+        "already" in (cp.stderr or "").lower() and "link" in (cp.stderr or "").lower()
+    )
+    if cp.returncode != 0 and not already_linked:
         raise RuntimeError(cp.stderr.strip() or "Failed linking project to repository.")
 
-    out(f"Linked project '{project.title}' to {repo}.")
+    if already_linked:
+        out(f"Project '{project.title}' already linked to {repo} (no-op).")
+    else:
+        out(f"Linked project '{project.title}' to {repo}.")
     return ProjectMutationSummary(
         action="link-repo",
         owner=project.owner,
         project_number=project.number,
         project_title=project.title,
         failures=0,
-        changed=True,
+        changed=not already_linked,
         metadata_file=None,
     )
 
