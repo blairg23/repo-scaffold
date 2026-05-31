@@ -27,6 +27,7 @@ from .github_api import (
     pr_create,
     pr_list,
     pr_resolve_thread,
+    pr_update,
     pr_view,
     token_from_repo,
 )
@@ -865,6 +866,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--base", default="main", help="Target branch (default: main)"
     )
     pr_create_cmd.add_argument("--draft", action="store_true")
+
+    pr_update_cmd = pr_sub.add_parser("update", help="Update an existing pull request")
+    pr_update_cmd.add_argument("--repo", required=True)
+    pr_update_cmd.add_argument("--pr-number", required=True, type=int, dest="pr_number")
+    pr_update_cmd.add_argument("--title", default=None)
+    pr_update_cmd.add_argument("--body", default=None)
 
     pr_resolve_cmd = pr_sub.add_parser(
         "resolve-thread", help="Resolve a PR review thread"
@@ -1855,6 +1862,28 @@ def main(argv: list[str] | None = None) -> int:
             created = _json.loads(cp.stdout)
             print(f"PR created: #{created['number']} {created['title']}")
             print(f"URL: {created['html_url']}")
+            return 0
+
+        if ns.pr_command == "update":
+            if ns.title is None and ns.body is None:
+                print(
+                    "Error: at least one of --title or --body is required.",
+                    file=sys.stderr,
+                )
+                return 2
+            cp = pr_update(
+                target_repo,
+                pr_number=ns.pr_number,
+                token=token,
+                title=ns.title,
+                body=ns.body,
+            )
+            if cp.returncode != 0:
+                print(cp.stderr.strip() or "Failed updating PR.", file=sys.stderr)
+                return 1
+            updated = _json.loads(cp.stdout)
+            print(f"PR updated: #{updated['number']} {updated['title']}")
+            print(f"URL: {updated['html_url']}")
             return 0
 
     parser.error("Unsupported command.")
