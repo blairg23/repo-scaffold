@@ -438,3 +438,43 @@ def test_issue_update_title_and_body() -> None:
     ):
         cp = github_api.issue_update("owner/repo", 3, "tok", title="T", body="B")
     assert cp.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# project_fields / project_item_update_field
+# ---------------------------------------------------------------------------
+
+
+def test_project_fields_returns_single_select_fields() -> None:
+    data = {
+        "node": {
+            "fields": {
+                "nodes": [
+                    {
+                        "id": "F_1",
+                        "name": "Status",
+                        "options": [
+                            {"id": "opt_todo", "name": "Todo"},
+                            {"id": "opt_prog", "name": "In Progress"},
+                            {"id": "opt_done", "name": "Done"},
+                        ],
+                    }
+                ]
+            }
+        }
+    }
+    with patch("urllib.request.urlopen", return_value=_graphql_ok(data)):
+        cp = github_api.project_fields("PV2_1", "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert len(result["fields"]) == 1
+    assert result["fields"][0]["name"] == "Status"
+
+
+def test_project_item_update_field_success() -> None:
+    data = {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "PVTI_1"}}}
+    with patch("urllib.request.urlopen", return_value=_graphql_ok(data)):
+        cp = github_api.project_item_update_field(
+            "PV2_1", "PVTI_1", "F_1", "opt_prog", "tok"
+        )
+    assert cp.returncode == 0

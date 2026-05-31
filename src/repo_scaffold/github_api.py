@@ -325,6 +325,37 @@ mutation($projectId: ID!, $itemId: ID!) {
 }
 """
 
+_GQL_PROJECT_FIELDS = """
+query($projectId: ID!) {
+  node(id: $projectId) {
+    ... on ProjectV2 {
+      fields(first: 30) {
+        nodes {
+          ... on ProjectV2SingleSelectField {
+            id
+            name
+            options { id name }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+_GQL_UPDATE_ITEM_FIELD = """
+mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+  updateProjectV2ItemFieldValue(input: {
+    projectId: $projectId
+    itemId: $itemId
+    fieldId: $fieldId
+    value: { singleSelectOptionId: $optionId }
+  }) {
+    projectV2Item { id }
+  }
+}
+"""
+
 
 def _project_nodes_from_data(data: dict[str, object]) -> list[dict[str, object]]:
     for key in ("user", "organization"):
@@ -515,6 +546,42 @@ def project_item_list(
             break
     payload = {"items": all_items, "totalCount": len(all_items)}
     return _ok(json.dumps(payload))
+
+
+def project_fields(
+    project_id: str,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Return single-select fields with their options for a project."""
+    cp = graphql(_GQL_PROJECT_FIELDS, {"projectId": project_id}, token)
+    if cp.returncode != 0:
+        return cp
+    try:
+        data = json.loads(cp.stdout)
+        nodes = data.get("node", {}).get("fields", {}).get("nodes", [])
+        fields = [n for n in nodes if isinstance(n, dict) and "options" in n]
+        return _ok(json.dumps({"fields": fields}))
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response fetching project fields.")
+
+
+def project_item_update_field(
+    project_id: str,
+    item_id: str,
+    field_id: str,
+    option_id: str,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    return graphql(
+        _GQL_UPDATE_ITEM_FIELD,
+        {
+            "projectId": project_id,
+            "itemId": item_id,
+            "fieldId": field_id,
+            "optionId": option_id,
+        },
+        token,
+    )
 
 
 def project_item_add(

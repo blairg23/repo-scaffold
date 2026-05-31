@@ -512,3 +512,158 @@ def test_undo_project_item_delete_restores_item(
 
     assert summary.failures == 0
     assert any(args[:2] == ["project", "item-add"] for args in calls)
+
+
+# ---------------------------------------------------------------------------
+# update_project_item_status
+# ---------------------------------------------------------------------------
+
+
+def _cp_err(stderr: str = "error") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=stderr)
+
+
+def _make_item_list_payload(issue_number: int, item_id: str) -> str:
+    return json.dumps(
+        {
+            "items": [
+                {
+                    "id": item_id,
+                    "content": {"type": "Issue", "number": issue_number},
+                }
+            ]
+        }
+    )
+
+
+def _make_fields_payload(field_id: str, options: list[dict]) -> str:
+    return json.dumps(
+        {"fields": [{"id": field_id, "name": "Status", "options": options}]}
+    )
+
+
+def _make_update_payload() -> str:
+    return json.dumps(
+        {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "PVTI_1"}}}
+    )
+
+
+def test_update_project_item_status_success(
+    tmp_path: pytest.MonkeyPatch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    options = [{"id": "opt_prog", "name": "In Progress"}]
+
+    calls: list[str] = []
+
+    def fake_find(repo_dir, owner, number, limit):
+        return [{"id": "PVTI_1", "content": {"type": "Issue", "number": 17}}]
+
+    def fake_project_item_list(project_id, token, limit=100):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=_make_item_list_payload(17, "PVTI_1"),
+            stderr="",
+        )
+
+    def fake_project_fields(project_id, token):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=_make_fields_payload("F_status", options),
+            stderr="",
+        )
+
+    def fake_project_item_update_field(project_id, item_id, field_id, option_id, token):
+        calls.append(option_id)
+        return subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=_make_update_payload(), stderr=""
+        )
+
+    def fake_find_project(*, repo_dir, owner, project_number, project_title):
+        from repo_scaffold.project_ops import ProjectInfo
+
+        return ProjectInfo(owner="acme", number=1, title="Roadmap", id="PV2_1")
+
+    def fake_token(repo_dir):
+        return "tok"
+
+    monkeypatch.setattr(project_ops, "_find_existing_project", fake_find_project)
+    import repo_scaffold.github_api as _ga
+
+    monkeypatch.setattr(_ga, "project_item_list", fake_project_item_list)
+    monkeypatch.setattr(_ga, "project_fields", fake_project_fields)
+    monkeypatch.setattr(
+        _ga, "project_item_update_field", fake_project_item_update_field
+    )
+    monkeypatch.setattr(_ga, "token_from_repo", fake_token)
+
+    summary = project_ops.update_project_item_status(
+        repo_dir=repo_dir,
+        owner="acme",
+        project_number=1,
+        project_title="Roadmap",
+        issue_repo="acme/repo",
+        issue_number=17,
+        status="In Progress",
+        out=lambda _: None,
+    )
+
+    assert summary.failures == 0
+    assert summary.action == "item-status"
+    assert calls == ["opt_prog"]
+
+
+def test_update_project_item_status_bad_status(
+    tmp_path: pytest.MonkeyPatch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    options = [{"id": "opt_todo", "name": "Todo"}]
+
+    def fake_find_project(*, repo_dir, owner, project_number, project_title):
+        from repo_scaffold.project_ops import ProjectInfo
+
+        return ProjectInfo(owner="acme", number=1, title="Roadmap", id="PV2_1")
+
+    def fake_project_item_list(project_id, token, limit=100):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=_make_item_list_payload(17, "PVTI_1"),
+            stderr="",
+        )
+
+    def fake_project_fields(project_id, token):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=_make_fields_payload("F_status", options),
+            stderr="",
+        )
+
+    def fake_token(repo_dir):
+        return "tok"
+
+    monkeypatch.setattr(project_ops, "_find_existing_project", fake_find_project)
+    import repo_scaffold.github_api as _ga
+
+    monkeypatch.setattr(_ga, "project_item_list", fake_project_item_list)
+    monkeypatch.setattr(_ga, "project_fields", fake_project_fields)
+    monkeypatch.setattr(_ga, "token_from_repo", fake_token)
+
+    with pytest.raises(RuntimeError, match="not found"):
+        project_ops.update_project_item_status(
+            repo_dir=repo_dir,
+            owner="acme",
+            project_number=1,
+            project_title="Roadmap",
+            issue_repo="acme/repo",
+            issue_number=17,
+            status="Nonexistent",
+            out=lambda _: None,
+        )

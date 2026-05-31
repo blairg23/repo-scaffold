@@ -67,6 +67,7 @@ from .project_ops import (
     list_projects,
     sync_project_metadata,
     undo_project_backup,
+    update_project_item_status,
     view_project,
 )
 
@@ -702,6 +703,34 @@ def build_parser() -> argparse.ArgumentParser:
         "--repo",
         required=True,
         help="Repo containing the issue (owner/repo)",
+    )
+
+    project_item_status_cmd = project_sub.add_parser(
+        "item-status",
+        help="Move a project board card to a different status column",
+    )
+    project_item_status_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution (default: .)",
+    )
+    _add_project_target_args(project_item_status_cmd)
+    project_item_status_cmd.add_argument(
+        "--repo",
+        required=True,
+        help="Repo containing the issue (owner/repo)",
+    )
+    project_item_status_cmd.add_argument(
+        "--issue-number",
+        required=True,
+        type=int,
+        dest="issue_number",
+        help="Issue number to update",
+    )
+    project_item_status_cmd.add_argument(
+        "--status",
+        required=True,
+        help="Target status column name (e.g. 'In Progress', 'Done')",
     )
 
     project_item_delete_cmd = project_sub.add_parser(
@@ -1549,6 +1578,17 @@ def main(argv: list[str] | None = None) -> int:
                     project_title=ns.project_title,
                     issue_repo=ns.repo,
                     issue_number=ns.issue_number,
+                    out=print,
+                )
+            elif ns.project_command == "item-status":
+                mutation_summary = update_project_item_status(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    issue_repo=ns.repo,
+                    issue_number=ns.issue_number,
+                    status=ns.status,
                     out=print,
                 )
             elif ns.project_command == "item-delete":
