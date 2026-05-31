@@ -70,6 +70,7 @@ poetry run repo-scaffold project edit --project-owner OWNER --project-title "TIT
 poetry run repo-scaffold project sync-metadata --project-owner OWNER --project-title "TITLE" --repo OWNER/REPO
 poetry run repo-scaffold project item-add --project-title "TITLE" --repo OWNER/REPO --issue-number N
 poetry run repo-scaffold project item-delete --project-title "TITLE" --issue-number N
+poetry run repo-scaffold project link-repo --project-title "TITLE" --repo OWNER/REPO
 poetry run repo-scaffold project delete --project-owner OWNER --project-title "TITLE"  # dangerous — requires backup
 poetry run repo-scaffold project undo --project-owner OWNER  # restore from last backup
 

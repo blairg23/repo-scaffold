@@ -62,6 +62,7 @@ from .project_ops import (
     delete_project,
     delete_project_item,
     edit_project,
+    link_project_repo,
     list_project_items,
     list_projects,
     sync_project_metadata,
@@ -724,6 +725,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Linked GitHub issue number for the project item to delete",
     )
     _add_danger_args(project_item_delete_cmd)
+
+    project_link_repo_cmd = project_sub.add_parser(
+        "link-repo", help="Link a project to a GitHub repository"
+    )
+    project_link_repo_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution (default: .)",
+    )
+    _add_project_target_args(project_link_repo_cmd)
+    project_link_repo_cmd.add_argument(
+        "--repo",
+        required=True,
+        help="Repository to link (owner/repo)",
+    )
 
     project_undo_cmd = project_sub.add_parser(
         "undo", help="Undo a destructive project backup snapshot"
@@ -1558,6 +1574,15 @@ def main(argv: list[str] | None = None) -> int:
                     is_tty=sys.stdin.isatty(),
                     out=print,
                     err=lambda line: print(line, file=sys.stderr),
+                )
+            elif ns.project_command == "link-repo":
+                mutation_summary = link_project_repo(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    repo=ns.repo,
+                    out=print,
                 )
             elif ns.project_command == "undo":
                 backup_file = Path(ns.backup_file)

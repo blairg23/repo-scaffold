@@ -496,6 +496,48 @@ def add_project_item(
     )
 
 
+def link_project_repo(
+    *,
+    repo_dir: Path,
+    owner: str | None,
+    project_number: int | None,
+    project_title: str | None,
+    repo: str,
+    out: Callable[[str], None] = print,
+) -> ProjectMutationSummary:
+    from .github_api import link_project_to_repository, token_from_repo
+
+    token = token_from_repo(repo_dir) or ""
+    project = _find_existing_project(
+        repo_dir=repo_dir,
+        owner=owner,
+        project_number=project_number,
+        project_title=project_title,
+    )
+    if not project.id:
+        raise RuntimeError(f"Could not resolve project ID for '{project.title}'.")
+
+    repo_parts = repo.split("/", 1)
+    if len(repo_parts) != 2:
+        raise RuntimeError(f"--repo must be in owner/repo format, got: {repo}")
+    repo_owner, repo_name = repo_parts
+
+    cp = link_project_to_repository(project.id, repo_owner, repo_name, token)
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr.strip() or "Failed linking project to repository.")
+
+    out(f"Linked project '{project.title}' to {repo}.")
+    return ProjectMutationSummary(
+        action="link-repo",
+        owner=project.owner,
+        project_number=project.number,
+        project_title=project.title,
+        failures=0,
+        changed=True,
+        metadata_file=None,
+    )
+
+
 def create_project(
     *,
     repo_dir: Path,

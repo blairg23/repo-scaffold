@@ -176,6 +176,7 @@ Subcommands:
 - `delete (--project-number N | --project-title T) [--project-owner OWNER] --danger [--yes] [--dry-run] [--backup-dir PATH]`: delete a project with automatic backup + undo snapshot
 - `item-add (--project-number N | --project-title T) [--project-owner OWNER] --repo OWNER/REPO --issue-number N`: add an existing issue to a project
 - `item-delete (--project-number N | --project-title T) [--project-owner OWNER] (--item-id ID | --issue-number N) --danger [--yes] [--dry-run] [--backup-dir PATH]`: delete a project item with automatic backup + undo snapshot
+- `link-repo (--project-number N | --project-title T) [--project-owner OWNER] --repo OWNER/REPO`: link a project to a repository so it appears in the repo's Projects tab
 - `undo --backup-file PATH [--dry-run]`: restore a destructive backup snapshot
 
 Behavior:

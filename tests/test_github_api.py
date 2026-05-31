@@ -395,3 +395,29 @@ def test_pr_update_title_and_body() -> None:
             "owner/repo", pr_number=3, token="tok", title="T", body="B"
         )
     assert cp.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# link_project_to_repository
+# ---------------------------------------------------------------------------
+
+
+def test_link_project_to_repository_success() -> None:
+    repo_id_data = {"repository": {"id": "R_abc"}}
+    link_data = {"linkProjectV2ToRepository": {"repository": {"id": "R_abc"}}}
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[
+            _graphql_ok(repo_id_data),
+            _graphql_ok(link_data),
+        ],
+    ):
+        cp = github_api.link_project_to_repository("PV2_1", "acme", "my-repo", "tok")
+    assert cp.returncode == 0
+
+
+def test_link_project_to_repository_no_repo_id() -> None:
+    repo_id_data: dict = {"repository": None}
+    with patch("urllib.request.urlopen", return_value=_graphql_ok(repo_id_data)):
+        cp = github_api.link_project_to_repository("PV2_1", "acme", "missing", "tok")
+    assert cp.returncode != 0
