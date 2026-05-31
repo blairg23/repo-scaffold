@@ -211,7 +211,7 @@ poetry run repo-scaffold project undo --backup-file /path/to/artifacts/project-b
 Query and manage GitHub issues.
 
 ```bash
-poetry run repo-scaffold issue list --repo OWNER/REPO [--state open|closed|all] [--json]
+poetry run repo-scaffold issue list --repo OWNER/REPO [--state open|closed|all] [--label LABEL] [--json]
 poetry run repo-scaffold issue view --repo OWNER/REPO --issue-number N [--json]
 poetry run repo-scaffold issue create --repo OWNER/REPO --title "TITLE" [--body "TEXT"] [--label L] [--assignee U]
 poetry run repo-scaffold issue close --repo OWNER/REPO --issue-number N
@@ -234,6 +234,19 @@ poetry run repo-scaffold pr create --repo OWNER/REPO --title "TITLE" --head BRAN
 poetry run repo-scaffold pr update --repo OWNER/REPO --pr-number N [--title "TITLE"] [--body "TEXT"]
 poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N --body "TEXT" [--reply-to COMMENT_ID]
 poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_ID
+poetry run repo-scaffold pr merge --repo OWNER/REPO --pr-number N [--method squash|merge|rebase]
+poetry run repo-scaffold pr checks --repo OWNER/REPO --pr-number N [--json]
+```
+
+---
+
+### `branch`
+
+Create and delete GitHub branches via the API.
+
+```bash
+poetry run repo-scaffold branch create --repo OWNER/REPO --name BRANCH [--from main]
+poetry run repo-scaffold branch delete --repo OWNER/REPO --name BRANCH
 ```
 
 ---

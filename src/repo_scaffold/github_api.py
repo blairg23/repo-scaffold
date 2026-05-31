@@ -795,8 +795,12 @@ def issue_list(
     repo: str,
     token: str,
     state: str = "open",
+    label: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return rest_paginated(f"/repos/{repo}/issues?state={state}&per_page=100", token)
+    qs = f"state={state}&per_page=100"
+    if label:
+        qs += f"&labels={urllib.parse.quote(label, safe='')}"
+    return rest_paginated(f"/repos/{repo}/issues?{qs}", token)
 
 
 def issue_close(repo: str, number: int, token: str) -> subprocess.CompletedProcess[str]:
@@ -1019,6 +1023,94 @@ def pr_update(
     if body is not None:
         payload["body"] = body
     return rest("PATCH", f"/repos/{repo}/pulls/{pr_number}", token, payload)
+
+
+def branch_get_sha(repo: str, branch: str, token: str) -> str | None:
+    """Return the HEAD SHA of a branch, or None if not found."""
+    cp = rest("GET", f"/repos/{repo}/git/refs/heads/{branch}", token)
+    if cp.returncode != 0:
+        return None
+    try:
+        data = json.loads(cp.stdout)
+        # API returns a list when using prefix match; exact name is first entry
+        entry = data[0] if isinstance(data, list) else data
+        return entry.get("object", {}).get("sha")
+    except (json.JSONDecodeError, IndexError, AttributeError):
+        return None
+
+
+def branch_create(
+    repo: str,
+    name: str,
+    token: str,
+    base: str = "main",
+) -> subprocess.CompletedProcess[str]:
+    sha = branch_get_sha(repo, base, token)
+    if not sha:
+        return _err(f"Could not resolve SHA for base branch '{base}'.")
+    return rest(
+        "POST",
+        f"/repos/{repo}/git/refs",
+        token,
+        {"ref": f"refs/heads/{name}", "sha": sha},
+    )
+
+
+def branch_delete(
+    repo: str,
+    name: str,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    return rest("DELETE", f"/repos/{repo}/git/refs/heads/{name}", token)
+
+
+def pr_merge(
+    repo: str,
+    pr_number: int,
+    token: str,
+    method: str = "squash",
+) -> subprocess.CompletedProcess[str]:
+    return rest(
+        "PUT",
+        f"/repos/{repo}/pulls/{pr_number}/merge",
+        token,
+        {"merge_method": method},
+    )
+
+
+def pr_checks(
+    repo: str,
+    pr_number: int,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Return check-run statuses for a PR's head commit."""
+    cp = rest("GET", f"/repos/{repo}/pulls/{pr_number}", token)
+    if cp.returncode != 0:
+        return cp
+    try:
+        sha = json.loads(cp.stdout)["head"]["sha"]
+    except (json.JSONDecodeError, KeyError):
+        return _err("Could not extract head SHA from PR.")
+    cp2 = rest_paginated(f"/repos/{repo}/commits/{sha}/check-runs?per_page=100", token)
+    if cp2.returncode != 0:
+        return cp2
+    try:
+        items = json.loads(cp2.stdout)
+        # Deduplicate by name, keeping latest by id
+        seen: dict[str, dict[str, object]] = {}
+        for run in items:
+            n = str(run.get("name", ""))
+            run_id = run.get("id", 0)
+            seen_id = seen[n].get("id", 0) if n in seen else 0
+            if n not in seen or (
+                isinstance(run_id, int)
+                and isinstance(seen_id, int)
+                and run_id > seen_id
+            ):
+                seen[n] = run
+        return _ok(json.dumps(list(seen.values())))
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response from check-runs API.")
 
 
 def token_from_repo(repo_dir: Path) -> str | None:
