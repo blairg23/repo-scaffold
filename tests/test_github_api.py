@@ -345,3 +345,53 @@ def test_token_from_repo_returns_none_without_token(
     monkeypatch.chdir(tmp_path)  # avoid picking up project-root .env
     token = github_api.token_from_repo(tmp_path)
     assert token is None
+
+
+# ---------------------------------------------------------------------------
+# pr_update
+# ---------------------------------------------------------------------------
+
+
+def test_pr_update_body_only() -> None:
+    response = {
+        "number": 42,
+        "title": "My PR",
+        "html_url": "https://github.com/a/b/pull/42",
+    }
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(response))
+    ):
+        cp = github_api.pr_update(
+            "owner/repo", pr_number=42, token="tok", body="new body"
+        )
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert result["number"] == 42
+
+
+def test_pr_update_title_only() -> None:
+    response = {
+        "number": 7,
+        "title": "New Title",
+        "html_url": "https://github.com/a/b/pull/7",
+    }
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(response))
+    ):
+        cp = github_api.pr_update(
+            "owner/repo", pr_number=7, token="tok", title="New Title"
+        )
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert result["title"] == "New Title"
+
+
+def test_pr_update_title_and_body() -> None:
+    response = {"number": 3, "title": "T", "html_url": "https://github.com/a/b/pull/3"}
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(response))
+    ):
+        cp = github_api.pr_update(
+            "owner/repo", pr_number=3, token="tok", title="T", body="B"
+        )
+    assert cp.returncode == 0

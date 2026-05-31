@@ -924,6 +924,21 @@ def pr_create(
     return rest("POST", f"/repos/{repo}/pulls", token, payload)
 
 
+def pr_update(
+    repo: str,
+    pr_number: int,
+    token: str,
+    title: str | None = None,
+    body: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    payload: dict[str, object] = {}
+    if title is not None:
+        payload["title"] = title
+    if body is not None:
+        payload["body"] = body
+    return rest("PATCH", f"/repos/{repo}/pulls/{pr_number}", token, payload)
+
+
 def token_from_repo(repo_dir: Path) -> str | None:
     """Try to resolve a GH token from the repo .env and environment."""
     env = dict(os.environ)
