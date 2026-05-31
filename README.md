@@ -174,6 +174,7 @@ Subcommands:
 - `create --project-title T [--project-owner OWNER] [--description TEXT] [--readme MD] [--visibility PUBLIC|PRIVATE] [--dry-run]`: create a project
 - `edit (--project-number N | --project-title T) [--project-owner OWNER] [--title T] [--description TEXT] [--readme MD] [--visibility PUBLIC|PRIVATE] [--dry-run]`: update project metadata
 - `delete (--project-number N | --project-title T) [--project-owner OWNER] --danger [--yes] [--dry-run] [--backup-dir PATH]`: delete a project with automatic backup + undo snapshot
+- `item-add (--project-number N | --project-title T) [--project-owner OWNER] --repo OWNER/REPO --issue-number N`: add an existing issue to a project
 - `item-delete (--project-number N | --project-title T) [--project-owner OWNER] (--item-id ID | --issue-number N) --danger [--yes] [--dry-run] [--backup-dir PATH]`: delete a project item with automatic backup + undo snapshot
 - `undo --backup-file PATH [--dry-run]`: restore a destructive backup snapshot
 
@@ -203,6 +204,37 @@ poetry run repo-scaffold project items --project-owner acme --project-title "Roa
 poetry run repo-scaffold project item-delete --project-owner acme --project-title "Roadmap" --issue-number 42 --danger --yes
 poetry run repo-scaffold project undo --backup-file /path/to/artifacts/project-backups/project-item-delete-<timestamp>-<suffix>.json
 ```
+
+### `issue`
+
+Query and manage GitHub issues.
+
+```bash
+poetry run repo-scaffold issue list --repo OWNER/REPO [--state open|closed|all] [--json]
+poetry run repo-scaffold issue view --repo OWNER/REPO --issue-number N [--json]
+poetry run repo-scaffold issue create --repo OWNER/REPO --title "TITLE" [--body "TEXT"] [--label L] [--assignee U]
+poetry run repo-scaffold issue close --repo OWNER/REPO --issue-number N
+poetry run repo-scaffold issue comment --repo OWNER/REPO --issue-number N --body "TEXT"
+poetry run repo-scaffold issue label --repo OWNER/REPO --issue-number N [--add L] [--remove L]
+poetry run repo-scaffold issue assign --repo OWNER/REPO --issue-number N [--add USER] [--remove USER]
+```
+
+---
+
+### `pr`
+
+Query and manage GitHub pull requests.
+
+```bash
+poetry run repo-scaffold pr list --repo OWNER/REPO [--json]
+poetry run repo-scaffold pr view --repo OWNER/REPO --pr-number N [--json]
+poetry run repo-scaffold pr create --repo OWNER/REPO --title "TITLE" --head BRANCH [--base main] [--body "TEXT"] [--draft]
+poetry run repo-scaffold pr update --repo OWNER/REPO --pr-number N [--title "TITLE"] [--body "TEXT"]
+poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N --body "TEXT" [--reply-to COMMENT_ID]
+poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_ID
+```
+
+---
 
 ### `delete`
 

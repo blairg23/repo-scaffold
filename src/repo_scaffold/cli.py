@@ -57,6 +57,7 @@ from .project_ops import (
     ProjectItemsSummary,
     ProjectListSummary,
     ProjectMutationSummary,
+    add_project_item,
     create_project,
     delete_project,
     delete_project_item,
@@ -678,6 +679,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_project_target_args(project_delete_cmd)
     _add_danger_args(project_delete_cmd)
+
+    project_item_add_cmd = project_sub.add_parser(
+        "item-add",
+        help="Add an existing issue to a project",
+    )
+    project_item_add_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution (default: .)",
+    )
+    _add_project_target_args(project_item_add_cmd)
+    project_item_add_cmd.add_argument(
+        "--issue-number",
+        required=True,
+        type=int,
+        dest="issue_number",
+        help="GitHub issue number to add to the project",
+    )
+    project_item_add_cmd.add_argument(
+        "--repo",
+        required=True,
+        help="Repo containing the issue (owner/repo)",
+    )
 
     project_item_delete_cmd = project_sub.add_parser(
         "item-delete",
@@ -1507,6 +1531,16 @@ def main(argv: list[str] | None = None) -> int:
                     is_tty=sys.stdin.isatty(),
                     out=print,
                     err=lambda line: print(line, file=sys.stderr),
+                )
+            elif ns.project_command == "item-add":
+                mutation_summary = add_project_item(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    issue_repo=ns.repo,
+                    issue_number=ns.issue_number,
+                    out=print,
                 )
             elif ns.project_command == "item-delete":
                 mutation_summary = delete_project_item(

@@ -59,11 +59,19 @@ poetry run repo-scaffold pr view --repo OWNER/REPO --pr-number N [--json]
 poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N --body "TEXT" [--reply-to COMMENT_ID]
 poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_ID
 poetry run repo-scaffold pr create --repo OWNER/REPO --title "TITLE" --head BRANCH [--base main] [--body "TEXT"] [--draft]
+poetry run repo-scaffold pr update --repo OWNER/REPO --pr-number N [--title "TITLE"] [--body "TEXT"]
 
 # Projects
-poetry run repo-scaffold project items --project-title "TITLE" --limit 40
 poetry run repo-scaffold project list --project-owner OWNER
 poetry run repo-scaffold project view --project-title "TITLE"
+poetry run repo-scaffold project items --project-title "TITLE" --limit 40
+poetry run repo-scaffold project create --project-owner OWNER --project-title "TITLE" [--description "TEXT"]
+poetry run repo-scaffold project edit --project-owner OWNER --project-title "TITLE" [--title "NEW"] [--description "TEXT"]
+poetry run repo-scaffold project sync-metadata --project-owner OWNER --project-title "TITLE" --repo OWNER/REPO
+poetry run repo-scaffold project item-add --project-title "TITLE" --repo OWNER/REPO --issue-number N
+poetry run repo-scaffold project item-delete --project-title "TITLE" --issue-number N
+poetry run repo-scaffold project delete --project-owner OWNER --project-title "TITLE"  # dangerous — requires backup
+poetry run repo-scaffold project undo --project-owner OWNER  # restore from last backup
 
 # Backlog
 poetry run repo-scaffold apply backlog --repo OWNER/REPO --path .
@@ -91,8 +99,9 @@ poetry run repo-scaffold check rules --repo OWNER/REPO
 ## GitHub auth
 Token lives in `.env` as `GH_TOKEN`. Commands pick it up automatically via `_seed_env_from_dotenv`.
 
-## Nothing missing — full lifecycle coverage
+## Coverage
 All GitHub operations (repos, issues, PRs, projects, backlog) are implemented via GH_TOKEN + urllib. No `gh` CLI required.
+
 
 ## Running tests
 ```bash
