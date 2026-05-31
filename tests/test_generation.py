@@ -253,7 +253,7 @@ def test_generation_is_deterministic(tmp_path: Path) -> None:
     assert _tree_hash(cfg_a.out_dir) == _tree_hash(cfg_b.out_dir)
 
 
-def test_react_only_codeql_is_noop(tmp_path: Path) -> None:
+def test_react_only_codeql_scans_javascript(tmp_path: Path) -> None:
     cfg = ScaffoldConfig(
         name="frontend",
         languages=("react",),
@@ -265,8 +265,8 @@ def test_react_only_codeql_is_noop(tmp_path: Path) -> None:
     generate_scaffold(cfg)
 
     codeql = (cfg.out_dir / ".github/workflows/codeql.yml").read_text(encoding="utf-8")
-    assert "noop:" in codeql
-    assert "Analyze (${{ matrix.language }})" not in codeql
+    assert "javascript-typescript" in codeql
+    assert "Analyze (${{ matrix.language }})" in codeql
 
     dependabot = (cfg.out_dir / ".github/dependabot.yml").read_text(encoding="utf-8")
     assert 'package-ecosystem: "github-actions"' in dependabot
