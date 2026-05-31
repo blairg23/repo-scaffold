@@ -23,6 +23,7 @@ from .github_api import (
     issue_create,
     issue_label,
     issue_list,
+    issue_update,
     pr_comment,
     pr_create,
     pr_list,
@@ -856,6 +857,14 @@ def build_parser() -> argparse.ArgumentParser:
     issue_assign_cmd.add_argument(
         "--remove", action="append", dest="remove_users", metavar="USER"
     )
+
+    issue_update_cmd = issue_sub.add_parser("update", help="Update an existing issue")
+    issue_update_cmd.add_argument("--repo", required=True)
+    issue_update_cmd.add_argument(
+        "--issue-number", type=int, required=True, dest="issue_number"
+    )
+    issue_update_cmd.add_argument("--title", default=None)
+    issue_update_cmd.add_argument("--body", default=None)
 
     pr_cmd = subparsers.add_parser("pr", help="Interact with GitHub pull requests")
     pr_sub = pr_cmd.add_subparsers(dest="pr_command", required=True)
@@ -1806,6 +1815,25 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 1
             print(f"Assignees updated on #{ns.issue_number}.")
+            return 0
+
+        if ns.issue_command == "update":
+            if ns.title is None and ns.body is None:
+                print("Provide at least --title or --body.", file=sys.stderr)
+                return 2
+            cp = issue_update(
+                target_repo,
+                ns.issue_number,
+                token,
+                title=ns.title,
+                body=ns.body,
+            )
+            if cp.returncode != 0:
+                print(cp.stderr.strip() or "Failed updating issue.", file=sys.stderr)
+                return 1
+            updated = _json.loads(cp.stdout)
+            print(f"Issue updated: #{updated['number']} {updated['title']}")
+            print(f"URL: {updated['html_url']}")
             return 0
 
     if ns.mode == "pr":

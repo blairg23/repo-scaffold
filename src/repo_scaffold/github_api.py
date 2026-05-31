@@ -736,6 +736,21 @@ def issue_close(repo: str, number: int, token: str) -> subprocess.CompletedProce
     return rest("PATCH", f"/repos/{repo}/issues/{number}", token, {"state": "closed"})
 
 
+def issue_update(
+    repo: str,
+    number: int,
+    token: str,
+    title: str | None = None,
+    body: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    payload: dict[str, object] = {}
+    if title is not None:
+        payload["title"] = title
+    if body is not None:
+        payload["body"] = body
+    return rest("PATCH", f"/repos/{repo}/issues/{number}", token, payload)
+
+
 def issue_comment(
     repo: str, number: int, body: str, token: str
 ) -> subprocess.CompletedProcess[str]:

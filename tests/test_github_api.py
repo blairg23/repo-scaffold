@@ -395,3 +395,46 @@ def test_pr_update_title_and_body() -> None:
             "owner/repo", pr_number=3, token="tok", title="T", body="B"
         )
     assert cp.returncode == 0
+
+
+def test_issue_update_body_only() -> None:
+    response = {
+        "number": 42,
+        "title": "My Issue",
+        "html_url": "https://github.com/a/b/issues/42",
+    }
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(response))
+    ):
+        cp = github_api.issue_update("owner/repo", 42, "tok", body="new body")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert result["number"] == 42
+
+
+def test_issue_update_title_only() -> None:
+    response = {
+        "number": 7,
+        "title": "New Title",
+        "html_url": "https://github.com/a/b/issues/7",
+    }
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(response))
+    ):
+        cp = github_api.issue_update("owner/repo", 7, "tok", title="New Title")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert result["title"] == "New Title"
+
+
+def test_issue_update_title_and_body() -> None:
+    response = {
+        "number": 3,
+        "title": "T",
+        "html_url": "https://github.com/a/b/issues/3",
+    }
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(response))
+    ):
+        cp = github_api.issue_update("owner/repo", 3, "tok", title="T", body="B")
+    assert cp.returncode == 0
