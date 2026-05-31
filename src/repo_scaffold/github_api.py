@@ -198,7 +198,7 @@ query($login: String!, $first: Int!, $after: String) {
       pageInfo { hasNextPage endCursor }
       nodes {
         id number title closed url
-        shortDescription readme
+        public shortDescription readme
       }
     }
   }
@@ -216,7 +216,7 @@ query($login: String!, $first: Int!, $after: String) {
       pageInfo { hasNextPage endCursor }
       nodes {
         id number title closed url
-        shortDescription readme
+        public shortDescription readme
       }
     }
   }
@@ -228,7 +228,7 @@ query($login: String!, $number: Int!) {
   user(login: $login) {
     projectV2(number: $number) {
       id number title closed url
-      visibility shortDescription readme
+      public shortDescription readme
     }
   }
 }
@@ -239,7 +239,7 @@ query($login: String!, $number: Int!) {
   organization(login: $login) {
     projectV2(number: $number) {
       id number title closed url
-      visibility shortDescription readme
+      public shortDescription readme
     }
   }
 }
@@ -249,7 +249,7 @@ _GQL_CREATE_PROJECT = """
 mutation($ownerId: ID!, $title: String!) {
   createProjectV2(input: {ownerId: $ownerId, title: $title}) {
     projectV2 {
-      id number title closed url shortDescription readme
+      id number title closed url public shortDescription readme
     }
   }
 }
@@ -271,7 +271,7 @@ mutation(
     public: $public
   }) {
     projectV2 {
-      id number title closed url shortDescription readme
+      id number title closed url public shortDescription readme
     }
   }
 }
