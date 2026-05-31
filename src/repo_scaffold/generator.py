@@ -325,9 +325,13 @@ jobs:
 
 def _render_codeql_yaml(languages: Iterable[str]) -> str:
     codeql_langs = [
-        "go" if lang == "gin" else lang
+        (
+            "go"
+            if lang == "gin"
+            else ("javascript-typescript" if lang == "react" else lang)
+        )
         for lang in languages
-        if lang in {"go", "gin", "python"}
+        if lang in {"go", "gin", "python", "react"}
     ]
     codeql_langs = list(dict.fromkeys(codeql_langs))
 
@@ -344,7 +348,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Skip
-        run: echo "No Go/Python selected; CodeQL scan is skipped."
+        run: echo "No supported CodeQL languages selected; scan is skipped."
 """
 
     matrix_lines = "\n".join(f"          - {lang}" for lang in codeql_langs)
@@ -3138,7 +3142,9 @@ def build_ci_files(
         out_dir=target_dir,
     )
     return _filter_files_for_paths(
-        build_scaffold_files(cfg), target_dir, [".github/workflows/ci.yml"]
+        build_scaffold_files(cfg),
+        target_dir,
+        [".github/workflows/ci.yml", ".github/workflows/codeql.yml"],
     )
 
 
