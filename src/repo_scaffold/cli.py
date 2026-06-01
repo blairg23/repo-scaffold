@@ -915,6 +915,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     issue_update_cmd.add_argument("--title", default=None)
     issue_update_cmd.add_argument("--body", default=None)
+    issue_update_cmd.add_argument("--state", choices=["open", "closed"], default=None)
 
     pr_cmd = subparsers.add_parser("pr", help="Interact with GitHub pull requests")
     pr_sub = pr_cmd.add_subparsers(dest="pr_command", required=True)
@@ -1918,8 +1919,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if ns.issue_command == "update":
-            if ns.title is None and ns.body is None:
-                print("Provide at least --title or --body.", file=sys.stderr)
+            if ns.title is None and ns.body is None and ns.state is None:
+                print("Provide at least --title, --body, or --state.", file=sys.stderr)
                 return 2
             cp = issue_update(
                 target_repo,
@@ -1927,6 +1928,7 @@ def main(argv: list[str] | None = None) -> int:
                 token,
                 title=ns.title,
                 body=ns.body,
+                state=ns.state,
             )
             if cp.returncode != 0:
                 print(cp.stderr.strip() or "Failed updating issue.", file=sys.stderr)
