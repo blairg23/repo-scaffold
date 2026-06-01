@@ -1775,7 +1775,7 @@ def test_issue_list(
     ]
     monkeypatch.setattr(
         "repo_scaffold.cli.issue_list",
-        lambda repo, token, state="open": subprocess.CompletedProcess(
+        lambda repo, token, state="open", label=None: subprocess.CompletedProcess(
             args=[], returncode=0, stdout=json.dumps(issues), stderr=""
         ),
     )
@@ -2069,3 +2069,87 @@ def test_pr_create(
     out = capsys.readouterr().out
     assert "PR created: #10" in out
     assert "https://github.com/acme/repo/pull/10" in out
+
+
+def test_pr_merge(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_merge",
+        lambda repo, pr_number, token, method="squash": subprocess.CompletedProcess(
+            args=[],
+            returncode=200,
+            stdout=json.dumps(
+                {
+                    "sha": "abc",
+                    "merged": True,
+                    "message": "Pull Request successfully merged",
+                }
+            ),
+            stderr="",
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "merge", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc == 0
+    assert "merged" in capsys.readouterr().out
+
+
+def test_pr_checks(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    runs = [{"id": 1, "name": "CI", "status": "completed", "conclusion": "success"}]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_checks",
+        lambda repo, pr_number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(runs), stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "checks", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc == 0
+    assert "CI" in capsys.readouterr().out
+
+
+def test_branch_create(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.branch_create",
+        lambda repo, name, token, base="main": subprocess.CompletedProcess(
+            args=[],
+            returncode=201,
+            stdout=json.dumps({"ref": "refs/heads/feat/foo", "object": {"sha": "abc"}}),
+            stderr="",
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["branch", "create", "--repo", "acme/repo", "--name", "feat/foo"])
+    assert rc == 0
+    assert "feat/foo" in capsys.readouterr().out
+
+
+def test_branch_delete(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.branch_delete",
+        lambda repo, name, token: subprocess.CompletedProcess(
+            args=[], returncode=204, stdout="", stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["branch", "delete", "--repo", "acme/repo", "--name", "feat/foo"])
+    assert rc == 0
+    assert "feat/foo" in capsys.readouterr().out

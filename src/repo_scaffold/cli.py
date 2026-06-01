@@ -17,6 +17,8 @@ from .backlog_ops import (
     resolve_project_target_for_auth_check,
 )
 from .github_api import (
+    branch_create,
+    branch_delete,
     issue_assign,
     issue_close,
     issue_comment,
@@ -24,9 +26,11 @@ from .github_api import (
     issue_label,
     issue_list,
     issue_update,
+    pr_checks,
     pr_comment,
     pr_create,
     pr_list,
+    pr_merge,
     pr_resolve_thread,
     pr_update,
     pr_view,
@@ -855,6 +859,7 @@ def build_parser() -> argparse.ArgumentParser:
     issue_list_cmd.add_argument(
         "--state", default="open", choices=["open", "closed", "all"]
     )
+    issue_list_cmd.add_argument("--label", default=None, help="Filter by label name")
     issue_list_cmd.add_argument("--json", action="store_true", dest="json_output")
 
     issue_create_cmd = issue_sub.add_parser("create", help="Create a new issue")
@@ -957,6 +962,35 @@ def build_parser() -> argparse.ArgumentParser:
     pr_resolve_cmd.add_argument("--repo", required=True)
     pr_resolve_cmd.add_argument("--thread-id", required=True, dest="thread_id")
 
+    pr_merge_cmd = pr_sub.add_parser("merge", help="Merge a pull request")
+    pr_merge_cmd.add_argument("--repo", required=True)
+    pr_merge_cmd.add_argument("--pr-number", required=True, type=int, dest="pr_number")
+    pr_merge_cmd.add_argument(
+        "--method",
+        default="squash",
+        choices=["squash", "merge", "rebase"],
+        help="Merge method (default: squash)",
+    )
+
+    pr_checks_cmd = pr_sub.add_parser("checks", help="Show CI check statuses for a PR")
+    pr_checks_cmd.add_argument("--repo", required=True)
+    pr_checks_cmd.add_argument("--pr-number", required=True, type=int, dest="pr_number")
+    pr_checks_cmd.add_argument("--json", action="store_true", dest="json_output")
+
+    branch_cmd = subparsers.add_parser("branch", help="Manage GitHub branches")
+    branch_sub = branch_cmd.add_subparsers(dest="branch_command", required=True)
+
+    branch_create_cmd = branch_sub.add_parser("create", help="Create a new branch")
+    branch_create_cmd.add_argument("--repo", required=True)
+    branch_create_cmd.add_argument("--name", required=True, help="New branch name")
+    branch_create_cmd.add_argument(
+        "--from", default="main", dest="base", help="Base branch (default: main)"
+    )
+
+    branch_delete_cmd = branch_sub.add_parser("delete", help="Delete a branch")
+    branch_delete_cmd.add_argument("--repo", required=True)
+    branch_delete_cmd.add_argument("--name", required=True, help="Branch to delete")
+
     return parser
 
 
@@ -974,6 +1008,7 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
         "project",
         "issue",
         "pr",
+        "branch",
     }:
         return raw
     # Backward-compatible behavior: previous root command maps to init.
@@ -1802,7 +1837,7 @@ def main(argv: list[str] | None = None) -> int:
         token = token_from_repo(Path.cwd()) or ""
 
         if ns.issue_command == "list":
-            cp = issue_list(target_repo, token, state=ns.state)
+            cp = issue_list(target_repo, token, state=ns.state, label=ns.label)
             if cp.returncode != 0:
                 print(cp.stderr.strip() or "Failed listing issues.", file=sys.stderr)
                 return 1
@@ -2011,6 +2046,61 @@ def main(argv: list[str] | None = None) -> int:
             updated = _json.loads(cp.stdout)
             print(f"PR updated: #{updated['number']} {updated['title']}")
             print(f"URL: {updated['html_url']}")
+            return 0
+
+        if ns.pr_command == "merge":
+            cp = pr_merge(target_repo, ns.pr_number, token, method=ns.method)
+            if cp.returncode not in (0, 200):
+                print(cp.stderr.strip() or "Failed merging PR.", file=sys.stderr)
+                return 1
+            result = _json.loads(cp.stdout)
+            print(f"PR #{ns.pr_number} merged: {result.get('message', 'OK')}")
+            return 0
+
+        if ns.pr_command == "checks":
+            cp = pr_checks(target_repo, ns.pr_number, token)
+            if cp.returncode != 0:
+                print(cp.stderr.strip() or "Failed fetching checks.", file=sys.stderr)
+                return 1
+            runs = _json.loads(cp.stdout)
+            if ns.json_output:
+                print(_json.dumps(runs, indent=2))
+            else:
+                if not runs:
+                    print("No check runs found.")
+                for r in runs:
+                    status = r.get("status", "?")
+                    conclusion = r.get("conclusion") or status
+                    print(f"  {r.get('name', '?')}: {conclusion}")
+            return 0
+
+    if ns.mode == "branch":
+        import json as _json
+
+        target_repo, repo_error = _resolve_repo_from_args_or_env(
+            repo=ns.repo, fallback_name=None
+        )
+        if repo_error:
+            print(repo_error, file=sys.stderr)
+            return 2
+        assert target_repo is not None
+        token = token_from_repo(Path.cwd()) or ""
+
+        if ns.branch_command == "create":
+            cp = branch_create(target_repo, ns.name, token, base=ns.base)
+            if cp.returncode not in (0, 201):
+                print(cp.stderr.strip() or "Failed creating branch.", file=sys.stderr)
+                return 1
+            ref = _json.loads(cp.stdout)
+            print(f"Branch created: {ref.get('ref', ns.name)}")
+            return 0
+
+        if ns.branch_command == "delete":
+            cp = branch_delete(target_repo, ns.name, token)
+            if cp.returncode not in (0, 204):
+                print(cp.stderr.strip() or "Failed deleting branch.", file=sys.stderr)
+                return 1
+            print(f"Branch deleted: {ns.name}")
             return 0
 
     parser.error("Unsupported command.")

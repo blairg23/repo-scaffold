@@ -46,7 +46,7 @@ Before writing any code, verify every item below. These are non-negotiable and a
 ```bash
 # Issues
 poetry run repo-scaffold issue view --repo OWNER/REPO --issue-number N [--json]
-poetry run repo-scaffold issue list --repo OWNER/REPO [--state open|closed|all] [--json]
+poetry run repo-scaffold issue list --repo OWNER/REPO [--state open|closed|all] [--label LABEL] [--json]
 poetry run repo-scaffold issue create --repo OWNER/REPO --title "TITLE" [--body "TEXT"] [--label L] [--assignee U]
 poetry run repo-scaffold issue close --repo OWNER/REPO --issue-number N
 poetry run repo-scaffold issue update --repo OWNER/REPO --issue-number N [--title "TITLE"] [--body "TEXT"]
@@ -61,6 +61,12 @@ poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N --body "TEXT
 poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_ID
 poetry run repo-scaffold pr create --repo OWNER/REPO --title "TITLE" --head BRANCH [--base main] [--body "TEXT"] [--draft]
 poetry run repo-scaffold pr update --repo OWNER/REPO --pr-number N [--title "TITLE"] [--body "TEXT"]
+poetry run repo-scaffold pr merge --repo OWNER/REPO --pr-number N [--method squash|merge|rebase]
+poetry run repo-scaffold pr checks --repo OWNER/REPO --pr-number N [--json]
+
+# Branches
+poetry run repo-scaffold branch create --repo OWNER/REPO --name BRANCH [--from main]
+poetry run repo-scaffold branch delete --repo OWNER/REPO --name BRANCH
 
 # Projects
 poetry run repo-scaffold project list --project-owner OWNER

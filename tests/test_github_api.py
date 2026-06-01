@@ -504,3 +504,82 @@ def test_project_item_update_field_success() -> None:
             "PV2_1", "PVTI_1", "F_1", "opt_prog", "tok"
         )
     assert cp.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# branch_create / branch_delete / pr_merge / pr_checks / issue_list --label
+# ---------------------------------------------------------------------------
+
+
+def test_branch_create_success() -> None:
+    sha_data = [{"object": {"sha": "abc123"}}]
+    ref_data = {"ref": "refs/heads/feat/foo", "object": {"sha": "abc123"}}
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[
+            _mock_resp(200, json.dumps(sha_data)),
+            _mock_resp(201, json.dumps(ref_data)),
+        ],
+    ):
+        cp = github_api.branch_create("owner/repo", "feat/foo", "tok", base="main")
+    assert cp.returncode == 0
+    assert json.loads(cp.stdout)["ref"] == "refs/heads/feat/foo"
+
+
+def test_branch_create_bad_base() -> None:
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=_http_error(404, "not found"),
+    ):
+        cp = github_api.branch_create(
+            "owner/repo", "feat/foo", "tok", base="nonexistent"
+        )
+    assert cp.returncode != 0
+
+
+def test_branch_delete_success() -> None:
+    with patch("urllib.request.urlopen", return_value=_mock_resp(204, b"")):
+        cp = github_api.branch_delete("owner/repo", "feat/foo", "tok")
+    assert cp.returncode == 0
+
+
+def test_pr_merge_success() -> None:
+    resp = {"sha": "abc", "merged": True, "message": "Pull Request successfully merged"}
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(resp))
+    ):
+        cp = github_api.pr_merge("owner/repo", 42, "tok", method="squash")
+    assert cp.returncode == 0
+    assert json.loads(cp.stdout)["merged"] is True
+
+
+def test_pr_checks_success() -> None:
+    pr_data = {"head": {"sha": "abc123"}}
+    # Real API returns {total_count, check_runs: [...]} not a bare array
+    runs_payload = {
+        "total_count": 1,
+        "check_runs": [
+            {"id": 1, "name": "CI", "status": "completed", "conclusion": "success"}
+        ],
+    }
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[
+            _mock_resp(200, json.dumps(pr_data)),
+            _mock_resp(200, json.dumps(runs_payload)),
+        ],
+    ):
+        cp = github_api.pr_checks("owner/repo", 42, "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert result[0]["name"] == "CI"
+
+
+def test_issue_list_with_label() -> None:
+    issues = [{"number": 1, "title": "MVP thing", "labels": [{"name": "mvp"}]}]
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(issues))
+    ):
+        cp = github_api.issue_list("owner/repo", "tok", label="mvp")
+    assert cp.returncode == 0
+    assert len(json.loads(cp.stdout)) == 1
