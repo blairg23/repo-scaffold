@@ -1265,10 +1265,12 @@ gh api \
   --input - >/dev/null <<'JSON'
 {
   "allow_squash_merge": true,
+  "squash_merge_commit_title": "PR_TITLE",
+  "squash_merge_commit_message": "PR_BODY",
   "allow_merge_commit": false,
   "allow_rebase_merge": false,
   "delete_branch_on_merge": true,
-  "allow_auto_merge": true,
+  "allow_auto_merge": false,
   "is_template": false
 }
 JSON

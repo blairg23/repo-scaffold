@@ -747,8 +747,10 @@ def test_apply_settings_uses_ruleset_and_public_security_defaults(
     assert payload["allow_merge_commit"] is False
     assert payload["allow_rebase_merge"] is False
     assert payload["allow_squash_merge"] is True
+    assert payload["squash_merge_commit_title"] == "PR_TITLE"
+    assert payload["squash_merge_commit_message"] == "PR_BODY"
     assert payload["delete_branch_on_merge"] is True
-    assert payload["allow_auto_merge"] is True
+    assert payload["allow_auto_merge"] is False
     assert payload["is_template"] is False
     assert calls["default_branch"] == "main"
     assert calls["ruleset_repo"] == "acme/repo"

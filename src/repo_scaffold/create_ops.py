@@ -61,10 +61,12 @@ def _repo_patch_payload() -> str:
     return json.dumps(
         {
             "allow_squash_merge": True,
+            "squash_merge_commit_title": "PR_TITLE",
+            "squash_merge_commit_message": "PR_BODY",
             "allow_merge_commit": False,
             "allow_rebase_merge": False,
             "delete_branch_on_merge": True,
-            "allow_auto_merge": True,
+            "allow_auto_merge": False,
             "is_template": False,
         },
         indent=2,
