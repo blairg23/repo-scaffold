@@ -328,6 +328,37 @@ def test_react_vite_scaffold_file_contents(tmp_path: Path) -> None:
     assert "web/.vite/" in gitignore
 
 
+def test_react_husky_pre_commit_generated(tmp_path: Path) -> None:
+    cfg = ScaffoldConfig(
+        name="my-app",
+        languages=("react",),
+        owner="acme",
+        license_id="apache-2.0",
+        out_dir=tmp_path / "my-app",
+    )
+    generate_scaffold(cfg)
+
+    hook = cfg.out_dir / "web" / ".husky" / "pre-commit"
+    assert hook.exists(), ".husky/pre-commit not generated"
+    content = hook.read_text(encoding="utf-8")
+    assert "lint-staged" in content
+
+    pkg = (cfg.out_dir / "web" / "package.json").read_text(encoding="utf-8")
+    assert '"prepare": "husky"' in pkg
+    assert '"husky"' in pkg
+    assert '"lint-staged"' in pkg
+    assert '"prettier"' in pkg
+    assert "lint-staged" in pkg
+
+
+def test_build_ci_files_includes_husky_for_react(tmp_path: Path) -> None:
+    from repo_scaffold.generator import build_ci_files
+
+    files = build_ci_files(tmp_path, languages=("react",))
+    rel_paths = {f.path.relative_to(tmp_path).as_posix() for f in files}
+    assert "web/.husky/pre-commit" in rel_paths
+
+
 def test_generate_scaffold_uses_custom_markdown_templates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
