@@ -2772,6 +2772,10 @@ def _render_python_init(name: str) -> str:
 """
 
 
+def _render_husky_pre_commit() -> str:
+    return "#!/usr/bin/env sh\nnpx lint-staged\n"
+
+
 def _render_react_package_json(name: str) -> str:
     safe_name = name.replace("_", "-")
     return f"""{{
@@ -2783,7 +2787,8 @@ def _render_react_package_json(name: str) -> str:
     "dev": "vite",
     "lint": "eslint .",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prepare": "husky"
   }},
   "dependencies": {{
     "react": "^18.3.1",
@@ -2796,7 +2801,13 @@ def _render_react_package_json(name: str) -> str:
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.19",
     "globals": "^16.0.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0",
+    "prettier": "^3.0.0",
     "vite": "^5.4.8"
+  }},
+  "lint-staged": {{
+    "*.{{ts,tsx,js,jsx}}": ["eslint --fix", "prettier --write"]
   }}
 }}
 """
@@ -3047,6 +3058,11 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
                     _render_react_package_json(config.name),
                 ),
                 ScaffoldFile(
+                    config.out_dir / "web" / ".husky" / "pre-commit",
+                    _render_husky_pre_commit(),
+                    executable=True,
+                ),
+                ScaffoldFile(
                     config.out_dir / "web" / "index.html",
                     _render_react_index_html(config.name),
                 ),
@@ -3146,7 +3162,11 @@ def build_ci_files(
     return _filter_files_for_paths(
         build_scaffold_files(cfg),
         target_dir,
-        [".github/workflows/ci.yml", ".github/workflows/codeql.yml"],
+        [
+            ".github/workflows/ci.yml",
+            ".github/workflows/codeql.yml",
+            "web/.husky/pre-commit",
+        ],
     )
 
 
