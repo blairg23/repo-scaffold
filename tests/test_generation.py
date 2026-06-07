@@ -319,8 +319,10 @@ def test_react_vite_scaffold_file_contents(tmp_path: Path) -> None:
     assert "eslint-plugin-react-refresh" in eslint_cfg
 
     ci = (cfg.out_dir / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "contains(env.LANGUAGES, 'react')" in ci
-    assert "hashFiles('web/package.json')" in ci
+    assert "react:" in ci
+    assert "working-directory: web" in ci
+    assert "contains(env.LANGUAGES" not in ci
+    assert "hashFiles(" not in ci
 
     gitignore = (cfg.out_dir / ".gitignore").read_text(encoding="utf-8")
     assert "web/node_modules/" in gitignore
