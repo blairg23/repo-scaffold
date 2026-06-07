@@ -466,6 +466,22 @@ def test_issue_update_title_and_body() -> None:
     assert cp.returncode == 0
 
 
+def test_issue_update_state_open() -> None:
+    response = {
+        "number": 7,
+        "title": "Some Issue",
+        "html_url": "https://github.com/a/b/issues/7",
+        "state": "open",
+    }
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(response))
+    ):
+        cp = github_api.issue_update("owner/repo", 7, "tok", state="open")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert result["state"] == "open"
+
+
 # ---------------------------------------------------------------------------
 # project_fields / project_item_update_field
 # ---------------------------------------------------------------------------

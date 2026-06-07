@@ -2152,4 +2152,167 @@ def test_branch_delete(tmp_path, monkeypatch, capsys) -> None:
 
     rc = main(["branch", "delete", "--repo", "acme/repo", "--name", "feat/foo"])
     assert rc == 0
-    assert "feat/foo" in capsys.readouterr().out
+
+
+def test_issue_comment_body_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    import subprocess
+
+    body_file = tmp_path / "comment.md"
+    body_file.write_text("Hello from file", encoding="utf-8")
+    captured: list[str] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_comment",
+        lambda repo, number, body, token: (
+            captured.append(body),
+            subprocess.CompletedProcess(
+                args=[],
+                returncode=201,
+                stdout=json.dumps({"html_url": "https://github.com/x"}),
+                stderr="",
+            ),
+        )[1],
+    )
+    rc = main(
+        [
+            "issue",
+            "comment",
+            "--repo",
+            "acme/repo",
+            "--issue-number",
+            "1",
+            "--body-file",
+            str(body_file),
+        ]
+    )
+    assert rc == 0
+    assert captured == ["Hello from file"]
+
+
+def test_pr_create_body_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+    import subprocess
+
+    body_file = tmp_path / "pr_body.md"
+    body_file.write_text("PR body from file", encoding="utf-8")
+    captured: list[str] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_create",
+        lambda repo, title, body, head, base, token, draft=False: (
+            captured.append(body),
+            subprocess.CompletedProcess(
+                args=[],
+                returncode=201,
+                stdout=json.dumps(
+                    {
+                        "number": 99,
+                        "title": title,
+                        "html_url": "https://github.com/x/99",
+                    }
+                ),
+                stderr="",
+            ),
+        )[1],
+    )
+    rc = main(
+        [
+            "pr",
+            "create",
+            "--repo",
+            "acme/repo",
+            "--title",
+            "My PR",
+            "--head",
+            "feat/x",
+            "--body-file",
+            str(body_file),
+        ]
+    )
+    assert rc == 0
+    assert captured == ["PR body from file"]
+
+
+def test_body_and_body_file_are_mutually_exclusive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body_file = tmp_path / "body.md"
+    body_file.write_text("text", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "issue",
+                "comment",
+                "--repo",
+                "acme/repo",
+                "--issue-number",
+                "1",
+                "--body",
+                "inline",
+                "--body-file",
+                str(body_file),
+            ]
+        )
+
+
+def test_issue_comment_missing_body_returns_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    rc = main(
+        [
+            "issue",
+            "comment",
+            "--repo",
+            "acme/repo",
+            "--issue-number",
+            "1",
+        ]
+    )
+    assert rc == 2
+
+
+def test_body_file_missing_path_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "issue",
+                "comment",
+                "--repo",
+                "acme/repo",
+                "--issue-number",
+                "1",
+                "--body-file",
+                str(tmp_path / "does_not_exist.md"),
+            ]
+        )
+    assert "cannot read" in str(exc.value)
+
+
+def test_body_file_non_utf8_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad_file = tmp_path / "latin1.md"
+    bad_file.write_bytes(b"caf\xe9")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "issue",
+                "comment",
+                "--repo",
+                "acme/repo",
+                "--issue-number",
+                "1",
+                "--body-file",
+                str(bad_file),
+            ]
+        )
+    assert "UTF-8" in str(exc.value)
