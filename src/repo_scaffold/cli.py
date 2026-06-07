@@ -295,6 +295,14 @@ def _add_scaffold_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--out", help="Output path (default: ./out/<name>)")
 
 
+def _resolve_body(body: str | None, body_file: str | None) -> str | None:
+    if body is not None and body_file is not None:
+        raise SystemExit("error: --body and --body-file are mutually exclusive")
+    if body_file is not None:
+        return Path(body_file).read_text(encoding="utf-8")
+    return body
+
+
 def _add_apply_target_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--path", default=".", help="Target repository path (default: .)"
@@ -865,7 +873,14 @@ def build_parser() -> argparse.ArgumentParser:
     issue_create_cmd = issue_sub.add_parser("create", help="Create a new issue")
     issue_create_cmd.add_argument("--repo", required=True)
     issue_create_cmd.add_argument("--title", required=True)
-    issue_create_cmd.add_argument("--body", default="")
+    issue_create_cmd.add_argument("--body", default=None)
+    issue_create_cmd.add_argument(
+        "--body-file",
+        dest="body_file",
+        default=None,
+        metavar="PATH",
+        help="Read body from a UTF-8 file (mutually exclusive with --body)",
+    )
     issue_create_cmd.add_argument(
         "--label", action="append", dest="labels", metavar="LABEL"
     )
@@ -882,7 +897,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     issue_comment_cmd.add_argument("--repo", required=True)
     issue_comment_cmd.add_argument("--issue-number", type=int, required=True)
-    issue_comment_cmd.add_argument("--body", required=True)
+    issue_comment_cmd.add_argument("--body", default=None)
+    issue_comment_cmd.add_argument(
+        "--body-file",
+        dest="body_file",
+        default=None,
+        metavar="PATH",
+        help="Read body from a UTF-8 file (mutually exclusive with --body)",
+    )
 
     issue_label_cmd = issue_sub.add_parser(
         "label", help="Add or remove labels on an issue"
@@ -915,6 +937,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     issue_update_cmd.add_argument("--title", default=None)
     issue_update_cmd.add_argument("--body", default=None)
+    issue_update_cmd.add_argument(
+        "--body-file",
+        dest="body_file",
+        default=None,
+        metavar="PATH",
+        help="Read body from a UTF-8 file (mutually exclusive with --body)",
+    )
     issue_update_cmd.add_argument("--state", choices=["open", "closed"], default=None)
 
     pr_cmd = subparsers.add_parser("pr", help="Interact with GitHub pull requests")
@@ -936,7 +965,14 @@ def build_parser() -> argparse.ArgumentParser:
     pr_comment_cmd = pr_sub.add_parser("comment", help="Post a review comment on a PR")
     pr_comment_cmd.add_argument("--repo", required=True)
     pr_comment_cmd.add_argument("--pr-number", type=int, required=True)
-    pr_comment_cmd.add_argument("--body", required=True)
+    pr_comment_cmd.add_argument("--body", default=None)
+    pr_comment_cmd.add_argument(
+        "--body-file",
+        dest="body_file",
+        default=None,
+        metavar="PATH",
+        help="Read body from a UTF-8 file (mutually exclusive with --body)",
+    )
     pr_comment_cmd.add_argument(
         "--reply-to", type=int, dest="reply_to", help="Comment ID to reply to"
     )
@@ -944,7 +980,14 @@ def build_parser() -> argparse.ArgumentParser:
     pr_create_cmd = pr_sub.add_parser("create", help="Open a new pull request")
     pr_create_cmd.add_argument("--repo", required=True)
     pr_create_cmd.add_argument("--title", required=True)
-    pr_create_cmd.add_argument("--body", default="")
+    pr_create_cmd.add_argument("--body", default=None)
+    pr_create_cmd.add_argument(
+        "--body-file",
+        dest="body_file",
+        default=None,
+        metavar="PATH",
+        help="Read body from a UTF-8 file (mutually exclusive with --body)",
+    )
     pr_create_cmd.add_argument("--head", required=True, help="Source branch")
     pr_create_cmd.add_argument(
         "--base", default="main", help="Target branch (default: main)"
@@ -956,6 +999,13 @@ def build_parser() -> argparse.ArgumentParser:
     pr_update_cmd.add_argument("--pr-number", required=True, type=int, dest="pr_number")
     pr_update_cmd.add_argument("--title", default=None)
     pr_update_cmd.add_argument("--body", default=None)
+    pr_update_cmd.add_argument(
+        "--body-file",
+        dest="body_file",
+        default=None,
+        metavar="PATH",
+        help="Read body from a UTF-8 file (mutually exclusive with --body)",
+    )
 
     pr_resolve_cmd = pr_sub.add_parser(
         "resolve-thread", help="Resolve a PR review thread"
@@ -1859,7 +1909,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_repo,
                 ns.title,
                 token,
-                body=ns.body,
+                body=_resolve_body(ns.body, ns.body_file) or "",
                 labels=ns.labels,
                 assignees=ns.assignees,
             )
@@ -1880,7 +1930,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if ns.issue_command == "comment":
-            cp = issue_comment(target_repo, ns.issue_number, ns.body, token)
+            resolved_body = _resolve_body(ns.body, ns.body_file)
+            if not resolved_body:
+                print("error: --body or --body-file is required.", file=sys.stderr)
+                return 2
+            cp = issue_comment(target_repo, ns.issue_number, resolved_body, token)
             if cp.returncode not in (0, 201):
                 print(cp.stderr.strip() or "Failed posting comment.", file=sys.stderr)
                 return 1
@@ -1919,7 +1973,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if ns.issue_command == "update":
-            if ns.title is None and ns.body is None and ns.state is None:
+            resolved_body = _resolve_body(ns.body, ns.body_file)
+            if ns.title is None and resolved_body is None and ns.state is None:
                 print("Provide at least --title, --body, or --state.", file=sys.stderr)
                 return 2
             cp = issue_update(
@@ -1927,7 +1982,7 @@ def main(argv: list[str] | None = None) -> int:
                 ns.issue_number,
                 token,
                 title=ns.title,
-                body=ns.body,
+                body=resolved_body,
                 state=ns.state,
             )
             if cp.returncode != 0:
@@ -1989,8 +2044,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if ns.pr_command == "comment":
+            resolved_body = _resolve_body(ns.body, ns.body_file)
+            if not resolved_body:
+                print("error: --body or --body-file is required.", file=sys.stderr)
+                return 2
             cp = pr_comment(
-                target_repo, ns.pr_number, ns.body, token, reply_to=ns.reply_to
+                target_repo, ns.pr_number, resolved_body, token, reply_to=ns.reply_to
             )
             if cp.returncode not in (0, 201):
                 print(cp.stderr.strip() or "Failed posting comment.", file=sys.stderr)
@@ -2014,7 +2073,7 @@ def main(argv: list[str] | None = None) -> int:
             cp = pr_create(
                 target_repo,
                 title=ns.title,
-                body=ns.body,
+                body=_resolve_body(ns.body, ns.body_file) or "",
                 head=ns.head,
                 base=ns.base,
                 token=token,
@@ -2029,7 +2088,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if ns.pr_command == "update":
-            if ns.title is None and ns.body is None:
+            resolved_body = _resolve_body(ns.body, ns.body_file)
+            if ns.title is None and resolved_body is None:
                 print(
                     "Error: at least one of --title or --body is required.",
                     file=sys.stderr,
@@ -2040,7 +2100,7 @@ def main(argv: list[str] | None = None) -> int:
                 pr_number=ns.pr_number,
                 token=token,
                 title=ns.title,
-                body=ns.body,
+                body=resolved_body,
             )
             if cp.returncode != 0:
                 print(cp.stderr.strip() or "Failed updating PR.", file=sys.stderr)

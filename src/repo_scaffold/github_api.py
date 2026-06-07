@@ -140,7 +140,7 @@ def graphql(
         payload = json.loads(cp.stdout)
     except json.JSONDecodeError:
         return _err("GraphQL response was not valid JSON.")
-    if "errors" in payload:
+    if "errors" in payload and "data" not in payload:
         msgs = "; ".join(e.get("message", "") for e in payload["errors"])
         return _err(msgs)
     return _ok(json.dumps(payload.get("data", {})))
@@ -665,10 +665,11 @@ def link_project_to_repository(
 # Issue node ID (needed for adding issues to projects)
 # ---------------------------------------------------------------------------
 
-_GQL_ISSUE_NODE_ID = """
+_GQL_ISSUE_OR_PR_NODE_ID = """
 query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     issue(number: $number) { id }
+    pullRequest(number: $number) { id }
   }
 }
 """
@@ -676,12 +677,17 @@ query($owner: String!, $repo: String!, $number: Int!) {
 
 def issue_node_id(owner: str, repo: str, number: int, token: str) -> str | None:
     cp = graphql(
-        _GQL_ISSUE_NODE_ID, {"owner": owner, "repo": repo, "number": number}, token
+        _GQL_ISSUE_OR_PR_NODE_ID,
+        {"owner": owner, "repo": repo, "number": number},
+        token,
     )
     if cp.returncode != 0:
         return None
     try:
-        return json.loads(cp.stdout).get("repository", {}).get("issue", {}).get("id")
+        repo_data = json.loads(cp.stdout).get("repository", {})
+        issue = repo_data.get("issue") or {}
+        pr = repo_data.get("pullRequest") or {}
+        return issue.get("id") or pr.get("id")
     except (json.JSONDecodeError, AttributeError):
         return None
 
