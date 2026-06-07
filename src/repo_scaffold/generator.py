@@ -192,14 +192,17 @@ def _render_ci_yaml(languages: Iterable[str]) -> str:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install pre-commit
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pre-commit
       - name: Run non-tox pre-commit hooks
         env:
           SKIP: tox-suite
-        run: pre-commit run --all-files --show-diff-on-failure
+        run: |
+          if [ ! -f .pre-commit-config.yaml ]; then
+            echo "No .pre-commit-config.yaml found; skipping."
+            exit 0
+          fi
+          python -m pip install --upgrade pip
+          python -m pip install pre-commit
+          pre-commit run --all-files --show-diff-on-failure
 
 """)
 
