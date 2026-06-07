@@ -299,7 +299,16 @@ def _resolve_body(body: str | None, body_file: str | None) -> str | None:
     if body is not None and body_file is not None:
         raise SystemExit("error: --body and --body-file are mutually exclusive")
     if body_file is not None:
-        return Path(body_file).read_text(encoding="utf-8")
+        try:
+            return Path(body_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise SystemExit(
+                f"error: cannot read --body-file {body_file!r}: {exc}"
+            ) from exc
+        except UnicodeDecodeError as exc:
+            raise SystemExit(
+                f"error: --body-file {body_file!r} is not valid UTF-8: {exc}"
+            ) from exc
     return body
 
 

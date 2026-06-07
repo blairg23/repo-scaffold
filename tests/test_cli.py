@@ -2274,3 +2274,45 @@ def test_issue_comment_missing_body_returns_2(
         ]
     )
     assert rc == 2
+
+
+def test_body_file_missing_path_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "issue",
+                "comment",
+                "--repo",
+                "acme/repo",
+                "--issue-number",
+                "1",
+                "--body-file",
+                str(tmp_path / "does_not_exist.md"),
+            ]
+        )
+    assert "cannot read" in str(exc.value)
+
+
+def test_body_file_non_utf8_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad_file = tmp_path / "latin1.md"
+    bad_file.write_bytes(b"caf\xe9")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "issue",
+                "comment",
+                "--repo",
+                "acme/repo",
+                "--issue-number",
+                "1",
+                "--body-file",
+                str(bad_file),
+            ]
+        )
+    assert "UTF-8" in str(exc.value)
