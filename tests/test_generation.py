@@ -91,7 +91,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     )
     ci_yaml = (out_dir / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "pre-commit-hooks:" in ci_yaml
-    assert "name: Install pre-commit" in ci_yaml
+    assert "pip install pre-commit" in ci_yaml
     assert "SKIP: tox-suite" in ci_yaml
     assert "pre-commit run --all-files --show-diff-on-failure" in ci_yaml
     assert "tox-env: [lint, type, coverage]" in ci_yaml
@@ -319,8 +319,10 @@ def test_react_vite_scaffold_file_contents(tmp_path: Path) -> None:
     assert "eslint-plugin-react-refresh" in eslint_cfg
 
     ci = (cfg.out_dir / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "contains(env.LANGUAGES, 'react')" in ci
-    assert "hashFiles('web/package.json')" in ci
+    assert "react:" in ci
+    assert "working-directory: web" in ci
+    assert "contains(env.LANGUAGES" not in ci
+    assert "hashFiles(" not in ci
 
     gitignore = (cfg.out_dir / ".gitignore").read_text(encoding="utf-8")
     assert "web/node_modules/" in gitignore

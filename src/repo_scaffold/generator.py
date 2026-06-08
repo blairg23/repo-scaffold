@@ -178,37 +178,37 @@ contact_links:
 
 
 def _render_ci_yaml(languages: Iterable[str]) -> str:
-    joined = ",".join(languages)
-    return f"""name: CI
+    selected = set(languages)
+    parts: list[str] = [
+        "name: CI\n\non: [push, pull_request]\n\npermissions:\n  contents: read\n\njobs:\n",
+    ]
 
-on: [push, pull_request]
-
-permissions:
-  contents: read
-
-env:
-  LANGUAGES: "{joined}"
-
-jobs:
+    if "python" in selected:
+        parts.append("""\
   pre-commit-hooks:
-    if: hashFiles('.pre-commit-config.yaml') != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install pre-commit
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pre-commit
       - name: Run non-tox pre-commit hooks
         env:
           SKIP: tox-suite
-        run: pre-commit run --all-files --show-diff-on-failure
+        run: |
+          if [ ! -f .pre-commit-config.yaml ]; then
+            echo "No .pre-commit-config.yaml found; skipping."
+            exit 0
+          fi
+          python -m pip install --upgrade pip
+          python -m pip install pre-commit
+          pre-commit run --all-files --show-diff-on-failure
 
+""")
+
+    if "go" in selected:
+        parts.append("""\
   go:
-    if: contains(env.LANGUAGES, 'go') && hashFiles('go.mod') != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -230,8 +230,11 @@ jobs:
         with:
           version: v1.61
 
+""")
+
+    if "gin" in selected:
+        parts.append("""\
   gin:
-    if: contains(env.LANGUAGES, 'gin') && hashFiles('go.mod') != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -255,8 +258,11 @@ jobs:
         with:
           version: v1.61
 
+""")
+
+    if "python" in selected:
+        parts.append("""\
   python:
-    if: contains(env.LANGUAGES, 'python') && hashFiles('pyproject.toml') != ''
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -271,8 +277,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install tox
-      - name: Run tox (${{{{ matrix.tox-env }}}})
-        run: tox -e ${{{{ matrix.tox-env }}}}
+      - name: Run tox (${{ matrix.tox-env }})
+        run: tox -e ${{ matrix.tox-env }}
       - name: Upload coverage.xml artifact
         if: matrix.tox-env == 'coverage'
         uses: actions/upload-artifact@v4
@@ -287,10 +293,13 @@ jobs:
           files: coverage.xml
           fail_ci_if_error: false
         env:
-          CODECOV_TOKEN: ${{{{ secrets.CODECOV_TOKEN }}}}
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+""")
+
+    if "react" in selected:
+        parts.append("""\
   react:
-    if: contains(env.LANGUAGES, 'react') && hashFiles('web/package.json') != ''
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -320,7 +329,9 @@ jobs:
           else
             echo "No test script defined; skipping tests."
           fi
-"""
+""")
+
+    return "".join(parts)
 
 
 def _render_codeql_yaml(languages: Iterable[str]) -> str:
