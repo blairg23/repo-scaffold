@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 import repo_scaffold.generator as generator_module
-from repo_scaffold.generator import ScaffoldConfig, generate_scaffold
+from repo_scaffold.generator import ScaffoldConfig, _render_spec_md, generate_scaffold
 
 
 def _tree_hash(root: Path) -> str:
@@ -59,6 +59,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
         ".editorconfig",
         "Makefile",
         "scripts/first_time_setup.sh",
+        "SPEC.md",
         "go.mod",
         "cmd/demo/main.go",
         "internal/.gitkeep",
@@ -468,6 +469,85 @@ def test_gin_scaffold_generates_expected_files(tmp_path: Path) -> None:
     assert "gin" in readme.lower()
     assert ":8080" in readme
     assert "/health" in readme
+
+
+def _make_cfg(tmp_path: Path, languages: tuple[str, ...]) -> ScaffoldConfig:
+    return ScaffoldConfig(
+        name="testapp",
+        languages=languages,
+        owner="acme",
+        license_id="apache-2.0",
+        out_dir=tmp_path / "testapp",
+    )
+
+
+def test_spec_md_react_has_frontend_section(tmp_path: Path) -> None:
+    spec = _render_spec_md(_make_cfg(tmp_path, ("react",)))
+    assert "### Frontend" in spec
+    assert "React + Vite" in spec
+    assert "Tailwind CSS" in spec
+    assert "Netlify" in spec
+    assert "### Backend" not in spec
+    assert "## Screens" in spec
+    assert "## Commands" not in spec
+    assert "v0.dev" in spec
+    assert "erDiagram" in spec
+    assert "sequenceDiagram" in spec
+
+
+def test_spec_md_python_has_backend_section(tmp_path: Path) -> None:
+    spec = _render_spec_md(_make_cfg(tmp_path, ("python",)))
+    assert "### Backend" in spec
+    assert "Python" in spec
+    assert "Coolify" in spec
+    assert "Supabase Auth" in spec
+    assert "### Frontend" not in spec
+    assert "## Commands" in spec
+    assert "## Screens" not in spec
+    assert "Mermaid diagrams above are sufficient" in spec
+
+
+def test_spec_md_go_has_backend_section(tmp_path: Path) -> None:
+    spec = _render_spec_md(_make_cfg(tmp_path, ("go",)))
+    assert "### Backend" in spec
+    assert "Language: Go" in spec
+    assert "### Frontend" not in spec
+
+
+def test_spec_md_gin_has_gin_backend(tmp_path: Path) -> None:
+    spec = _render_spec_md(_make_cfg(tmp_path, ("gin",)))
+    assert "### Backend" in spec
+    assert "Go (Gin)" in spec
+    assert "### Frontend" not in spec
+
+
+def test_spec_md_go_python_has_both_in_backend(tmp_path: Path) -> None:
+    spec = _render_spec_md(_make_cfg(tmp_path, ("go", "python")))
+    assert "### Backend" in spec
+    assert "Go" in spec
+    assert "Python" in spec
+    assert spec.count("### Backend") == 1
+
+
+def test_spec_md_react_python_has_both_sections(tmp_path: Path) -> None:
+    spec = _render_spec_md(_make_cfg(tmp_path, ("react", "python")))
+    assert "### Frontend" in spec
+    assert "### Backend" in spec
+    assert "### Data" in spec
+    assert "### Infrastructure" in spec
+    assert "GitHub Actions" in spec
+    assert "WCAG 2.1 AA" in spec
+
+
+def test_spec_md_generated_by_scaffold(tmp_path: Path) -> None:
+    cfg = _make_cfg(tmp_path, ("react",))
+    generate_scaffold(cfg)
+    spec_path = cfg.out_dir / "SPEC.md"
+    assert spec_path.exists()
+    content = spec_path.read_text(encoding="utf-8")
+    assert "testapp" in content
+    assert "### Frontend" in content
+    assert "erDiagram" in content
 
 
 def test_detect_languages_gin(tmp_path: Path) -> None:
