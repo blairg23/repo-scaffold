@@ -82,8 +82,8 @@ poetry run repo-scaffold project sync-metadata --project-owner OWNER --project-t
 # Compile individual .md tickets into issues.json
 poetry run repo-scaffold import backlog --repo OWNER/REPO
 
-# Push issues.json to GitHub (creates issues + project board items)
-poetry run repo-scaffold apply backlog --repo OWNER/REPO --path .
+# Push issues.json to GitHub (creates issues; add --with-project for project board items)
+poetry run repo-scaffold apply backlog --repo OWNER/REPO --path . --with-project
 ```
 
 ### Scaffold Generation
