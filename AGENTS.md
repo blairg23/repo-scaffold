@@ -1,87 +1,188 @@
-# Pre-Implementation Requirements
+# AGENTS.md -- repo-scaffold
 
-Before writing any code, verify every item below. These are non-negotiable and apply to every agent working in every repo.
-
-## Portability
-- [ ] No OS-specific tools or CLIs (no `gh`, no `brew`, no `apt`, no bash-only commands)
-- [ ] No assumptions about shell availability
-- [ ] Works on Windows, Linux, and Mac equally
-- [ ] Works in headless and agent environments
-
-## Agnosticism
-- [ ] No LLM-specific code, prompts, or dependencies
-- [ ] No assumptions about which AI tool is running
-- [ ] No CLI wrappers around HTTP APIs — use HTTP directly
-- [ ] HTTP/REST preferred over SDK when SDK adds OS assumptions
-
-## Execution Layer
-- [ ] Agents decide WHAT to do, never HOW it executes
-- [ ] All execution goes through CueQueue jobs
-- [ ] CueQueue is the only layer that touches the OS
-- [ ] Acceptable CueQueue job types: HTTP calls, file sync, local git, build tools, agent chains, any shell command routed through CueQueue
-
-## Dependencies
-- [ ] Every external dependency is explicitly justified
-- [ ] HTTP APIs preferred over installed CLIs
-- [ ] If a CLI wraps an HTTP API, the API is used directly
-- [ ] Each dependency's purpose is documented
-
-## Standing Rules (non-negotiable)
-- [ ] Never use `gh` CLI — use GitHub REST API directly
-- [ ] Never assume a shell exists — queue a CueQueue job instead
-- [ ] Never write LLM-specific code — stay model-agnostic
-- [ ] Never write OS-specific code — HTTP works everywhere
-- [ ] CueQueue is the universal executor for all shell operations
+Operational guide for agents working in this repo. Read this before touching anything.
 
 ---
 
-# repo-scaffold Agent Context
-
 ## What this repo does
 
-`repo-scaffold` is a CLI toolkit for creating, scaffolding, and managing GitHub repositories. It generates project structure, applies settings, manages backlogs, and interacts with GitHub Projects — all via the GitHub REST and GraphQL APIs. No `gh` CLI required.
+`repo-scaffold` is a CLI for creating, scaffolding, and managing GitHub repositories.
+It generates project structure (CI, templates, CODEOWNERS, AGENTS.md, SPEC.md),
+applies settings, manages issue backlogs, and interacts with GitHub Projects v2 --
+all via the GitHub REST and GraphQL APIs. No `gh` CLI required.
 
-## Key commands
-
-```bash
-poetry run repo-scaffold issue view --repo OWNER/REPO --issue-number N [--json]
-poetry run repo-scaffold issue list --repo OWNER/REPO [--state open|closed|all] [--json]
-poetry run repo-scaffold issue create --repo OWNER/REPO --title "TITLE" [--body "TEXT"] [--label L] [--assignee U]
-poetry run repo-scaffold issue close --repo OWNER/REPO --issue-number N
-poetry run repo-scaffold issue comment --repo OWNER/REPO --issue-number N --body "TEXT"
-poetry run repo-scaffold issue label --repo OWNER/REPO --issue-number N [--add L] [--remove L]
-poetry run repo-scaffold issue assign --repo OWNER/REPO --issue-number N [--add USER] [--remove USER]
-poetry run repo-scaffold pr list --repo OWNER/REPO [--json]
-poetry run repo-scaffold pr view --repo OWNER/REPO --pr-number N [--json]
-poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N --body "TEXT" [--reply-to COMMENT_ID]
-poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_ID
-poetry run repo-scaffold pr create --repo OWNER/REPO --title "TITLE" --head BRANCH [--base main] [--body "TEXT"] [--draft]
-poetry run repo-scaffold project items --project-title "TITLE" --limit 40
-poetry run repo-scaffold create --repo OWNER/REPO --visibility public --path /path/to/code
-poetry run repo-scaffold apply backlog --repo OWNER/REPO --path .
-poetry run repo-scaffold check rules --repo OWNER/REPO
-poetry run repo-scaffold init --name NAME --languages go,gin,python,react --owner OWNER --out /path --yes
-```
+---
 
 ## Auth
 
-`GH_TOKEN` in `.env`. Loaded automatically. Never requires `gh` on PATH.
+`GH_TOKEN` lives in `.env`. Commands load it automatically via `_seed_env_from_dotenv`.
+Copy `.env.example` to `.env` and fill in the token. It must be a classic PAT with
+`repo`, `workflow`, and `project` scopes.
+
+```bash
+cp .env.example .env
+# Edit .env and set GH_TOKEN=<your-token>
+```
+
+---
+
+## Commands
+
+### Issues
+
+```bash
+poetry run repo-scaffold issue view   --repo OWNER/REPO --issue-number N [--json]
+poetry run repo-scaffold issue list   --repo OWNER/REPO [--state open|closed|all] [--label LABEL] [--json]
+poetry run repo-scaffold issue create --repo OWNER/REPO --title "TITLE" [--body "TEXT"] [--label L] [--assignee U]
+poetry run repo-scaffold issue update --repo OWNER/REPO --issue-number N [--title "TITLE"] [--body "TEXT"] [--state open|closed]
+poetry run repo-scaffold issue close  --repo OWNER/REPO --issue-number N
+poetry run repo-scaffold issue comment --repo OWNER/REPO --issue-number N --body "TEXT"
+poetry run repo-scaffold issue label  --repo OWNER/REPO --issue-number N [--add L] [--remove L]
+poetry run repo-scaffold issue assign --repo OWNER/REPO --issue-number N [--add USER] [--remove USER]
+```
+
+### Pull Requests
+
+```bash
+poetry run repo-scaffold pr list    --repo OWNER/REPO [--json]
+poetry run repo-scaffold pr view    --repo OWNER/REPO --pr-number N [--json]
+poetry run repo-scaffold pr create  --repo OWNER/REPO --title "TITLE" --head BRANCH [--base main] [--body "TEXT"] [--draft]
+poetry run repo-scaffold pr update  --repo OWNER/REPO --pr-number N [--title "TITLE"] [--body "TEXT"]
+poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N --body "TEXT" [--reply-to COMMENT_ID]
+poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_ID
+poetry run repo-scaffold pr checks  --repo OWNER/REPO --pr-number N [--json]
+```
+
+> Never call `pr merge` -- only CODEOWNERS may merge. See CLAUDE.md.
+
+### Branches
+
+```bash
+poetry run repo-scaffold branch create --repo OWNER/REPO --name BRANCH [--from main]
+poetry run repo-scaffold branch delete --repo OWNER/REPO --name BRANCH
+```
+
+### Projects
+
+```bash
+poetry run repo-scaffold project list     --project-owner OWNER
+poetry run repo-scaffold project view     --project-title "TITLE"
+poetry run repo-scaffold project items    --project-title "TITLE" --limit 40
+poetry run repo-scaffold project create   --project-owner OWNER --project-title "TITLE" [--description "TEXT"]
+poetry run repo-scaffold project edit     --project-owner OWNER --project-title "TITLE" [--title "NEW"] [--description "TEXT"]
+poetry run repo-scaffold project item-add --project-title "TITLE" --repo OWNER/REPO --issue-number N
+poetry run repo-scaffold project item-delete --project-title "TITLE" --issue-number N
+poetry run repo-scaffold project link-repo   --project-title "TITLE" --repo OWNER/REPO
+poetry run repo-scaffold project sync-metadata --project-owner OWNER --project-title "TITLE" --repo OWNER/REPO
+```
+
+### Backlog
+
+```bash
+# Compile individual .md tickets into issues.json
+poetry run repo-scaffold import backlog --repo OWNER/REPO
+
+# Push issues.json to GitHub (creates issues + project board items)
+poetry run repo-scaffold apply backlog --repo OWNER/REPO --path .
+```
+
+### Scaffold Generation
+
+```bash
+# New repo from scratch (git init + initial commit + GitHub create)
+poetry run repo-scaffold create --repo OWNER/REPO --visibility public --path /path/to/code
+
+# Init scaffold files into an existing local directory
+poetry run repo-scaffold init --name NAME --languages go,gin,python,react --owner OWNER --out /path --yes
+
+# Apply CI workflows to an existing repo
+poetry run repo-scaffold apply ci --path . --languages go,gin,python,react
+
+# Apply issue/PR templates to an existing repo
+poetry run repo-scaffold apply templates --path . --name NAME --owner OWNER
+
+# Check branch protection rules
+poetry run repo-scaffold check rules --repo OWNER/REPO
+```
+
+**Supported languages:** `go`, `gin`, `python`, `react`
+(`gin` and `go` are mutually exclusive -- both use go.mod)
+
+---
+
+## Key file locations
+
+| Path | What it is |
+|------|-----------|
+| `src/repo_scaffold/cli.py` | Argparse entry point -- all subcommands |
+| `src/repo_scaffold/generator.py` | Scaffold file generation (CI, templates, SPEC.md, etc.) |
+| `src/repo_scaffold/github_api.py` | All GitHub API calls (urllib, no CLI) |
+| `src/repo_scaffold/backlog_ops.py` | Issue, milestone, label, project operations |
+| `src/repo_scaffold/create_ops.py` | Repo creation, settings, git init |
+| `src/repo_scaffold/project_ops.py` | GitHub Projects v2 management |
+| `src/repo_scaffold/overwrite_policy.py` | File write/skip/overwrite logic |
+| `tests/` | pytest test suite |
+| `examples/` | Sample spec, backlog, and ticket files -- see `examples/README.md` |
+| `artifacts/` | Gitignored. Ephemeral backlog files live here -- import and discard. |
+| `.env.example` | Token and config template |
+| `.github/ISSUE_TEMPLATE/epic.md` | Epic issue template |
+| `.github/ISSUE_TEMPLATE/ticket.md` | Ticket issue template |
+| `.github/pull_request_template.md` | PR template |
+
+---
+
+## How to contribute
+
+1. Pick an open issue from the [repo-scaffold Roadmap](https://github.com/users/blairg23/projects/6).
+2. Branch off `main`:
+   ```bash
+   git checkout main && git pull
+   git checkout -b feat/your-feature
+   ```
+3. Make changes. Run the gate before committing:
+   ```bash
+   python -m pre_commit run --all-files
+   ```
+   If Black reformats files, re-stage them and re-run.
+4. Commit with a subject + blank line + body (see recent commits for style).
+5. Open a draft PR using the PR template and link it to the issue:
+   ```bash
+   poetry run repo-scaffold pr create \
+     --repo blairg23/repo-scaffold \
+     --title "feat: your change" \
+     --head feat/your-feature \
+     --draft \
+     --body "..."
+   ```
+6. Add the PR to the project board:
+   ```bash
+   poetry run repo-scaffold project item-add \
+     --project-title "repo-scaffold Roadmap" \
+     --repo blairg23/repo-scaffold \
+     --issue-number <PR number>
+   ```
+
+---
 
 ## Testing
 
 ```bash
-poetry run pytest
-poetry run tox -e precommit   # full gate: format + lint + type + coverage
+poetry run pytest                         # all tests
+poetry run pytest tests/test_cli.py -q   # CLI only
+poetry run tox -e precommit              # full gate: format + lint + type + coverage
 ```
 
-## Architecture notes
+Coverage must stay at or above 70%.
 
-- `github_api.py` — all GitHub API calls via `urllib` (stdlib only, no CLI)
-- `backlog_ops.py` — issue/milestone/label/project operations
-- `create_ops.py` — repo creation, settings, git init
-- `project_ops.py` — GitHub Projects v2 management
-- `generator.py` — scaffold file generation (go, gin, python, react)
-- `cli.py` — argparse entry point
+---
 
-## Full lifecycle coverage
-All GitHub operations are implemented via GH_TOKEN + urllib. No `gh` CLI required anywhere.
+## Standing rules
+
+- Never use `gh` CLI -- use repo-scaffold commands or `github_api.py` directly.
+- Never merge or close PRs -- only CODEOWNERS may do that.
+- Always add issues and PRs to the project board after creating them.
+- Always use issue and PR templates -- no freeform bodies.
+- Commit messages: subject + blank line + body. No one-liners.
+
+See [CLAUDE.md](CLAUDE.md) for the full portability and agnosticism requirements.
+See [examples/README.md](examples/README.md) for backlog and ticket format examples.
