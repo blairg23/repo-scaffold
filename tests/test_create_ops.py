@@ -1010,10 +1010,75 @@ def test_ensure_git_repo_initializes_when_inside_parent_repo(
         env={},
         dry_run=False,
         out=lambda _: None,
+        stage_files=False,
     )
 
     assert ["git", "init"] in calls
+    assert ["git", "add", "-A"] not in calls
+    assert ["git", "commit", "--allow-empty", "-m", "Initial scaffold"] in calls
     assert ["git", "branch", "-M", "main"] not in calls
+
+
+def test_ensure_git_repo_stages_files_when_scaffold_generated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo_dir = tmp_path / "new-repo"
+    repo_dir.mkdir(parents=True)
+
+    calls: list[list[str]] = []
+
+    def _fake_run(
+        args: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str],
+        stdin_text: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args == ["git", "rev-parse", "--show-toplevel"]:
+            return subprocess.CompletedProcess(
+                args=args, returncode=1, stdout="", stderr="not a git repo"
+            )
+        if args == ["git", "init"]:
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="", stderr=""
+            )
+        if args == ["git", "rev-parse", "--verify", "HEAD"]:
+            return subprocess.CompletedProcess(
+                args=args, returncode=1, stdout="", stderr=""
+            )
+        if args == ["git", "config", "user.name"]:
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="Tester\n", stderr=""
+            )
+        if args == ["git", "config", "user.email"]:
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="tester@example.com\n", stderr=""
+            )
+        if args == ["git", "add", "-A"]:
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="", stderr=""
+            )
+        if args == ["git", "commit", "-m", "Initial scaffold"]:
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="", stderr=""
+            )
+        raise AssertionError(f"Unexpected git args: {args}")
+
+    monkeypatch.setattr(create_ops, "_run", _fake_run)
+
+    create_ops._ensure_git_repo(
+        repo_dir=repo_dir,
+        env={},
+        dry_run=False,
+        out=lambda _: None,
+        stage_files=True,
+    )
+
+    assert ["git", "init"] in calls
+    assert ["git", "add", "-A"] in calls
+    assert ["git", "commit", "-m", "Initial scaffold"] in calls
+    assert ["git", "commit", "--allow-empty", "-m", "Initial scaffold"] not in calls
 
 
 def test_push_main_uses_head_ref_without_token(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -675,6 +675,7 @@ def _ensure_git_repo(
     env: dict[str, str],
     dry_run: bool,
     out: Callable[[str], None],
+    stage_files: bool = False,
 ) -> None:
     is_repo_root = _is_git_repo_root(repo_dir=repo_dir, env=env)
     if not is_repo_root:
@@ -706,11 +707,18 @@ def _ensure_git_repo(
                     "Set them with: git config --global user.name 'Your Name' and "
                     "git config --global user.email 'you@example.com'."
                 )
-            commit_cp = _run(
-                ["git", "commit", "--allow-empty", "-m", "Initial scaffold"],
-                cwd=repo_dir,
-                env=env,
-            )
+            if stage_files:
+                add_cp = _run(["git", "add", "-A"], cwd=repo_dir, env=env)
+                if add_cp.returncode != 0:
+                    raise RuntimeError(
+                        add_cp.stderr.strip()
+                        or "Failed staging files for initial commit."
+                    )
+            commit_args = ["git", "commit"]
+            if not stage_files:
+                commit_args.append("--allow-empty")
+            commit_args += ["-m", "Initial scaffold"]
+            commit_cp = _run(commit_args, cwd=repo_dir, env=env)
             if commit_cp.returncode != 0:
                 raise RuntimeError(
                     commit_cp.stderr.strip() or "Failed creating initial commit."
@@ -1171,6 +1179,7 @@ def create_repository(
     visibility: str,
     apply_settings: bool,
     dry_run: bool,
+    stage_files: bool = False,
     out: Callable[[str], None] = print,
     err: Callable[[str], None] | None = None,
 ) -> CreateSummary:
@@ -1193,7 +1202,13 @@ def create_repository(
     failures = 0
 
     try:
-        _ensure_git_repo(repo_dir=repo_dir, env=env, dry_run=dry_run, out=out)
+        _ensure_git_repo(
+            repo_dir=repo_dir,
+            env=env,
+            dry_run=dry_run,
+            out=out,
+            stage_files=stage_files,
+        )
         repo_created, pushed, push_or_create_error = _create_or_push_repo(
             repo_dir=repo_dir,
             env=env,
