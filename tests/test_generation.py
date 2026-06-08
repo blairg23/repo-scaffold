@@ -91,7 +91,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     )
     ci_yaml = (out_dir / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "pre-commit-hooks:" in ci_yaml
-    assert "name: Install pre-commit" in ci_yaml
+    assert "pip install pre-commit" in ci_yaml
     assert "SKIP: tox-suite" in ci_yaml
     assert "pre-commit run --all-files --show-diff-on-failure" in ci_yaml
     assert "tox-env: [lint, type, coverage]" in ci_yaml
