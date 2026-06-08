@@ -706,27 +706,11 @@ def _ensure_git_repo(
                     "Set them with: git config --global user.name 'Your Name' and "
                     "git config --global user.email 'you@example.com'."
                 )
-            add_cp = _run(["git", "add", "-A"], cwd=repo_dir, env=env)
-            if add_cp.returncode != 0:
-                raise RuntimeError(
-                    add_cp.stderr.strip() or "Failed staging files for initial commit."
-                )
-            staged = (
-                _run(
-                    ["git", "diff", "--cached", "--quiet"], cwd=repo_dir, env=env
-                ).returncode
-                != 0
+            commit_cp = _run(
+                ["git", "commit", "--allow-empty", "-m", "Initial scaffold"],
+                cwd=repo_dir,
+                env=env,
             )
-            commit_cmd = ["git", "commit", "-m", "Initial scaffold"]
-            if not staged:
-                commit_cmd = [
-                    "git",
-                    "commit",
-                    "--allow-empty",
-                    "-m",
-                    "Initial scaffold",
-                ]
-            commit_cp = _run(commit_cmd, cwd=repo_dir, env=env)
             if commit_cp.returncode != 0:
                 raise RuntimeError(
                     commit_cp.stderr.strip() or "Failed creating initial commit."

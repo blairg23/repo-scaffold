@@ -997,15 +997,7 @@ def test_ensure_git_repo_initializes_when_inside_parent_repo(
             return subprocess.CompletedProcess(
                 args=args, returncode=0, stdout="tester@example.com\n", stderr=""
             )
-        if args == ["git", "add", "-A"]:
-            return subprocess.CompletedProcess(
-                args=args, returncode=0, stdout="", stderr=""
-            )
-        if args == ["git", "diff", "--cached", "--quiet"]:
-            return subprocess.CompletedProcess(
-                args=args, returncode=1, stdout="", stderr=""
-            )
-        if args == ["git", "commit", "-m", "Initial scaffold"]:
+        if args == ["git", "commit", "--allow-empty", "-m", "Initial scaffold"]:
             return subprocess.CompletedProcess(
                 args=args, returncode=0, stdout="", stderr=""
             )
