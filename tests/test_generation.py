@@ -519,6 +519,14 @@ def test_spec_md_gin_has_gin_backend(tmp_path: Path) -> None:
     assert "### Frontend" not in spec
 
 
+def test_spec_md_go_python_has_both_in_backend(tmp_path: Path) -> None:
+    spec = _render_spec_md(_make_cfg(tmp_path, ("go", "python")))
+    assert "### Backend" in spec
+    assert "Go" in spec
+    assert "Python" in spec
+    assert spec.count("### Backend") == 1
+
+
 def test_spec_md_react_python_has_both_sections(tmp_path: Path) -> None:
     spec = _render_spec_md(_make_cfg(tmp_path, ("react", "python")))
     assert "### Frontend" in spec

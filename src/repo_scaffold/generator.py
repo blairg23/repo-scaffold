@@ -2980,7 +2980,17 @@ def _render_spec_md(config: ScaffoldConfig) -> str:
         )
 
     if has_be:
-        if has_go:
+        has_python_be = "python" in selected
+        if has_go and has_python_be:
+            go_lang = "Go (Gin)" if "gin" in selected else "Go"
+            parts.append(
+                "### Backend\n\n"
+                f"- Language: {go_lang}, Python\n"
+                "- API style: REST\n"
+                "- Auth: Supabase Auth (JWT validation)\n"
+                "- Deploy: Coolify (Docker, self-hosted)\n\n"
+            )
+        elif has_go:
             lang_line = "- Language: Go"
             if "gin" in selected:
                 lang_line += " (Gin)"
