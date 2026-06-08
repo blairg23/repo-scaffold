@@ -30,8 +30,10 @@ from .github_api import (
     pr_comment,
     pr_create,
     pr_list,
+    pr_list_comments,
     pr_merge,
     pr_resolve_thread,
+    pr_review_threads,
     pr_update,
     pr_view,
     token_from_repo,
@@ -1037,6 +1039,26 @@ def build_parser() -> argparse.ArgumentParser:
     pr_checks_cmd.add_argument("--pr-number", required=True, type=int, dest="pr_number")
     pr_checks_cmd.add_argument("--json", action="store_true", dest="json_output")
 
+    pr_review_threads_cmd = pr_sub.add_parser(
+        "review-threads", help="List review threads (comments) on a PR"
+    )
+    pr_review_threads_cmd.add_argument("--repo", required=True)
+    pr_review_threads_cmd.add_argument(
+        "--pr-number", required=True, type=int, dest="pr_number"
+    )
+    pr_review_threads_cmd.add_argument(
+        "--json", action="store_true", dest="json_output"
+    )
+
+    pr_list_comments_cmd = pr_sub.add_parser(
+        "list-comments", help="List all inline review comments on a PR"
+    )
+    pr_list_comments_cmd.add_argument("--repo", required=True)
+    pr_list_comments_cmd.add_argument(
+        "--pr-number", required=True, type=int, dest="pr_number"
+    )
+    pr_list_comments_cmd.add_argument("--json", action="store_true", dest="json_output")
+
     branch_cmd = subparsers.add_parser("branch", help="Manage GitHub branches")
     branch_sub = branch_cmd.add_subparsers(dest="branch_command", required=True)
 
@@ -1180,6 +1202,7 @@ def main(argv: list[str] | None = None) -> int:
                 visibility=ns.visibility,
                 apply_settings=not ns.skip_settings,
                 dry_run=ns.dry_run,
+                stage_files=needs_init,
                 out=(
                     (
                         lambda line: print(
@@ -2143,6 +2166,63 @@ def main(argv: list[str] | None = None) -> int:
                     status = r.get("status", "?")
                     conclusion = r.get("conclusion") or status
                     print(f"  {r.get('name', '?')}: {conclusion}")
+            return 0
+
+        if ns.pr_command == "review-threads":
+            owner, repo_name = target_repo.split("/", 1)
+            cp = pr_review_threads(owner, repo_name, ns.pr_number, token)
+            if cp.returncode != 0:
+                print(
+                    cp.stderr.strip() or "Failed fetching review threads.",
+                    file=sys.stderr,
+                )
+                return 1
+            data = _json.loads(cp.stdout)
+            threads = (
+                data.get("repository", {})
+                .get("pullRequest", {})
+                .get("reviewThreads", {})
+                .get("nodes", [])
+            )
+            if ns.json_output:
+                print(_json.dumps(threads, indent=2))
+            else:
+                if not threads:
+                    print("No review threads found.")
+                for t in threads:
+                    resolved = t.get("isResolved", False)
+                    state = "resolved" if resolved else "open"
+                    comments = t.get("comments", {}).get("nodes", [])
+                    for c in comments:
+                        author = c.get("author", {}).get("login", "?")
+                        path = c.get("path", "")
+                        line = c.get("line") or c.get("originalLine") or "?"
+                        body = c.get("body", "").strip()
+                        print(f"[{state}] {author} on {path}:{line}")
+                        print(f"  {body[:200]}")
+            return 0
+
+        if ns.pr_command == "list-comments":
+            cp = pr_list_comments(target_repo, ns.pr_number, token)
+            if cp.returncode != 0:
+                print(
+                    cp.stderr.strip() or "Failed fetching review comments.",
+                    file=sys.stderr,
+                )
+                return 1
+            comments = _json.loads(cp.stdout)
+            if ns.json_output:
+                print(_json.dumps(comments, indent=2))
+            else:
+                if not comments:
+                    print("No inline review comments found.")
+                for c in comments:
+                    author = c.get("user", {}).get("login", "?")
+                    path = c.get("path", "")
+                    line = c.get("line") or c.get("original_line") or "?"
+                    body = (c.get("body") or "").strip()
+                    print(f"{author} on {path}:{line}")
+                    print(f"  {body[:200]}")
             return 0
 
     if ns.mode == "branch":

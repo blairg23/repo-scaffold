@@ -1281,6 +1281,7 @@ def test_create_subcommand_delegates_to_create_ops(
         visibility,
         apply_settings,
         dry_run,
+        stage_files,
         out,
         err,
     ):
@@ -1332,6 +1333,7 @@ def test_create_auto_inits_default_path_from_github_repo_env(
         visibility,
         apply_settings,
         dry_run,
+        stage_files,
         out,
         err,
     ):
@@ -1383,6 +1385,7 @@ def test_create_repo_flag_name_takes_precedence_for_auto_init_path(
         visibility,
         apply_settings,
         dry_run,
+        stage_files,
         out,
         err,
     ):
