@@ -49,9 +49,18 @@ your-repo/
       my-feature.md        # individual ticket drafts -- import these first
 ```
 
-Generate with: `poetry run repo-scaffold import backlog --repo OWNER/REPO`
+Compile tickets from `artifacts/tickets/*.md` into JSON:
 
-Apply with: `poetry run repo-scaffold apply backlog --repo OWNER/REPO`
+```bash
+poetry run repo-scaffold import backlog --repo OWNER/REPO
+# writes to local/backlog/OWNER/REPO/issues.json
+```
+
+Apply with:
+
+```bash
+poetry run repo-scaffold apply backlog --repo OWNER/REPO --path .
+```
 
 ---
 
@@ -74,10 +83,12 @@ Then compile and push:
 
 ```bash
 poetry run repo-scaffold import backlog --repo OWNER/REPO
-poetry run repo-scaffold apply backlog --repo OWNER/REPO
+# writes to local/backlog/OWNER/REPO/issues.json
+poetry run repo-scaffold apply backlog --repo OWNER/REPO --path .
 ```
 
-Both paths create GitHub issues and add them to the project board.
+Both paths create GitHub issues. To also add them to the project board, pass
+`--with-project` (or `--project-title`) to `apply backlog`.
 
 ---
 
