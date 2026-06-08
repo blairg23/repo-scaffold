@@ -2930,6 +2930,143 @@ export default defineConfig({
 """
 
 
+def _render_spec_md(config: ScaffoldConfig) -> str:
+    selected = set(config.languages)
+    has_fe = "react" in selected
+    has_be = "python" in selected or "go" in selected or "gin" in selected
+    has_go = "go" in selected or "gin" in selected
+
+    parts: list[str] = [
+        f"# {config.name} -- SPEC\n\n"
+        "> Fill this in before creating any tickets. "
+        "Agents and contributors read this as the authoritative project description.\n\n"
+        "---\n\n"
+        "## Goal\n\n"
+        "<!-- One paragraph. What is this and why does it exist. -->\n\n"
+        "---\n\n"
+        "## Users\n\n"
+        "<!-- Who uses it and what do they need. -->\n\n"
+        "---\n\n"
+    ]
+
+    if has_fe:
+        parts.append(
+            "## Screens\n\n"
+            "<!-- List every screen with a one-line description. -->\n\n"
+            "| Screen | Description |\n"
+            "|--------|-------------|\n"
+            "| Home | ... |\n\n"
+            "---\n\n"
+        )
+    else:
+        parts.append(
+            "## Commands\n\n"
+            "<!-- List every CLI command or API endpoint with a one-line description. -->\n\n"
+            "| Command / Endpoint | Description |\n"
+            "|--------------------|-------------|\n"
+            "| ... | ... |\n\n"
+            "---\n\n"
+        )
+
+    parts.append("## Architecture\n\n")
+
+    if has_fe:
+        parts.append(
+            "### Frontend\n\n"
+            "- Framework: React + Vite\n"
+            "- Styling: Tailwind CSS\n"
+            "- Auth: Supabase Auth (JWT)\n"
+            "- Deploy: Netlify (preview on PR, production on merge to main)\n\n"
+        )
+
+    if has_be:
+        if has_go:
+            lang_line = "- Language: Go"
+            if "gin" in selected:
+                lang_line += " (Gin)"
+            parts.append(
+                "### Backend\n\n"
+                f"{lang_line}\n"
+                "- API style: REST\n"
+                "- Deploy: Coolify (Docker, self-hosted)\n\n"
+            )
+        else:
+            parts.append(
+                "### Backend\n\n"
+                "- Language: Python\n"
+                "- API style: REST\n"
+                "- Auth: Supabase Auth (JWT validation)\n"
+                "- Deploy: Coolify (Docker, self-hosted)\n\n"
+            )
+
+    if has_fe or has_be:
+        parts.append(
+            "### Data\n\n"
+            "- DB: Supabase (Postgres)\n"
+            "- Storage: Supabase Storage\n"
+            "- Migrations: Supabase CLI\n\n"
+        )
+
+    parts.append(
+        "### Infrastructure\n\n"
+        "- CI: GitHub Actions (lint, type check, build, test)\n"
+        "- Secrets: GitHub repository secrets\n"
+        "- Environments: preview (PR) + production (main branch)\n\n"
+        "---\n\n"
+        "## Data Model\n\n"
+        "<!-- Key entities and relationships. -->\n\n"
+        "```mermaid\n"
+        "erDiagram\n"
+        "    USER {\n"
+        "        uuid id PK\n"
+        "        string email\n"
+        "        timestamp created_at\n"
+        "    }\n"
+        "```\n\n"
+        "---\n\n"
+        "## Flows\n\n"
+        "<!-- Critical user flows. -->\n\n"
+        "```mermaid\n"
+        "sequenceDiagram\n"
+        "    participant User\n"
+        "    participant App\n"
+        "    participant API\n"
+        "    participant DB\n"
+        "    User->>App: Action\n"
+        "    App->>API: Request\n"
+        "    API->>DB: Query\n"
+        "    DB-->>API: Result\n"
+        "    API-->>App: Response\n"
+        "    App-->>User: Updated UI\n"
+        "```\n\n"
+        "---\n\n"
+        "## Non-functional Requirements\n\n"
+        "- Performance: ...\n"
+        "- Security: ...\n"
+    )
+
+    if has_fe:
+        parts.append("- Accessibility: WCAG 2.1 AA\n")
+
+    parts.append("- Platforms: ...\n\n" "---\n\n" "## Design\n\n")
+
+    if has_fe:
+        parts.append("<!-- Paste v0.dev link or Penpot link here. -->\n\n")
+    else:
+        parts.append(
+            "<!-- Mermaid diagrams above are sufficient for non-UI projects. -->\n\n"
+        )
+
+    parts.append(
+        "---\n\n"
+        "## Out of Scope (MVP)\n\n"
+        "<!-- Explicitly list what is NOT being built in v1. -->\n\n"
+        "- ...\n"
+    )
+
+    return "".join(parts)
+
+
 def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
     _ensure_license_supported(config.license_id)
 
@@ -2979,6 +3116,7 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
             _render_claude_settings_local(),
         ),
         ScaffoldFile(config.out_dir / "AGENTS.md", _render_agents_md(config)),
+        ScaffoldFile(config.out_dir / "SPEC.md", _render_spec_md(config)),
         ScaffoldFile(config.out_dir / "README.md", _render_repo_readme(config)),
         ScaffoldFile(config.out_dir / "LICENSE", _apache_2_license()),
         ScaffoldFile(
