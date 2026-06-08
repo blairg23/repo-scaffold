@@ -19,10 +19,12 @@ from .backlog_ops import (
 from .github_api import (
     branch_create,
     branch_delete,
+    issue_add_sub_issue,
     issue_assign,
     issue_close,
     issue_comment,
     issue_create,
+    issue_delete,
     issue_label,
     issue_list,
     issue_update,
@@ -219,6 +221,12 @@ def _resolve_backlog_file_path(
         slug_path = _local_backlog_slug_path(repo)
         if slug_path.exists():
             return slug_path
+        raise FileNotFoundError(
+            f"No backlog file found for {repo!r}. "
+            f"Expected: {slug_path}. "
+            f"Run 'repo-scaffold import backlog --repo {repo}' to generate it, "
+            f"or pass --file to specify the path explicitly."
+        )
 
     return repo_dir / DEFAULT_BACKLOG_REL_PATH
 
@@ -957,6 +965,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     issue_update_cmd.add_argument("--state", choices=["open", "closed"], default=None)
 
+    issue_delete_cmd = issue_sub.add_parser(
+        "delete", help="Permanently delete an issue"
+    )
+    issue_delete_cmd.add_argument("--repo", required=True)
+    issue_delete_cmd.add_argument("--issue-number", type=int, required=True)
+
+    issue_sub_issue_cmd = issue_sub.add_parser(
+        "add-sub-issue", help="Link an issue as a sub-issue of a parent issue"
+    )
+    issue_sub_issue_cmd.add_argument("--repo", required=True)
+    issue_sub_issue_cmd.add_argument(
+        "--parent", type=int, required=True, dest="parent_number", metavar="N"
+    )
+    issue_sub_issue_cmd.add_argument(
+        "--child", type=int, required=True, dest="child_number", metavar="N"
+    )
+
     pr_cmd = subparsers.add_parser("pr", help="Interact with GitHub pull requests")
     pr_sub = pr_cmd.add_subparsers(dest="pr_command", required=True)
 
@@ -1426,9 +1451,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         backlog_file: Path
         if ns.file:
-            backlog_file = _resolve_backlog_file_path(
-                repo_dir=repo_dir, file_arg=ns.file, repo=target_repo
-            )
+            try:
+                backlog_file = _resolve_backlog_file_path(
+                    repo_dir=repo_dir, file_arg=ns.file, repo=target_repo
+                )
+            except FileNotFoundError as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
         else:
             try:
                 markdown_source_dir = _find_existing_markdown_source_dir(repo_dir)
@@ -1477,9 +1506,13 @@ def main(argv: list[str] | None = None) -> int:
                         f"Auto-imported backlog JSON from {import_summary.source_dir}"
                     )
             else:
-                backlog_file = _resolve_backlog_file_path(
-                    repo_dir=repo_dir, file_arg=None, repo=target_repo
-                )
+                try:
+                    backlog_file = _resolve_backlog_file_path(
+                        repo_dir=repo_dir, file_arg=None, repo=target_repo
+                    )
+                except FileNotFoundError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
         try:
             backlog_summary: BacklogApplySummary = apply_backlog(
                 repo_dir=repo_dir,
@@ -2023,6 +2056,28 @@ def main(argv: list[str] | None = None) -> int:
             updated = _json.loads(cp.stdout)
             print(f"Issue updated: #{updated['number']} {updated['title']}")
             print(f"URL: {updated['html_url']}")
+            return 0
+
+        if ns.issue_command == "delete":
+            owner, _, repo_name = target_repo.partition("/")
+            cp = issue_delete(owner, repo_name, ns.issue_number, token)
+            if cp.returncode != 0:
+                print(cp.stderr.strip() or "Failed deleting issue.", file=sys.stderr)
+                return 1
+            print(f"Issue #{ns.issue_number} deleted.")
+            return 0
+
+        if ns.issue_command == "add-sub-issue":
+            owner, _, repo_name = target_repo.partition("/")
+            cp = issue_add_sub_issue(
+                owner, repo_name, ns.parent_number, ns.child_number, token
+            )
+            if cp.returncode != 0:
+                print(cp.stderr.strip() or "Failed linking sub-issue.", file=sys.stderr)
+                return 1
+            print(
+                f"Issue #{ns.child_number} linked as sub-issue of #{ns.parent_number}."
+            )
             return 0
 
     if ns.mode == "pr":
