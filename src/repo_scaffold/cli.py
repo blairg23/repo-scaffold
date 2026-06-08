@@ -70,6 +70,7 @@ from .project_ops import (
     link_project_repo,
     list_project_items,
     list_projects,
+    setup_project_statuses,
     sync_project_metadata,
     undo_project_backup,
     update_project_item_status,
@@ -656,10 +657,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional project visibility override",
     )
     project_create_cmd.add_argument(
+        "--repo",
+        help="Link this repo (owner/repo) as the project default repository and setup standard statuses",
+    )
+    project_create_cmd.add_argument(
         "--dry-run",
         action="store_true",
         help="Preview the project creation without changing state",
     )
+
+    project_setup_statuses_cmd = project_sub.add_parser(
+        "setup-statuses",
+        help="Configure the standard Status field options on an existing project",
+    )
+    project_setup_statuses_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution (default: .)",
+    )
+    _add_project_target_args(project_setup_statuses_cmd)
 
     project_edit_cmd = project_sub.add_parser(
         "edit", help="Edit metadata for an existing project"
@@ -1650,7 +1666,16 @@ def main(argv: list[str] | None = None) -> int:
                     description=ns.description,
                     readme=ns.readme,
                     visibility=ns.visibility,
+                    repo=getattr(ns, "repo", None),
                     dry_run=ns.dry_run,
+                    out=print,
+                )
+            elif ns.project_command == "setup-statuses":
+                mutation_summary = setup_project_statuses(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
                     out=print,
                 )
             elif ns.project_command == "edit":

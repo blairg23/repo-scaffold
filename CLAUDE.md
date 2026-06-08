@@ -72,12 +72,13 @@ poetry run repo-scaffold branch delete --repo OWNER/REPO --name BRANCH
 poetry run repo-scaffold project list --project-owner OWNER
 poetry run repo-scaffold project view --project-title "TITLE"
 poetry run repo-scaffold project items --project-title "TITLE" --limit 40
-poetry run repo-scaffold project create --project-owner OWNER --project-title "TITLE" [--description "TEXT"]
+poetry run repo-scaffold project create --project-owner OWNER --project-title "TITLE" [--description "TEXT"] [--repo OWNER/REPO]
 poetry run repo-scaffold project edit --project-owner OWNER --project-title "TITLE" [--title "NEW"] [--description "TEXT"]
 poetry run repo-scaffold project sync-metadata --project-owner OWNER --project-title "TITLE" --repo OWNER/REPO
 poetry run repo-scaffold project item-add --project-title "TITLE" --repo OWNER/REPO --issue-number N
 poetry run repo-scaffold project item-delete --project-title "TITLE" --issue-number N
 poetry run repo-scaffold project link-repo --project-title "TITLE" --repo OWNER/REPO
+poetry run repo-scaffold project setup-statuses --project-title "TITLE"
 poetry run repo-scaffold project delete --project-owner OWNER --project-title "TITLE"  # dangerous — requires backup
 poetry run repo-scaffold project undo --project-owner OWNER  # restore from last backup
 
