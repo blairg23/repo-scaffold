@@ -2179,8 +2179,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             data = _json.loads(cp.stdout)
             threads = (
-                data.get("data", {})
-                .get("repository", {})
+                data.get("repository", {})
                 .get("pullRequest", {})
                 .get("reviewThreads", {})
                 .get("nodes", [])
