@@ -636,6 +636,44 @@ def link_project_repo(
     )
 
 
+def setup_project_statuses(
+    *,
+    repo_dir: Path,
+    owner: str | None,
+    project_number: int | None,
+    project_title: str | None,
+    out: Callable[[str], None] = print,
+) -> ProjectMutationSummary:
+    from .github_api import setup_project_status_field, token_from_repo
+
+    token = token_from_repo(repo_dir) or ""
+    project = _find_existing_project(
+        repo_dir=repo_dir,
+        owner=owner,
+        project_number=project_number,
+        project_title=project_title,
+    )
+    if not project.id:
+        raise RuntimeError(f"Could not resolve project ID for '{project.title}'.")
+
+    cp = setup_project_status_field(project.id, token)
+    if cp.returncode != 0:
+        raise RuntimeError(
+            cp.stderr.strip() or "Failed setting up project status field."
+        )
+
+    out(f"Status field configured on project '{project.title}'.")
+    return ProjectMutationSummary(
+        action="setup-statuses",
+        owner=project.owner,
+        project_number=project.number,
+        project_title=project.title,
+        failures=0,
+        changed=True,
+        metadata_file=None,
+    )
+
+
 def create_project(
     *,
     repo_dir: Path,
@@ -644,6 +682,7 @@ def create_project(
     description: str | None,
     readme: str | None,
     visibility: str | None,
+    repo: str | None = None,
     dry_run: bool,
     out: Callable[[str], None] = print,
 ) -> ProjectMutationSummary:
@@ -660,6 +699,9 @@ def create_project(
             out(f"[dry-run] set project readme: {title}")
         if visibility:
             out(f"[dry-run] set project visibility: {visibility.upper()}")
+        if repo:
+            out(f"[dry-run] link project to repo: {repo}")
+            out(f"[dry-run] setup status field: {title}")
         return ProjectMutationSummary(
             action="create",
             owner=project_owner,
@@ -739,6 +781,30 @@ def create_project(
             source="project_create",
         )
         out(f"Synced project metadata: {metadata_file}")
+
+    if repo:
+        try:
+            link_project_repo(
+                repo_dir=repo_dir,
+                owner=project_owner,
+                project_number=number,
+                project_title=None,
+                repo=repo,
+                out=out,
+            )
+        except RuntimeError as exc:
+            out(f"Warning: could not link repo: {exc}")
+
+        try:
+            setup_project_statuses(
+                repo_dir=repo_dir,
+                owner=project_owner,
+                project_number=number,
+                project_title=None,
+                out=out,
+            )
+        except RuntimeError as exc:
+            out(f"Warning: could not setup status field: {exc}")
 
     return ProjectMutationSummary(
         action="create",

@@ -356,6 +356,36 @@ mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
 }
 """
 
+_GQL_UPDATE_STATUS_FIELD = """
+mutation($fieldId: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
+  updateProjectV2Field(input: {
+    fieldId: $fieldId
+    singleSelectOptions: $options
+  }) {
+    projectV2Field {
+      ... on ProjectV2SingleSelectField {
+        id name
+        options { id name color description }
+      }
+    }
+  }
+}
+"""
+
+STANDARD_STATUS_OPTIONS: list[dict[str, str]] = [
+    {"name": "Todo", "color": "GRAY", "description": "This item hasn't been started"},
+    {
+        "name": "In Progress",
+        "color": "YELLOW",
+        "description": "This is actively being worked on",
+    },
+    {"name": "To Review", "color": "BLUE", "description": "This is awaiting review"},
+    {"name": "Done", "color": "GREEN", "description": "This has been completed"},
+    {"name": "Won't Do", "color": "GRAY", "description": "This won't be done"},
+    {"name": "Duplicate", "color": "BLUE", "description": "This is a duplicate"},
+    {"name": "Blocked", "color": "RED", "description": "This is blocked"},
+]
+
 
 def _project_nodes_from_data(data: dict[str, object]) -> list[dict[str, object]]:
     for key in ("user", "organization"):
@@ -582,6 +612,71 @@ def project_item_update_field(
         },
         token,
     )
+
+
+def setup_project_status_field(
+    project_id: str,
+    token: str,
+    options: list[dict[str, str]] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Replace the Status single-select field options with the standard set.
+
+    Options that already exist on the field are matched by name and their IDs
+    are forwarded to the mutation so GitHub can update them in place rather than
+    recreating them, which would clear any item field values pointing at the old
+    option IDs.
+    """
+    cp = project_fields(project_id, token)
+    if cp.returncode != 0:
+        return cp
+    try:
+        fields = json.loads(cp.stdout).get("fields", [])
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Could not parse project fields.")
+
+    status_field = next(
+        (f for f in fields if isinstance(f, dict) and f.get("name") == "Status"),
+        None,
+    )
+    if status_field is None:
+        return _err("No Status field found on project.")
+
+    field_id = status_field.get("id", "")
+    if not field_id:
+        return _err("Could not resolve Status field ID.")
+
+    existing_ids: dict[str, str] = {
+        o["name"]: o["id"]
+        for o in status_field.get("options", [])
+        if isinstance(o, dict) and "name" in o and "id" in o
+    }
+
+    chosen = options if options is not None else STANDARD_STATUS_OPTIONS
+    merged: list[dict[str, str]] = []
+    for opt in chosen:
+        entry: dict[str, str] = {
+            "name": opt["name"],
+            "color": opt["color"],
+            "description": opt.get("description", ""),
+        }
+        existing_id = existing_ids.get(opt["name"])
+        if existing_id:
+            entry["id"] = existing_id
+        merged.append(entry)
+
+    cp2 = graphql(
+        _GQL_UPDATE_STATUS_FIELD,
+        {"fieldId": field_id, "options": merged},
+        token,
+    )
+    if cp2.returncode != 0:
+        return cp2
+    try:
+        data = json.loads(cp2.stdout)
+        field = data.get("updateProjectV2Field", {}).get("projectV2Field") or {}
+        return _ok(json.dumps(field))
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response setting status field options.")
 
 
 def project_item_add(

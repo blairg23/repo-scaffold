@@ -522,6 +522,97 @@ def test_project_item_update_field_success() -> None:
     assert cp.returncode == 0
 
 
+def test_setup_project_status_field_preserves_existing_ids() -> None:
+    fields_data = {
+        "node": {
+            "fields": {
+                "nodes": [
+                    {
+                        "id": "F_status",
+                        "name": "Status",
+                        "options": [
+                            {"id": "existing_todo", "name": "Todo"},
+                            {"id": "existing_done", "name": "Done"},
+                        ],
+                    }
+                ]
+            }
+        }
+    }
+    update_resp = {
+        "updateProjectV2Field": {
+            "projectV2Field": {
+                "id": "F_status",
+                "name": "Status",
+                "options": [],
+            }
+        }
+    }
+    calls: list[dict[str, object]] = []
+
+    def fake_urlopen(req: object) -> object:
+        import json as _json
+
+        body = _json.loads(getattr(req, "data", b"{}"))
+        calls.append(body)
+        if "updateProjectV2Field" in body.get("query", ""):
+            return _graphql_ok(update_resp)
+        return _graphql_ok(fields_data)
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        cp = github_api.setup_project_status_field("PV2_1", "tok")
+
+    assert cp.returncode == 0
+    update_call = next(c for c in calls if "updateProjectV2Field" in c.get("query", ""))
+    sent_options: list[dict[str, str]] = update_call["variables"]["options"]
+    todo_opt = next(o for o in sent_options if o["name"] == "Todo")
+    done_opt = next(o for o in sent_options if o["name"] == "Done")
+    in_progress_opt = next(o for o in sent_options if o["name"] == "In Progress")
+    assert todo_opt.get("id") == "existing_todo"
+    assert done_opt.get("id") == "existing_done"
+    assert "id" not in in_progress_opt
+
+
+def test_setup_project_status_field_new_project_no_ids() -> None:
+    fields_data = {
+        "node": {
+            "fields": {
+                "nodes": [
+                    {
+                        "id": "F_status",
+                        "name": "Status",
+                        "options": [],
+                    }
+                ]
+            }
+        }
+    }
+    update_resp = {
+        "updateProjectV2Field": {
+            "projectV2Field": {"id": "F_status", "name": "Status", "options": []}
+        }
+    }
+    calls: list[dict[str, object]] = []
+
+    def fake_urlopen(req: object) -> object:
+        import json as _json
+
+        body = _json.loads(getattr(req, "data", b"{}"))
+        calls.append(body)
+        if "updateProjectV2Field" in body.get("query", ""):
+            return _graphql_ok(update_resp)
+        return _graphql_ok(fields_data)
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        cp = github_api.setup_project_status_field("PV2_1", "tok")
+
+    assert cp.returncode == 0
+    update_call = next(c for c in calls if "updateProjectV2Field" in c.get("query", ""))
+    sent_options: list[dict[str, str]] = update_call["variables"]["options"]
+    assert all("id" not in o for o in sent_options)
+    assert len(sent_options) == len(github_api.STANDARD_STATUS_OPTIONS)
+
+
 # ---------------------------------------------------------------------------
 # branch_create / branch_delete / pr_merge / pr_checks / issue_list --label
 # ---------------------------------------------------------------------------
