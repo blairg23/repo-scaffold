@@ -575,7 +575,7 @@ def _gh_issue_create(args: list[str], token: str) -> subprocess.CompletedProcess
                 pass
 
     cp = rest("POST", f"/repos/{repo}/issues", token, payload)
-    if cp.returncode not in (200, 201):
+    if cp.returncode != 0:
         return cp
     try:
         url = json.loads(cp.stdout).get("html_url", "")
