@@ -1014,6 +1014,103 @@ def issue_assign(
     return _ok("{}")
 
 
+_GQL_DELETE_ISSUE = """
+mutation($issueId: ID!) {
+  deleteIssue(input: {issueId: $issueId}) {
+    repository { id }
+  }
+}
+"""
+
+_GQL_ADD_SUB_ISSUE = """
+mutation($issueId: ID!, $subIssueId: ID!) {
+  addSubIssue(input: {issueId: $issueId, subIssueId: $subIssueId}) {
+    issue { id number }
+    subIssue { id number }
+  }
+}
+"""
+
+_GQL_ISSUE_NODE_ID = """
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) { id }
+  }
+}
+"""
+
+
+def _resolve_issue_node_id(
+    owner: str, repo: str, number: int, token: str
+) -> str | None:
+    cp = graphql(
+        _GQL_ISSUE_NODE_ID, {"owner": owner, "repo": repo, "number": number}, token
+    )
+    if cp.returncode != 0:
+        return None
+    try:
+        return json.loads(cp.stdout).get("repository", {}).get("issue", {}).get("id")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+
+def issue_delete(
+    owner: str,
+    repo: str,
+    number: int,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Delete an issue. Requires admin access to the repository."""
+    node_id = _resolve_issue_node_id(owner, repo, number, token)
+    if not node_id:
+        return _err(f"Could not resolve node ID for {owner}/{repo}#{number}.")
+    cp = graphql(_GQL_DELETE_ISSUE, {"issueId": node_id}, token)
+    if cp.returncode != 0:
+        return cp
+    try:
+        data = json.loads(cp.stdout)
+        if not data.get("deleteIssue"):
+            return _err(
+                f"deleteIssue returned null for #{number}; GitHub may have rejected the mutation."
+            )
+        return _ok(json.dumps({"deleted": True, "number": number}))
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response from deleteIssue.")
+
+
+def issue_add_sub_issue(
+    owner: str,
+    repo: str,
+    parent_number: int,
+    child_number: int,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Link child_number as a sub-issue of parent_number."""
+    parent_id = _resolve_issue_node_id(owner, repo, parent_number, token)
+    if not parent_id:
+        return _err(f"Could not resolve node ID for parent issue #{parent_number}.")
+    child_id = _resolve_issue_node_id(owner, repo, child_number, token)
+    if not child_id:
+        return _err(f"Could not resolve node ID for child issue #{child_number}.")
+    cp = graphql(
+        _GQL_ADD_SUB_ISSUE,
+        {"issueId": parent_id, "subIssueId": child_id},
+        token,
+    )
+    if cp.returncode != 0:
+        return cp
+    try:
+        data = json.loads(cp.stdout)
+        result = data.get("addSubIssue")
+        if not isinstance(result, dict) or "issue" not in result:
+            return _err(
+                "addSubIssue returned null or unexpected data; GitHub may have rejected the mutation."
+            )
+        return _ok(json.dumps(result))
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response from addSubIssue.")
+
+
 # ---------------------------------------------------------------------------
 # Pull requests
 # ---------------------------------------------------------------------------

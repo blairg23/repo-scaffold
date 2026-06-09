@@ -625,9 +625,11 @@ def test_apply_backlog_accepts_positional_repo_ref(
     workspace.mkdir(parents=True)
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
-    backlog = repo_dir / "artifacts" / "backlog"
-    backlog.mkdir(parents=True)
-    (backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    # Create slug path so --repo resolution succeeds without --file
+    slug_dir = workspace / "local" / "backlog" / "acme" / "repo"
+    slug_dir.mkdir(parents=True)
+    (slug_dir / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    backlog = slug_dir
     monkeypatch.chdir(workspace)
 
     called: dict[str, object] = {}
@@ -672,46 +674,14 @@ def test_apply_backlog_accepts_positional_repo_ref(
     assert called["backlog_file"] == backlog / "issues.json"
 
 
-def test_apply_backlog_defaults_to_repo_artifacts_backlog_when_local_missing(
+def test_apply_backlog_errors_when_repo_set_but_slug_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True)
-
     repo_dir = workspace / "repo"
     repo_dir.mkdir(parents=True)
-    repo_backlog = repo_dir / "artifacts" / "backlog"
-    repo_backlog.mkdir(parents=True)
-    (repo_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
-
     monkeypatch.chdir(workspace)
-
-    called: dict[str, object] = {}
-
-    def _fake_apply_backlog(
-        *,
-        repo_dir: Path,
-        repo: str,
-        backlog_file: Path,
-        dry_run: bool,
-        project_number,
-        project_title,
-        project_owner,
-        out,
-        err,
-    ):
-        called["repo_dir"] = repo_dir
-        called["repo"] = repo
-        called["backlog_file"] = backlog_file
-        return BacklogApplySummary(
-            milestones_created=0,
-            milestones_skipped=0,
-            issues_created=0,
-            issues_skipped=0,
-            failures=0,
-        )
-
-    monkeypatch.setattr("repo_scaffold.cli.apply_backlog", _fake_apply_backlog)
 
     rc = main(
         [
@@ -724,10 +694,7 @@ def test_apply_backlog_defaults_to_repo_artifacts_backlog_when_local_missing(
             "--dry-run",
         ]
     )
-    assert rc == 0
-    assert called["repo_dir"] == repo_dir
-    assert called["repo"] == "acme/repo"
-    assert called["backlog_file"] == repo_backlog / "issues.json"
+    assert rc != 0
 
 
 def test_apply_backlog_prefers_slug_path_over_artifacts(
@@ -786,6 +753,60 @@ def test_apply_backlog_prefers_slug_path_over_artifacts(
     )
     assert rc == 0
     assert called["backlog_file"] == slug_backlog / "issues.json"
+
+
+def test_apply_backlog_falls_back_to_artifacts_when_slug_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+
+    repo_dir = workspace / "repo"
+    repo_dir.mkdir(parents=True)
+    artifacts_backlog = repo_dir / "artifacts" / "backlog"
+    artifacts_backlog.mkdir(parents=True)
+    (artifacts_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+
+    monkeypatch.chdir(workspace)
+
+    called: dict[str, object] = {}
+
+    def _fake_apply_backlog(
+        *,
+        repo_dir: Path,
+        repo: str,
+        backlog_file: Path,
+        dry_run: bool,
+        project_number,
+        project_title,
+        project_owner,
+        out,
+        err,
+    ):
+        called["backlog_file"] = backlog_file
+        return BacklogApplySummary(
+            milestones_created=0,
+            milestones_skipped=0,
+            issues_created=0,
+            issues_skipped=0,
+            failures=0,
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_backlog", _fake_apply_backlog)
+
+    rc = main(
+        [
+            "apply",
+            "backlog",
+            "--path",
+            str(repo_dir),
+            "--repo",
+            "acme/repo",
+            "--dry-run",
+        ]
+    )
+    assert rc == 0
+    assert called["backlog_file"] == artifacts_backlog / "issues.json"
 
 
 def test_apply_backlog_auth_check(
@@ -855,9 +876,10 @@ def test_apply_backlog_project_title_delegates_to_backlog_ops(
 ) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
-    backlog = repo_dir / "backlog"
-    backlog.mkdir(parents=True)
-    (backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    slug_dir = tmp_path / "local" / "backlog" / "acme" / "repo"
+    slug_dir.mkdir(parents=True)
+    (slug_dir / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
 
     called: dict[str, object] = {}
 
@@ -972,9 +994,10 @@ def test_apply_backlog_with_project_defaults_title_from_repo_name(
 ) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
-    backlog = repo_dir / "backlog"
-    backlog.mkdir(parents=True)
-    (backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    slug_dir = tmp_path / "local" / "backlog" / "acme" / "repo-name"
+    slug_dir.mkdir(parents=True)
+    (slug_dir / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
 
     monkeypatch.delenv("GITHUB_PROJECT_TITLE", raising=False)
     monkeypatch.delenv("GITHUB_PROJECT_TITLE_TEMPLATE", raising=False)
@@ -1030,9 +1053,10 @@ def test_apply_backlog_with_project_uses_env_template(
 ) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
-    backlog = repo_dir / "backlog"
-    backlog.mkdir(parents=True)
-    (backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    slug_dir = tmp_path / "local" / "backlog" / "acme" / "repo-name"
+    slug_dir.mkdir(parents=True)
+    (slug_dir / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
 
     monkeypatch.setenv("GITHUB_PROJECT_TITLE_TEMPLATE", "{repo} Delivery")
     monkeypatch.delenv("GITHUB_PROJECT_TITLE", raising=False)
@@ -1901,6 +1925,111 @@ def test_issue_assign(
     )
     assert rc == 0
     assert "Assignees updated" in capsys.readouterr().out
+
+
+def test_issue_delete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_delete",
+        lambda owner, repo, number, token: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({"deleted": True, "number": number}),
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(["issue", "delete", "--repo", "acme/repo", "--issue-number", "7"])
+    assert rc == 0
+    assert "deleted" in capsys.readouterr().out
+
+
+def test_issue_delete_failure_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_delete",
+        lambda owner, repo, number, token: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="Not found"
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(["issue", "delete", "--repo", "acme/repo", "--issue-number", "99"])
+    assert rc == 1
+
+
+def test_issue_add_sub_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_add_sub_issue",
+        lambda owner, repo, parent_number, child_number, token: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "issue": {"number": parent_number},
+                    "subIssue": {"number": child_number},
+                }
+            ),
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(
+        [
+            "issue",
+            "add-sub-issue",
+            "--repo",
+            "acme/repo",
+            "--parent",
+            "10",
+            "--child",
+            "11",
+        ]
+    )
+    assert rc == 0
+    assert "linked" in capsys.readouterr().out.lower()
+
+
+def test_issue_add_sub_issue_failure_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_add_sub_issue",
+        lambda owner, repo, parent_number, child_number, token: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="Could not resolve node ID"
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(
+        [
+            "issue",
+            "add-sub-issue",
+            "--repo",
+            "acme/repo",
+            "--parent",
+            "10",
+            "--child",
+            "11",
+        ]
+    )
+    assert rc == 1
 
 
 # ---------------------------------------------------------------------------
