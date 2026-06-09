@@ -221,6 +221,9 @@ def _resolve_backlog_file_path(
         slug_path = _local_backlog_slug_path(repo)
         if slug_path.exists():
             return slug_path
+        artifacts_path = repo_dir / DEFAULT_BACKLOG_REL_PATH
+        if artifacts_path.exists():
+            return artifacts_path
         raise FileNotFoundError(
             f"No backlog file found for {repo!r}. "
             f"Expected: {slug_path}. "

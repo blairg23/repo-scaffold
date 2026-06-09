@@ -972,7 +972,15 @@ def issue_delete(
     cp = graphql(_GQL_DELETE_ISSUE, {"issueId": node_id}, token)
     if cp.returncode != 0:
         return cp
-    return _ok(json.dumps({"deleted": True, "number": number}))
+    try:
+        data = json.loads(cp.stdout)
+        if not data.get("deleteIssue"):
+            return _err(
+                f"deleteIssue returned null for #{number}; GitHub may have rejected the mutation."
+            )
+        return _ok(json.dumps({"deleted": True, "number": number}))
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response from deleteIssue.")
 
 
 def issue_add_sub_issue(
@@ -998,7 +1006,11 @@ def issue_add_sub_issue(
         return cp
     try:
         data = json.loads(cp.stdout)
-        result = data.get("addSubIssue", {})
+        result = data.get("addSubIssue")
+        if not isinstance(result, dict) or "issue" not in result:
+            return _err(
+                "addSubIssue returned null or unexpected data; GitHub may have rejected the mutation."
+            )
         return _ok(json.dumps(result))
     except (json.JSONDecodeError, AttributeError):
         return _err("Unexpected response from addSubIssue.")
