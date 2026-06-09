@@ -74,6 +74,7 @@ from .project_ops import (
     link_project_repo,
     list_project_items,
     list_projects,
+    setup_project,
     setup_project_statuses,
     sync_project_metadata,
     undo_project_backup,
@@ -678,6 +679,32 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Preview the project creation without changing state",
     )
+
+    project_setup_cmd = project_sub.add_parser(
+        "setup",
+        help="Configure project statuses and automation workflows from .repo-scaffold.yml",
+    )
+    project_setup_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path (default: .); also the directory searched for .repo-scaffold.yml",
+    )
+    project_setup_cmd.add_argument(
+        "--repo",
+        help="Repository to write the Actions template into (OWNER/REPO)",
+    )
+    project_setup_cmd.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Run wizard to customise settings, then save to .repo-scaffold.yml",
+    )
+    project_setup_cmd.add_argument(
+        "--no-actions-template",
+        dest="no_actions_template",
+        action="store_true",
+        help="Skip writing .github/workflows/issue-status-sync.yml",
+    )
+    _add_project_target_args(project_setup_cmd)
 
     project_setup_statuses_cmd = project_sub.add_parser(
         "setup-statuses",
@@ -1727,6 +1754,31 @@ def main(argv: list[str] | None = None) -> int:
                     visibility=ns.visibility,
                     repo=getattr(ns, "repo", None),
                     dry_run=ns.dry_run,
+                    out=print,
+                )
+            elif ns.project_command == "setup":
+                from .project_config import load_config, prompt_config, save_config
+
+                project_cfg = load_config(repo_dir)
+                if ns.interactive:
+                    if not sys.stdin.isatty():
+                        print(
+                            "Error: --interactive requires an interactive terminal.",
+                            file=sys.stderr,
+                        )
+                        return 1
+                    project_cfg = prompt_config(project_cfg, prompt_fn=input, out=print)
+                    config_path = repo_dir / ".repo-scaffold.yml"
+                    save_config(project_cfg, config_path)
+                    print(f"Saved: {config_path}")
+                mutation_summary = setup_project(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    config_path=None,
+                    write_actions_template=not ns.no_actions_template,
+                    repo=getattr(ns, "repo", None),
                     out=print,
                 )
             elif ns.project_command == "setup-statuses":
