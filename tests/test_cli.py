@@ -1239,11 +1239,21 @@ def test_apply_settings_forwards_languages(
     )
     assert rc == 0
     assert captured["repo"] == "acme/repo"
-    assert captured["languages"] == ["react", "python"]
+    assert captured["languages"] == ["python", "react"]
     assert captured["dry_run"] is False
     stdout = capsys.readouterr().out
     assert "settings applied: True" in stdout
-    assert "react, python" in stdout
+    assert "python, react" in stdout
+
+
+def test_apply_settings_rejects_unknown_language(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", lambda **_: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["apply", "settings", "--repo", "acme/repo", "--languages", "pyhton"])
+    assert exc_info.value.code != 0
 
 
 def test_apply_settings_dry_run(

@@ -1611,11 +1611,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if backlog_summary.failures > 0 else 0
 
     if ns.mode == "apply" and ns.apply_command == "settings":
-        langs = (
-            [lang.strip() for lang in ns.languages.split(",") if lang.strip()]
-            if ns.languages
-            else []
-        )
+        langs: tuple[str, ...] = ()
+        if ns.languages:
+            langs = _parse_languages_or_die(parser, ns.languages)
         try:
             apply_repository_settings(
                 repo_dir=Path.cwd(),
@@ -1623,7 +1621,7 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=getattr(ns, "dry_run", False),
                 out=print,
                 warn=lambda line: print(line, file=sys.stderr),
-                languages=langs or None,
+                languages=list(langs) if langs else None,
             )
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
