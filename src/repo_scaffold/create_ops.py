@@ -73,7 +73,17 @@ def _repo_patch_payload() -> str:
     )
 
 
-def _default_branch_ruleset_payload() -> str:
+_LANGUAGE_CI_CONTEXT: dict[str, str] = {
+    "react": "react",
+    "python": "python",
+    "go": "go",
+    "gin": "go",
+}
+
+
+def _default_branch_ruleset_payload(
+    languages: list[str] | None = None,
+) -> str:
     rules: list[dict[str, object]] = [
         {"type": "deletion"},
         {"type": "non_fast_forward"},
@@ -109,6 +119,27 @@ def _default_branch_ruleset_payload() -> str:
             },
         },
     ]
+
+    if languages:
+        contexts = list(
+            dict.fromkeys(
+                _LANGUAGE_CI_CONTEXT[lang]
+                for lang in languages
+                if lang in _LANGUAGE_CI_CONTEXT
+            )
+        )
+        if contexts:
+            rules.append(
+                {
+                    "type": "required_status_checks",
+                    "parameters": {
+                        "required_status_checks": [
+                            {"context": ctx} for ctx in contexts
+                        ],
+                        "strict_required_status_checks_policy": False,
+                    },
+                }
+            )
     return json.dumps(
         {
             "name": _SETTINGS_RULESET_NAME,
@@ -326,13 +357,14 @@ def _sync_default_branch_ruleset(
     env: dict[str, str],
     repo: str,
     out: Callable[[str], None],
+    languages: list[str] | None = None,
 ) -> None:
     managed_rulesets = [
         item
         for item in _list_repo_rulesets(repo_dir=repo_dir, env=env, repo=repo)
         if _is_managed_ruleset_name(item.get("name"))
     ]
-    payload = _default_branch_ruleset_payload()
+    payload = _default_branch_ruleset_payload(languages=languages)
 
     if managed_rulesets:
         ruleset_id = managed_rulesets[0].get("id")
@@ -859,6 +891,7 @@ def apply_repository_settings(
     dry_run: bool,
     out: Callable[[str], None] = print,
     warn: Callable[[str], None] | None = None,
+    languages: list[str] | None = None,
 ) -> None:
     _ensure_tools()
     env = _build_env(repo_dir)
@@ -872,6 +905,7 @@ def apply_repository_settings(
         dry_run=dry_run,
         out=out,
         warn=emit_warn,
+        languages=languages,
     )
 
 
@@ -946,6 +980,7 @@ def _apply_settings(
     dry_run: bool,
     out: Callable[[str], None],
     warn: Callable[[str], None],
+    languages: list[str] | None = None,
 ) -> None:
     out(f"{'[dry-run] ' if dry_run else ''}apply repository settings: {repo}")
     if dry_run:
@@ -980,7 +1015,9 @@ def _apply_settings(
         )
     out("Applied repository merge settings.")
 
-    _sync_default_branch_ruleset(repo_dir=repo_dir, env=env, repo=repo, out=out)
+    _sync_default_branch_ruleset(
+        repo_dir=repo_dir, env=env, repo=repo, out=out, languages=languages
+    )
 
     _clear_legacy_branch_protection(
         repo_dir=repo_dir,

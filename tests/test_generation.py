@@ -324,6 +324,12 @@ def test_react_vite_scaffold_file_contents(tmp_path: Path) -> None:
     assert "working-directory: web" in ci
     assert "contains(env.LANGUAGES" not in ci
     assert "hashFiles(" not in ci
+    assert "npm run typecheck --if-present" in ci
+    react_job = ci[ci.index("react:") :]
+    lint_pos = react_job.index("name: Lint")
+    typecheck_pos = react_job.index("name: Typecheck")
+    build_pos = react_job.index("name: Build")
+    assert lint_pos < typecheck_pos < build_pos
 
     gitignore = (cfg.out_dir / ".gitignore").read_text(encoding="utf-8")
     assert "web/node_modules/" in gitignore
