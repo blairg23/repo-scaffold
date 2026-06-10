@@ -1510,7 +1510,12 @@ jobs:
     permissions:
       issues: write
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # GH_TOKEN must be a PAT or GitHub App token with read/write access to
+      # Projects v2. secrets.GITHUB_TOKEN is repository-scoped and cannot read
+      # or write user/org Projects v2. Create a repository secret named GH_TOKEN
+      # containing a token with the "project" OAuth scope (or "read:project" for
+      # read-only) and "repo" scope.
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
       OWNER: ${{ github.repository_owner }}
       REPO: ${{ github.repository }}
       PROJECT_TITLE: "__PROJECT_TITLE__"
@@ -1719,6 +1724,16 @@ def setup_project(
     out(f"Status field configured ({len(cfg.statuses)} options).")
 
     # --- 2. Native GitHub Projects workflows (issue_closed, issue_reopened, pr_merged) ---
+    # The GitHub API (updateProjectV2WorkflowEnabled) only enables/disables workflows;
+    # it does NOT allow setting the target status. Target status is a GitHub UI-only
+    # setting. We enable each matching workflow and warn when the configured target
+    # differs from GitHub's built-in default so users know to set it manually.
+    _GITHUB_WORKFLOW_DEFAULTS: dict[str, str] = {
+        "issue_closed": "Done",
+        "issue_reopened": "Todo",
+        "pr_merged": "Done",
+    }
+
     cp = project_workflows(project.id, token)
     if cp.returncode != 0:
         out(f"Warning: could not fetch project workflows: {cp.stderr.strip()}")
@@ -1745,6 +1760,14 @@ def setup_project(
                             f"Enabled workflow: {workflow.get('name')} -> {target_status}"
                         )
                         enabled_count += 1
+                        github_default = _GITHUB_WORKFLOW_DEFAULTS.get(event_key, "")
+                        if github_default and target_status != github_default:
+                            out(
+                                f"  Note: GitHub's default target for this workflow is "
+                                f"'{github_default}'. To use '{target_status}' instead, "
+                                f"go to your project's Settings > Workflows and update "
+                                f"the target status manually."
+                            )
                     else:
                         out(
                             f"Warning: could not enable '{workflow.get('name')}': {cp2.stderr.strip()}"

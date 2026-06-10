@@ -667,3 +667,181 @@ def test_update_project_item_status_bad_status(
             status="Nonexistent",
             out=lambda _: None,
         )
+
+
+# ---------------------------------------------------------------------------
+# _write_actions_template / setup_project
+# ---------------------------------------------------------------------------
+
+
+def test_write_actions_template_creates_file(tmp_path: Path) -> None:
+    dest = project_ops._write_actions_template(
+        repo_dir=tmp_path,
+        project_title="My Roadmap",
+        branch_status="In Progress",
+        pr_opened_status="To Review",
+        out=lambda _: None,
+    )
+    assert dest.exists()
+    content = dest.read_text(encoding="utf-8")
+    assert "My Roadmap" in content
+    assert "In Progress" in content
+    assert "To Review" in content
+    # Must reference secrets.GH_TOKEN as the actual secret, not GITHUB_TOKEN
+    assert "${{ secrets.GH_TOKEN }}" in content
+    assert "${{ secrets.GITHUB_TOKEN }}" not in content
+
+
+def test_write_actions_template_gh_token_comment_present(tmp_path: Path) -> None:
+    dest = project_ops._write_actions_template(
+        repo_dir=tmp_path,
+        project_title="Proj",
+        branch_status="In Progress",
+        pr_opened_status="In Progress",
+        out=lambda _: None,
+    )
+    content = dest.read_text(encoding="utf-8")
+    # Comment explaining PAT requirement must be present
+    assert "repository-scoped" in content
+
+
+def _make_ok(stdout: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
+
+
+def _make_err(msg: str = "err") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=msg)
+
+
+def test_setup_project_happy_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import repo_scaffold.github_api as _ga
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    project = project_ops.ProjectInfo(
+        owner="acme", number=5, title="Roadmap", id="PVT_abc"
+    )
+    monkeypatch.setattr(project_ops, "_find_existing_project", lambda **_kw: project)
+    monkeypatch.setattr(_ga, "token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        _ga,
+        "setup_project_status_field",
+        lambda *_a, **_kw: _make_ok(json.dumps({"id": "F_1"})),
+    )
+    workflows_payload = json.dumps(
+        {
+            "workflows": [
+                {"id": "WF_1", "name": "Item closed", "enabled": False},
+                {"id": "WF_2", "name": "Pull request merged", "enabled": False},
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        _ga, "project_workflows", lambda *_a, **_kw: _make_ok(workflows_payload)
+    )
+    monkeypatch.setattr(
+        _ga,
+        "enable_project_workflow",
+        lambda *_a, **_kw: _make_ok(json.dumps({"id": "WF_1", "enabled": True})),
+    )
+
+    messages: list[str] = []
+    result = project_ops.setup_project(
+        repo_dir=repo_dir,
+        owner="acme",
+        project_number=5,
+        project_title="Roadmap",
+        write_actions_template=True,
+        out=messages.append,
+    )
+
+    assert result.failures == 0
+    assert any("Status field configured" in m for m in messages)
+    assert any("Enabled workflow" in m for m in messages)
+    actions_file = repo_dir / ".github" / "workflows" / "issue-status-sync.yml"
+    assert actions_file.exists()
+
+
+def test_setup_project_warns_when_workflow_target_differs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When config target differs from GitHub's default, a note is emitted."""
+    import repo_scaffold.github_api as _ga
+    from repo_scaffold.project_config import ProjectConfig, StatusOption
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    project = project_ops.ProjectInfo(
+        owner="acme", number=5, title="Roadmap", id="PVT_abc"
+    )
+    monkeypatch.setattr(project_ops, "_find_existing_project", lambda **_kw: project)
+    monkeypatch.setattr(_ga, "token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        _ga,
+        "setup_project_status_field",
+        lambda *_a, **_kw: _make_ok(json.dumps({"id": "F_1"})),
+    )
+    workflows_payload = json.dumps(
+        {"workflows": [{"id": "WF_1", "name": "Item closed", "enabled": False}]}
+    )
+    monkeypatch.setattr(
+        _ga, "project_workflows", lambda *_a, **_kw: _make_ok(workflows_payload)
+    )
+    monkeypatch.setattr(
+        _ga,
+        "enable_project_workflow",
+        lambda *_a, **_kw: _make_ok(json.dumps({"id": "WF_1", "enabled": True})),
+    )
+
+    # Write a config where issue_closed maps to "Closed" (not the GitHub default "Done")
+    cfg = ProjectConfig(
+        statuses=[StatusOption("Closed", "GREEN"), StatusOption("Todo", "GRAY")],
+        workflows={
+            "branch_created": "In Progress",
+            "pr_opened": "To Review",
+            "pr_merged": "Done",
+            "issue_closed": "Closed",
+            "issue_reopened": "Todo",
+        },
+    )
+    from repo_scaffold.project_config import save_config, CONFIG_FILENAME
+
+    save_config(cfg, repo_dir / CONFIG_FILENAME)
+
+    messages: list[str] = []
+    project_ops.setup_project(
+        repo_dir=repo_dir,
+        owner="acme",
+        project_number=5,
+        project_title="Roadmap",
+        write_actions_template=False,
+        out=messages.append,
+    )
+
+    assert any("Note:" in m and "Done" in m for m in messages)
+
+
+def test_setup_project_no_project_id_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import repo_scaffold.github_api as _ga
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    project = project_ops.ProjectInfo(owner="acme", number=5, title="Roadmap", id=None)
+    monkeypatch.setattr(project_ops, "_find_existing_project", lambda **_kw: project)
+    monkeypatch.setattr(_ga, "token_from_repo", lambda _: "tok")
+
+    with pytest.raises(RuntimeError, match="Could not resolve project ID"):
+        project_ops.setup_project(
+            repo_dir=repo_dir,
+            owner="acme",
+            project_number=5,
+            project_title="Roadmap",
+            out=lambda _: None,
+        )

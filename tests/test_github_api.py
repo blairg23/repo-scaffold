@@ -690,3 +690,62 @@ def test_issue_list_with_label() -> None:
         cp = github_api.issue_list("owner/repo", "tok", label="mvp")
     assert cp.returncode == 0
     assert len(json.loads(cp.stdout)) == 1
+
+
+# ---------------------------------------------------------------------------
+# project_workflows / enable_project_workflow
+# ---------------------------------------------------------------------------
+
+
+def _gql_resp(data: object) -> MagicMock:
+    """GraphQL success response wrapping data under the 'data' key."""
+    return _mock_resp(200, json.dumps({"data": data}))
+
+
+def test_project_workflows_success() -> None:
+    nodes = [
+        {"id": "WF_1", "name": "Item closed", "enabled": False},
+        {"id": "WF_2", "name": "Pull request merged", "enabled": True},
+    ]
+    payload = {"node": {"workflows": {"nodes": nodes}}}
+    with patch("urllib.request.urlopen", return_value=_gql_resp(payload)):
+        cp = github_api.project_workflows("PVT_abc", "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert len(result["workflows"]) == 2
+    assert result["workflows"][0]["name"] == "Item closed"
+
+
+def test_project_workflows_api_error() -> None:
+    with patch("urllib.request.urlopen", side_effect=_http_error(403, "forbidden")):
+        cp = github_api.project_workflows("PVT_abc", "tok")
+    assert cp.returncode != 0
+
+
+def test_project_workflows_bad_json() -> None:
+    resp = _mock_resp(200, b"not json")
+    with patch("urllib.request.urlopen", return_value=resp):
+        cp = github_api.project_workflows("PVT_abc", "tok")
+    assert cp.returncode != 0
+
+
+def test_enable_project_workflow_success() -> None:
+    workflow = {"id": "WF_1", "name": "Item closed", "enabled": True}
+    payload = {"updateProjectV2WorkflowEnabled": {"projectV2Workflow": workflow}}
+    with patch("urllib.request.urlopen", return_value=_gql_resp(payload)):
+        cp = github_api.enable_project_workflow("WF_1", "tok", enabled=True)
+    assert cp.returncode == 0
+    assert json.loads(cp.stdout)["enabled"] is True
+
+
+def test_enable_project_workflow_null_response() -> None:
+    payload = {"updateProjectV2WorkflowEnabled": {"projectV2Workflow": None}}
+    with patch("urllib.request.urlopen", return_value=_gql_resp(payload)):
+        cp = github_api.enable_project_workflow("WF_1", "tok", enabled=True)
+    assert cp.returncode != 0
+
+
+def test_enable_project_workflow_api_error() -> None:
+    with patch("urllib.request.urlopen", side_effect=_http_error(403, "forbidden")):
+        cp = github_api.enable_project_workflow("WF_1", "tok", enabled=True)
+    assert cp.returncode != 0
