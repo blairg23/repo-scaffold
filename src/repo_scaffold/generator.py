@@ -320,6 +320,8 @@ def _render_ci_yaml(languages: Iterable[str]) -> str:
         run: npm ci
       - name: Lint
         run: npm run lint --if-present
+      - name: Typecheck
+        run: npm run typecheck --if-present
       - name: Build
         run: npm run build
       - name: Test (optional)

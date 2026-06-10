@@ -1222,6 +1222,57 @@ def test_apply_rules_dry_run_does_not_execute(
     assert "settings planned: True" in stdout
 
 
+def test_apply_settings_forwards_languages(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn, languages):
+        captured["repo"] = repo
+        captured["languages"] = languages
+        captured["dry_run"] = dry_run
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
+
+    rc = main(
+        ["apply", "settings", "--repo", "acme/repo", "--languages", "react,python"]
+    )
+    assert rc == 0
+    assert captured["repo"] == "acme/repo"
+    assert captured["languages"] == ["python", "react"]
+    assert captured["dry_run"] is False
+    stdout = capsys.readouterr().out
+    assert "settings applied: True" in stdout
+    assert "python, react" in stdout
+
+
+def test_apply_settings_rejects_unknown_language(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", lambda **_: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["apply", "settings", "--repo", "acme/repo", "--languages", "pyhton"])
+    assert exc_info.value.code != 0
+
+
+def test_apply_settings_dry_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn, languages):
+        captured["dry_run"] = dry_run
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
+
+    rc = main(["apply", "settings", "--repo", "acme/repo", "--dry-run"])
+    assert rc == 0
+    assert captured["dry_run"] is True
+    stdout = capsys.readouterr().out
+    assert "settings planned: True" in stdout
+
+
 def test_check_rules_resolves_repo_from_dotenv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -577,6 +577,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Execute commands instead of only printing them",
     )
 
+    apply_settings_cmd = apply_sub.add_parser(
+        "settings",
+        parents=[apply_parent],
+        help="Apply repository settings including required status checks",
+    )
+    apply_settings_cmd.add_argument(
+        "--repo",
+        required=True,
+        help="Target GitHub repo (owner/repo)",
+    )
+    apply_settings_cmd.add_argument(
+        "--languages",
+        default="",
+        help="Comma-separated language list (go, gin, python, react) to require as status checks",
+    )
+
     check = subparsers.add_parser(
         "check",
         help="Check GitHub settings/capabilities for drift",
@@ -1593,6 +1609,34 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  project items skipped: {backlog_summary.project_items_skipped}")
         print(f"  failures: {backlog_summary.failures}")
         return 1 if backlog_summary.failures > 0 else 0
+
+    if ns.mode == "apply" and ns.apply_command == "settings":
+        langs: tuple[str, ...] = ()
+        if ns.languages:
+            langs = _parse_languages_or_die(parser, ns.languages)
+        try:
+            apply_repository_settings(
+                repo_dir=Path.cwd(),
+                repo=ns.repo,
+                dry_run=getattr(ns, "dry_run", False),
+                out=print,
+                warn=lambda line: print(line, file=sys.stderr),
+                languages=list(langs) if langs else None,
+            )
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+        print("")
+        print("Summary:")
+        if getattr(ns, "dry_run", False):
+            print("  mode: dry-run")
+            print("  settings planned: True")
+        else:
+            print("  settings applied: True")
+            if langs:
+                print(f"  required status checks: {', '.join(langs)}")
+        return 0
 
     if ns.mode == "apply" and ns.apply_command == "rules":
         target_repo, repo_error = _resolve_repo_from_args_or_env(

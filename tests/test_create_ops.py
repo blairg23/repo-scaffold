@@ -149,6 +149,64 @@ def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
     assert copilot_code_review_rule["parameters"]["review_on_push"] is True
 
 
+def test_default_branch_ruleset_payload_without_languages_has_no_required_status_checks() -> (
+    None
+):
+    payload = json.loads(create_ops._default_branch_ruleset_payload())
+    types = [rule["type"] for rule in payload["rules"]]
+    assert "required_status_checks" not in types
+
+
+def test_default_branch_ruleset_payload_with_react_adds_required_status_checks() -> (
+    None
+):
+    payload = json.loads(
+        create_ops._default_branch_ruleset_payload(languages=["react"])
+    )
+    rule = next(
+        (r for r in payload["rules"] if r["type"] == "required_status_checks"), None
+    )
+    assert rule is not None
+    contexts = [c["context"] for c in rule["parameters"]["required_status_checks"]]
+    assert contexts == ["react"]
+    assert rule["parameters"]["strict_required_status_checks_policy"] is False
+
+
+def test_default_branch_ruleset_payload_deduplicates_go_gin_context() -> None:
+    payload = json.loads(
+        create_ops._default_branch_ruleset_payload(languages=["go", "gin"])
+    )
+    rule = next(r for r in payload["rules"] if r["type"] == "required_status_checks")
+    contexts = [c["context"] for c in rule["parameters"]["required_status_checks"]]
+    assert contexts == ["go"]
+
+
+def test_apply_repository_settings_forwards_languages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(create_ops, "_ensure_tools", lambda: None)
+    monkeypatch.setattr(create_ops, "_build_env", lambda _repo_dir: {"GH_TOKEN": "x"})
+    monkeypatch.setattr(create_ops, "_ensure_gh_auth", lambda _repo_dir, _env: None)
+    monkeypatch.setattr(
+        create_ops,
+        "_apply_settings",
+        lambda **kwargs: captured.update(kwargs),
+    )
+
+    create_ops.apply_repository_settings(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        dry_run=False,
+        languages=["react", "python"],
+    )
+
+    assert captured["languages"] == ["react", "python"]
+
+
 def test_branch_protection_endpoint_url_encodes_branch_name() -> None:
     assert (
         create_ops._branch_protection_endpoint(
