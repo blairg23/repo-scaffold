@@ -749,3 +749,128 @@ def test_enable_project_workflow_api_error() -> None:
     with patch("urllib.request.urlopen", side_effect=_http_error(403, "forbidden")):
         cp = github_api.enable_project_workflow("WF_1", "tok", enabled=True)
     assert cp.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# pr_annotations
+# ---------------------------------------------------------------------------
+
+
+def test_pr_annotations_returns_flat_list() -> None:
+    pr_payload = json.dumps({"head": {"sha": "abc123"}})
+    runs_payload = json.dumps(
+        {
+            "check_runs": [
+                {
+                    "id": 1,
+                    "name": "react",
+                    "status": "completed",
+                    "conclusion": "failure",
+                }
+            ]
+        }
+    )
+    ann_payload = json.dumps(
+        [
+            {
+                "annotation_level": "failure",
+                "path": "src/App.tsx",
+                "start_line": 10,
+                "message": "'foo' is defined but never used",
+            }
+        ]
+    )
+
+    responses = [
+        _mock_resp(200, pr_payload),
+        _mock_resp(200, runs_payload),
+        _mock_resp(200, ann_payload),
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses):
+        cp = github_api.pr_annotations("acme/repo", 42, "tok")
+    assert cp.returncode == 0
+    items = json.loads(cp.stdout)
+    assert len(items) == 1
+    assert items[0]["check_run"] == "react"
+    assert items[0]["path"] == "src/App.tsx"
+    assert items[0]["start_line"] == 10
+
+
+def test_pr_annotations_pr_fetch_error() -> None:
+    with patch("urllib.request.urlopen", side_effect=_http_error(404)):
+        cp = github_api.pr_annotations("acme/repo", 99, "tok")
+    assert cp.returncode != 0
+
+
+def test_pr_annotations_no_annotations_returns_empty() -> None:
+    pr_payload = json.dumps({"head": {"sha": "abc123"}})
+    runs_payload = json.dumps({"check_runs": [{"id": 1, "name": "CI"}]})
+    ann_payload = json.dumps([])
+
+    responses = [
+        _mock_resp(200, pr_payload),
+        _mock_resp(200, runs_payload),
+        _mock_resp(200, ann_payload),
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses):
+        cp = github_api.pr_annotations("acme/repo", 1, "tok")
+    assert cp.returncode == 0
+    assert json.loads(cp.stdout) == []
+
+
+# ---------------------------------------------------------------------------
+# pr_rerun
+# ---------------------------------------------------------------------------
+
+
+def test_pr_rerun_triggers_all_runs() -> None:
+    pr_payload = json.dumps({"head": {"sha": "abc123"}})
+    runs_payload = json.dumps({"workflow_runs": [{"id": 777}, {"id": 888}]})
+    rerun_resp = _mock_resp(201, "")
+
+    responses = [
+        _mock_resp(200, pr_payload),
+        _mock_resp(200, runs_payload),
+        rerun_resp,
+        rerun_resp,
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses):
+        cp = github_api.pr_rerun("acme/repo", 42, "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert set(result["triggered"]) == {777, 888}
+    assert result["errors"] == []
+
+
+def test_pr_rerun_failed_only_uses_correct_endpoint() -> None:
+    pr_payload = json.dumps({"head": {"sha": "abc123"}})
+    runs_payload = json.dumps({"workflow_runs": [{"id": 555}]})
+    captured_urls: list[str] = []
+
+    def _fake_urlopen(req: urllib.request.Request) -> MagicMock:
+        captured_urls.append(req.full_url)
+        return _mock_resp(201, "")
+
+    responses_iter = iter([_mock_resp(200, pr_payload), _mock_resp(200, runs_payload)])
+
+    def _side_effect(req: urllib.request.Request) -> MagicMock:
+        try:
+            return next(responses_iter)
+        except StopIteration:
+            return _fake_urlopen(req)
+
+    with patch("urllib.request.urlopen", side_effect=_side_effect):
+        cp = github_api.pr_rerun("acme/repo", 42, "tok", failed_only=True)
+    assert cp.returncode == 0
+    assert any("rerun-failed-jobs" in u for u in captured_urls)
+
+
+def test_pr_rerun_no_runs_returns_error() -> None:
+    pr_payload = json.dumps({"head": {"sha": "abc123"}})
+    runs_payload = json.dumps({"workflow_runs": []})
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[_mock_resp(200, pr_payload), _mock_resp(200, runs_payload)],
+    ):
+        cp = github_api.pr_rerun("acme/repo", 42, "tok")
+    assert cp.returncode != 0

@@ -63,6 +63,8 @@ poetry run repo-scaffold pr create --repo OWNER/REPO --title "TITLE" --head BRAN
 poetry run repo-scaffold pr update --repo OWNER/REPO --pr-number N [--title "TITLE"] [--body "TEXT"]
 poetry run repo-scaffold pr merge --repo OWNER/REPO --pr-number N [--method squash|merge|rebase]
 poetry run repo-scaffold pr checks --repo OWNER/REPO --pr-number N [--json]
+poetry run repo-scaffold pr annotations --repo OWNER/REPO --pr-number N [--json]
+poetry run repo-scaffold pr rerun --repo OWNER/REPO --pr-number N [--failed-only]
 poetry run repo-scaffold pr list-comments --repo OWNER/REPO --pr-number N [--json]
 poetry run repo-scaffold pr review-threads --repo OWNER/REPO --pr-number N [--json]
 

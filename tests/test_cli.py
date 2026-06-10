@@ -2410,6 +2410,89 @@ def test_pr_checks(tmp_path, monkeypatch, capsys) -> None:
     assert "CI" in capsys.readouterr().out
 
 
+def test_pr_annotations(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    anns = [
+        {
+            "check_run": "react",
+            "annotation_level": "failure",
+            "path": "src/App.tsx",
+            "start_line": 10,
+            "message": "'foo' is defined but never used",
+        }
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_annotations",
+        lambda repo, pr_number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(anns), stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "annotations", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "failure" in out
+    assert "src/App.tsx:10" in out
+    assert "never used" in out
+
+
+def test_pr_annotations_json(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    anns = [
+        {
+            "check_run": "CI",
+            "annotation_level": "warning",
+            "path": "x.ts",
+            "start_line": 1,
+            "message": "msg",
+        }
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_annotations",
+        lambda repo, pr_number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(anns), stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(
+        ["pr", "annotations", "--repo", "acme/repo", "--pr-number", "5", "--json"]
+    )
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["path"] == "x.ts"
+
+
+def test_pr_rerun(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_rerun",
+        lambda repo, pr_number, token, failed_only=False: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({"triggered": [12345], "errors": []}),
+            stderr="",
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(
+        ["pr", "rerun", "--repo", "acme/repo", "--pr-number", "42", "--failed-only"]
+    )
+    assert rc == 0
+    assert "12345" in capsys.readouterr().out
+
+
 def test_branch_create(tmp_path, monkeypatch, capsys) -> None:
     import json
     import subprocess

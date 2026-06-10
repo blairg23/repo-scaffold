@@ -1382,6 +1382,98 @@ def pr_checks(
         return _err("Unexpected response from check-runs API.")
 
 
+def pr_annotations(
+    repo: str,
+    pr_number: int,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Return check-run annotations for a PR, grouped by check run name."""
+    cp = rest("GET", f"/repos/{repo}/pulls/{pr_number}", token)
+    if cp.returncode != 0:
+        return cp
+    try:
+        sha = json.loads(cp.stdout)["head"]["sha"]
+    except (json.JSONDecodeError, KeyError):
+        return _err("Could not extract head SHA from PR.")
+    cp2 = rest("GET", f"/repos/{repo}/commits/{sha}/check-runs?per_page=100", token)
+    if cp2.returncode != 0:
+        return cp2
+    try:
+        payload = json.loads(cp2.stdout)
+        runs = payload.get("check_runs", []) if isinstance(payload, dict) else payload
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response from check-runs API.")
+    # Deduplicate by name, keeping latest
+    seen: dict[str, dict[str, object]] = {}
+    for run in runs:
+        n = str(run.get("name", ""))
+        run_id = run.get("id", 0)
+        seen_id = seen[n].get("id", 0) if n in seen else 0
+        if n not in seen or (
+            isinstance(run_id, int) and isinstance(seen_id, int) and run_id > seen_id
+        ):
+            seen[n] = run
+    results: list[dict[str, object]] = []
+    for run in seen.values():
+        run_id = run.get("id")
+        cp3 = rest(
+            "GET", f"/repos/{repo}/check-runs/{run_id}/annotations?per_page=100", token
+        )
+        if cp3.returncode != 0:
+            continue
+        try:
+            annotations = json.loads(cp3.stdout)
+        except json.JSONDecodeError:
+            continue
+        for ann in annotations:
+            results.append(
+                {
+                    "check_run": run.get("name"),
+                    "annotation_level": ann.get("annotation_level"),
+                    "path": ann.get("path"),
+                    "start_line": ann.get("start_line"),
+                    "message": ann.get("message"),
+                }
+            )
+    return _ok(json.dumps(results))
+
+
+def pr_rerun(
+    repo: str,
+    pr_number: int,
+    token: str,
+    failed_only: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    """Re-run workflow jobs for a PR's head commit."""
+    cp = rest("GET", f"/repos/{repo}/pulls/{pr_number}", token)
+    if cp.returncode != 0:
+        return cp
+    try:
+        sha = json.loads(cp.stdout)["head"]["sha"]
+    except (json.JSONDecodeError, KeyError):
+        return _err("Could not extract head SHA from PR.")
+    cp2 = rest("GET", f"/repos/{repo}/actions/runs?head_sha={sha}&per_page=50", token)
+    if cp2.returncode != 0:
+        return cp2
+    try:
+        runs = json.loads(cp2.stdout).get("workflow_runs", [])
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response from actions/runs API.")
+    if not runs:
+        return _err(f"No workflow runs found for PR #{pr_number}.")
+    suffix = "rerun-failed-jobs" if failed_only else "rerun"
+    triggered: list[int] = []
+    errors: list[str] = []
+    for run in runs:
+        run_id = run.get("id")
+        cp3 = rest("POST", f"/repos/{repo}/actions/runs/{run_id}/{suffix}", token, {})
+        if cp3.returncode in (0, 201):
+            triggered.append(run_id)
+        else:
+            errors.append(f"run {run_id}: {cp3.stderr.strip()}")
+    return _ok(json.dumps({"triggered": triggered, "errors": errors}))
+
+
 def token_from_repo(repo_dir: Path) -> str | None:
     """Try to resolve a GH token from the repo .env and environment."""
     env = dict(os.environ)
