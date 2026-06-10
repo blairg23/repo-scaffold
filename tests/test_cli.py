@@ -1687,6 +1687,116 @@ def test_project_delete_subcommand_delegates_to_project_ops(
 
 
 # ---------------------------------------------------------------------------
+# project setup tests
+# ---------------------------------------------------------------------------
+
+
+def test_project_setup_delegates_to_setup_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    called: dict[str, object] = {}
+
+    def _fake_setup_project(**kwargs) -> ProjectMutationSummary:
+        called.update(kwargs)
+        return ProjectMutationSummary(
+            action="setup",
+            owner="acme",
+            project_number=5,
+            project_title="Roadmap",
+            failures=0,
+            changed=True,
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.setup_project", _fake_setup_project)
+
+    rc = main(
+        [
+            "project",
+            "setup",
+            "--path",
+            str(repo_dir),
+            "--project-owner",
+            "acme",
+            "--project-title",
+            "Roadmap",
+        ]
+    )
+    assert rc == 0
+    assert called["owner"] == "acme"
+    assert called["project_title"] == "Roadmap"
+    assert called["write_actions_template"] is True
+
+
+def test_project_setup_no_actions_template_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+
+    called: dict[str, object] = {}
+
+    def _fake_setup_project(**kwargs) -> ProjectMutationSummary:
+        called.update(kwargs)
+        return ProjectMutationSummary(
+            action="setup",
+            owner="acme",
+            project_number=5,
+            project_title="Roadmap",
+            failures=0,
+            changed=True,
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.setup_project", _fake_setup_project)
+
+    rc = main(
+        [
+            "project",
+            "setup",
+            "--path",
+            str(repo_dir),
+            "--project-owner",
+            "acme",
+            "--project-title",
+            "Roadmap",
+            "--no-actions-template",
+        ]
+    )
+    assert rc == 0
+    assert called["write_actions_template"] is False
+
+
+def test_project_setup_interactive_rejected_when_not_tty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    monkeypatch.setattr("repo_scaffold.cli.sys.stdin.isatty", lambda: False)
+
+    rc = main(
+        [
+            "project",
+            "setup",
+            "--path",
+            str(repo_dir),
+            "--project-owner",
+            "acme",
+            "--project-title",
+            "Roadmap",
+            "--interactive",
+        ]
+    )
+    assert rc == 1
+    assert "interactive" in capsys.readouterr().err.lower()
+
+
+# ---------------------------------------------------------------------------
 # issue view tests
 # ---------------------------------------------------------------------------
 

@@ -679,6 +679,73 @@ def setup_project_status_field(
         return _err("Unexpected response setting status field options.")
 
 
+_GQL_PROJECT_WORKFLOWS = """
+query($projectId: ID!) {
+  node(id: $projectId) {
+    ... on ProjectV2 {
+      workflows(first: 20) {
+        nodes { id name enabled }
+      }
+    }
+  }
+}
+"""
+
+_GQL_ENABLE_WORKFLOW = """
+mutation($workflowId: ID!, $enabled: Boolean!) {
+  updateProjectV2WorkflowEnabled(input: {workflowId: $workflowId, enabled: $enabled}) {
+    projectV2Workflow { id name enabled }
+  }
+}
+"""
+
+# Map our config keys to substrings that appear in GitHub's built-in workflow names.
+# GitHub's names are things like "Item closed", "Item reopened", "Pull request merged".
+WORKFLOW_NAME_HINTS: dict[str, list[str]] = {
+    "issue_closed": ["item closed", "closed"],
+    "issue_reopened": ["item reopened", "reopened"],
+    "pr_merged": ["pull request merged", "pr merged"],
+}
+
+
+def project_workflows(
+    project_id: str,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Return the list of built-in automation workflows on a project."""
+    cp = graphql(_GQL_PROJECT_WORKFLOWS, {"projectId": project_id}, token)
+    if cp.returncode != 0:
+        return cp
+    try:
+        data = json.loads(cp.stdout)
+        nodes = data.get("node", {}).get("workflows", {}).get("nodes", [])
+        workflows = [n for n in nodes if isinstance(n, dict)]
+        return _ok(json.dumps({"workflows": workflows}))
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response fetching project workflows.")
+
+
+def enable_project_workflow(
+    workflow_id: str,
+    token: str,
+    enabled: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    """Enable or disable a single built-in project workflow by node ID."""
+    cp = graphql(
+        _GQL_ENABLE_WORKFLOW, {"workflowId": workflow_id, "enabled": enabled}, token
+    )
+    if cp.returncode != 0:
+        return cp
+    try:
+        data = json.loads(cp.stdout)
+        result = data.get("updateProjectV2WorkflowEnabled", {}).get("projectV2Workflow")
+        if not isinstance(result, dict):
+            return _err("updateProjectV2WorkflowEnabled returned null.")
+        return _ok(json.dumps(result))
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response enabling project workflow.")
+
+
 def project_item_add(
     project_id: str,
     content_node_id: str,
