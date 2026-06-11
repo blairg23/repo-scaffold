@@ -1,0 +1,9 @@
+# blairg23/repo-scaffold - Code Owners
+#
+# Listed owners are automatically requested for review on every PR.
+# Branch protection requires at least 1 code-owner approval before merge.
+#
+# To enable GitHub Copilot auto-review:
+#   Repository Settings > Copilot > Code review > Enable
+# (Cannot be configured via the GitHub REST API as of mid-2025 -- UI only.)
+* @blairg23
