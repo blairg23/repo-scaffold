@@ -28,12 +28,14 @@ from .github_api import (
     issue_label,
     issue_list,
     issue_update,
+    pr_annotations,
     pr_checks,
     pr_comment,
     pr_create,
     pr_list,
     pr_list_comments,
     pr_merge,
+    pr_rerun,
     pr_resolve_thread,
     pr_review_threads,
     pr_update,
@@ -1125,6 +1127,26 @@ def build_parser() -> argparse.ArgumentParser:
     pr_checks_cmd.add_argument("--repo", required=True)
     pr_checks_cmd.add_argument("--pr-number", required=True, type=int, dest="pr_number")
     pr_checks_cmd.add_argument("--json", action="store_true", dest="json_output")
+
+    pr_annotations_cmd = pr_sub.add_parser(
+        "annotations",
+        help="Show check-run annotations (lint errors, test failures) for a PR",
+    )
+    pr_annotations_cmd.add_argument("--repo", required=True)
+    pr_annotations_cmd.add_argument(
+        "--pr-number", required=True, type=int, dest="pr_number"
+    )
+    pr_annotations_cmd.add_argument("--json", action="store_true", dest="json_output")
+
+    pr_rerun_cmd = pr_sub.add_parser("rerun", help="Re-run workflow jobs for a PR")
+    pr_rerun_cmd.add_argument("--repo", required=True)
+    pr_rerun_cmd.add_argument("--pr-number", required=True, type=int, dest="pr_number")
+    pr_rerun_cmd.add_argument(
+        "--failed-only",
+        action="store_true",
+        dest="failed_only",
+        help="Only re-run failed jobs (default: re-run all)",
+    )
 
     pr_review_threads_cmd = pr_sub.add_parser(
         "review-threads", help="List review threads (comments) on a PR"
@@ -2346,6 +2368,48 @@ def main(argv: list[str] | None = None) -> int:
                     conclusion = r.get("conclusion") or status
                     print(f"  {r.get('name', '?')}: {conclusion}")
             return 0
+
+        if ns.pr_command == "annotations":
+            cp = pr_annotations(target_repo, ns.pr_number, token)
+            if cp.returncode != 0:
+                print(
+                    cp.stderr.strip() or "Failed fetching annotations.", file=sys.stderr
+                )
+                return 1
+            items = _json.loads(cp.stdout)
+            if ns.json_output:
+                print(_json.dumps(items, indent=2))
+            else:
+                if not items:
+                    print("No annotations found.")
+                for a in items:
+                    level = a.get("annotation_level", "?")
+                    check = a.get("check_run", "?")
+                    path = a.get("path", "?")
+                    line = a.get("start_line", "?")
+                    msg = (a.get("message") or "").strip()
+                    print(f"[{level}] {check} -- {path}:{line}")
+                    print(f"  {msg}")
+            return 0
+
+        if ns.pr_command == "rerun":
+            cp = pr_rerun(target_repo, ns.pr_number, token, failed_only=ns.failed_only)
+            if cp.returncode != 0:
+                print(cp.stderr.strip() or "Failed to re-run jobs.", file=sys.stderr)
+                return 1
+            result = _json.loads(cp.stdout)
+            triggered = result.get("triggered", [])
+            errors = result.get("errors", [])
+            if triggered:
+                print(
+                    f"Re-triggered {len(triggered)} run(s): {', '.join(str(r) for r in triggered)}"
+                )
+            if errors:
+                for e in errors:
+                    print(f"  error: {e}", file=sys.stderr)
+            if not triggered and not errors:
+                print("No runs found to re-trigger.")
+            return 0 if not errors else 1
 
         if ns.pr_command == "review-threads":
             owner, repo_name = target_repo.split("/", 1)
