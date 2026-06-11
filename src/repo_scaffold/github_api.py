@@ -1416,8 +1416,8 @@ def pr_annotations(
     results: list[dict[str, object]] = []
     for run in seen.values():
         run_id = run.get("id")
-        cp3 = rest(
-            "GET", f"/repos/{repo}/check-runs/{run_id}/annotations?per_page=100", token
+        cp3 = rest_paginated(
+            f"/repos/{repo}/check-runs/{run_id}/annotations?per_page=100", token
         )
         if cp3.returncode != 0:
             continue
