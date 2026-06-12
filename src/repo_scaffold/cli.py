@@ -1182,6 +1182,44 @@ def build_parser() -> argparse.ArgumentParser:
     branch_delete_cmd.add_argument("--repo", required=True)
     branch_delete_cmd.add_argument("--name", required=True, help="Branch to delete")
 
+    workspace_cmd = subparsers.add_parser(
+        "workspace", help="Manage per-branch git worktrees under repos/"
+    )
+    workspace_sub = workspace_cmd.add_subparsers(
+        dest="workspace_command", required=True
+    )
+
+    ws_create = workspace_sub.add_parser(
+        "create", help="Create a worktree for a branch"
+    )
+    ws_create.add_argument("--repo", required=True, help="OWNER/REPO")
+    ws_create.add_argument("--branch", required=True, help="Branch name")
+    ws_create.add_argument(
+        "--from", default="main", dest="base", help="Base branch (default: main)"
+    )
+    ws_create.add_argument(
+        "--env-source",
+        default=None,
+        dest="env_source",
+        help=(
+            "Path to a directory whose gitignored root-level files (e.g. .env, "
+            "secrets.json) should be copied into the new worktree. "
+            "Subdirectories are skipped. Missing path is a warning, not an error."
+        ),
+    )
+
+    ws_list = workspace_sub.add_parser("list", help="List active worktrees")
+    ws_list.add_argument("--repo", default=None, help="Filter by OWNER/REPO (optional)")
+
+    ws_delete = workspace_sub.add_parser("delete", help="Remove a worktree")
+    ws_delete.add_argument("--repo", required=True, help="OWNER/REPO")
+    ws_delete.add_argument("--branch", required=True, help="Branch name")
+
+    ws_prune = workspace_sub.add_parser(
+        "prune", help="Remove worktrees for branches no longer on origin"
+    )
+    ws_prune.add_argument("--repo", required=True, help="OWNER/REPO")
+
     return parser
 
 
@@ -1200,6 +1238,7 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
         "issue",
         "pr",
         "branch",
+        "workspace",
     }:
         return raw
     # Backward-compatible behavior: previous root command maps to init.
@@ -2495,6 +2534,51 @@ def main(argv: list[str] | None = None) -> int:
                 print(cp.stderr.strip() or "Failed deleting branch.", file=sys.stderr)
                 return 1
             print(f"Branch deleted: {ns.name}")
+            return 0
+
+    if ns.mode == "workspace":
+        from .workspace_ops import (
+            workspace_create,
+            workspace_delete,
+            workspace_list,
+            workspace_prune,
+        )
+
+        token = token_from_repo(Path.cwd()) or ""
+
+        if ns.workspace_command == "create":
+            env_source = Path(ns.env_source) if ns.env_source else None
+            cp = workspace_create(
+                ns.repo, ns.branch, token, base=ns.base, env_source=env_source
+            )
+            if cp.returncode != 0:
+                print(cp.stderr.strip(), file=sys.stderr)
+                return 1
+            print(cp.stdout.strip())
+            return 0
+
+        if ns.workspace_command == "list":
+            cp = workspace_list(repo=ns.repo)
+            if cp.returncode != 0:
+                print(cp.stderr.strip(), file=sys.stderr)
+                return 1
+            print(cp.stdout.strip())
+            return 0
+
+        if ns.workspace_command == "delete":
+            cp = workspace_delete(ns.repo, ns.branch)
+            if cp.returncode != 0:
+                print(cp.stderr.strip(), file=sys.stderr)
+                return 1
+            print(cp.stdout.strip())
+            return 0
+
+        if ns.workspace_command == "prune":
+            cp = workspace_prune(ns.repo)
+            if cp.returncode != 0:
+                print(cp.stderr.strip(), file=sys.stderr)
+                return 1
+            print(cp.stdout.strip())
             return 0
 
     parser.error("Unsupported command.")

@@ -1,24 +1,46 @@
-You are working on repo-scaffold to set up agent-driven development.
+You are an autonomous coding agent working on repo-scaffold tickets.
 
-Your task: Complete these tickets in order:
+## Workflow
 
-1. #84: Add issue detail query command
-2. #85: Slug-based backlog directory structure per repo
-3. #60: React framework support (with Vite locked in)
-4. #73: Gin framework support
+For each ticket:
 
-Steps for each ticket:
-1. Run: gh issue view <issue-number> --repo blairg23/repo-scaffold --json body,title,labels
-2. Parse the body. Extract Scope, Acceptance Criteria, Implementation Notes.
-3. Create feature branch: git checkout -b feature/<ticket-title-slugified>
-4. Implement per the ticket requirements
-5. Run: poetry run pre-commit run --all-files
-6. Run: poetry run pytest
-7. Commit: git commit -m "feat(scaffold): <title> (#<issue-number>)"
-8. Push: git push origin <branch-name>
-9. Create PR: gh pr create --title "<title>" --body "Implements #<issue-number>"
-10. Move to next ticket in the list
+1. Read the issue: `poetry run repo-scaffold issue view --repo OWNER/REPO --issue-number N`
+2. Create a worktree: `poetry run repo-scaffold workspace create --repo OWNER/REPO --branch feat/SLUG-N`
+3. Work inside `repos/{owner}/feat/SLUG-N/` -- no approval needed, use any tool
+4. Run the full gate: `poetry run tox -e precommit`
+5. Commit with a subject + blank line + body (verbose, no one-liners)
+6. Push: `git push origin feat/SLUG-N`
+7. Open PR: `poetry run repo-scaffold pr create --repo OWNER/REPO --title "..." --head feat/SLUG-N --body "..."`
+8. Add issue to project: `poetry run repo-scaffold project item-add --project-title "TITLE" --repo OWNER/REPO --issue-number N`
+9. Keep the PR in your active queue until it is merged -- do not consider a ticket done at push.
 
-Work independently. Show progress as you go.
+## PR Queue Monitoring (every session)
 
-Start with #84.
+At the start of every session and after every push, scan all open PRs:
+
+```
+poetry run repo-scaffold pr list --repo OWNER/REPO --json
+```
+
+For each open PR:
+
+1. Check review threads: `poetry run repo-scaffold pr review-threads --repo OWNER/REPO --pr-number N --json`
+2. For every unresolved thread -- fix the issue, push, reply with the commit hash and what changed, then resolve.
+3. Check CI: `poetry run repo-scaffold pr checks --repo OWNER/REPO --pr-number N --json`
+4. For any failing check -- read annotations, fix, push.
+5. Check merge status: `poetry run repo-scaffold pr view --repo OWNER/REPO --pr-number N --json`
+6. If merged -- run `poetry run repo-scaffold workspace delete --repo OWNER/REPO --branch BRANCH` to clean up.
+
+A ticket is only done when `pr view` shows `merged_at` is set. Until then, it stays in the queue.
+
+## Rules
+
+- Work autonomously inside worktrees. The PR is the gate -- never ask permission for
+  edits, test runs, or git operations inside a worktree.
+- Never merge or close PRs. Only the repo owner does that.
+- Never use `gh` CLI. Use `poetry run repo-scaffold` for all GitHub operations.
+- Always use issue/PR templates (ticket.md, epic.md, pull_request_template.md).
+- Verbose commit messages: subject + blank line + body.
+- No em dashes anywhere.
+- Fix CI and review comments immediately without asking.
+- Reply to every review thread before resolving it -- never silently resolve.

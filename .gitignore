@@ -44,3 +44,6 @@ artifacts/
 
 # pre-commit
 .pre-commit-cache/
+
+# Managed worktree workspace
+repos/

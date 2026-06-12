@@ -116,6 +116,43 @@ Token lives in `.env` as `GH_TOKEN`. Commands pick it up automatically via `_see
 All GitHub operations (repos, issues, PRs, projects, backlog) are implemented via GH_TOKEN + urllib. No `gh` CLI required.
 
 
+# Workspace Workflow
+
+## How to work on branches
+
+All branch work happens inside managed worktrees under `repos/` (gitignored). Never use
+OS temp folders or arbitrary paths.
+
+```bash
+# Create a worktree for a branch (clones bare repo on first use)
+poetry run repo-scaffold workspace create --repo OWNER/REPO --branch BRANCH [--from main]
+
+# List all active worktrees
+poetry run repo-scaffold workspace list [--repo OWNER/REPO]
+
+# Remove a worktree when a PR is merged
+poetry run repo-scaffold workspace delete --repo OWNER/REPO --branch BRANCH
+
+# Remove worktrees for branches that no longer exist on origin
+poetry run repo-scaffold workspace prune --repo OWNER/REPO
+```
+
+Layout: `repos/{repo-name}/{branch-slug}/`
+
+## Agent rules for workspace work
+
+- **No approval requests inside worktrees.** Do the work, use whatever tool is fastest,
+  push a PR. Do not ask permission for file edits, git commands, or test runs inside a
+  worktree. The PR is the gate.
+- **Only the repo owner merges PRs.** Never call `pr merge`. Push the branch, open the PR,
+  fix all review comments, then stop. Merging and closing are the owner's job.
+- **Clean up after merge.** Once you observe a PR has merged, run `workspace delete` to
+  remove the local worktree.
+- **Fix CI and review comments immediately.** When a review agent or CI flags something,
+  fix it in the same worktree and push. Do not ask whether to fix it.
+
+---
+
 ## Running tests
 ```bash
 poetry run pytest                          # all tests
