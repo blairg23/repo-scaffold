@@ -131,35 +131,58 @@ poetry run repo-scaffold check rules --repo OWNER/REPO
 
 ---
 
+## Branch naming
+
+Format: `type/NNN-short-description`
+
+- `type`: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`
+- `NNN`: the GitHub issue number -- create the issue first if one does not exist
+- `short-description`: kebab-case, 3-4 words max
+
+Examples: `feat/153-pr-update-state`, `fix/148-workspace-gcm`, `docs/161-pillar-crt-spec`
+
+`main` is the only long-lived branch. Never reuse a branch after its PR has merged.
+
+---
+
+## PR titles
+
+Format: `type(scope): description (#NNN)`
+
+Example: `feat(pr): add --state flag to pr update (#153)`
+
+The issue number at the end is required so the PR is immediately traceable to its ticket.
+
+---
+
 ## How to contribute
 
-1. Pick an open issue from the [repo-scaffold Roadmap](https://github.com/users/blairg23/projects/6).
-2. Branch off `main`:
+1. Create or pick an issue from the [repo-scaffold Roadmap](https://github.com/users/blairg23/projects/6). Note the issue number (`NNN`).
+2. Branch off `main` using the `type/NNN-short-description` format:
    ```bash
    git checkout main && git pull
-   git checkout -b feat/your-feature
+   git checkout -b feat/NNN-short-description
    ```
 3. Make changes. Run the gate before committing:
    ```bash
-   python -m pre_commit run --all-files
+   poetry run tox -e precommit
    ```
    If Black reformats files, re-stage them and re-run.
-4. Commit with a subject + blank line + body (see recent commits for style).
-5. Open a draft PR using the PR template and link it to the issue:
+4. Commit with a subject + blank line + body (see recent commits for style). No one-liners.
+5. Open a PR using the PR template. Title must follow `type(scope): description (#NNN)`:
    ```bash
    poetry run repo-scaffold pr create \
      --repo blairg23/repo-scaffold \
-     --title "feat: your change" \
-     --head feat/your-feature \
-     --draft \
+     --title "feat(scope): your change (#NNN)" \
+     --head feat/NNN-short-description \
      --body "..."
    ```
-6. Add the PR to the project board:
+6. Add the issue to the project board (issues only -- not PRs):
    ```bash
    poetry run repo-scaffold project item-add \
      --project-title "repo-scaffold Roadmap" \
      --repo blairg23/repo-scaffold \
-     --issue-number <PR number>
+     --issue-number NNN
    ```
 
 ---
@@ -180,9 +203,11 @@ Coverage must stay at or above 70%.
 
 - Never use `gh` CLI -- use repo-scaffold commands or `github_api.py` directly.
 - Never merge or close PRs -- only CODEOWNERS may do that.
-- Always add issues and PRs to the project board after creating them.
+- Never push to a branch whose PR is already merged -- cut a fresh branch from main.
 - Always use issue and PR templates -- no freeform bodies.
+- Always add issues to the project board after creating them (issues only, not PRs).
 - Commit messages: subject + blank line + body. No one-liners.
+- Git identity: confirm `user.name` and `user.email` are real values before the first commit.
 
 See [CLAUDE.md](CLAUDE.md) for the full portability and agnosticism requirements.
 See [examples/README.md](examples/README.md) for backlog and ticket format examples.
