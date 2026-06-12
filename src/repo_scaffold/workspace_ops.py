@@ -36,15 +36,18 @@ def _workspace_root(base: Path | None = None) -> Path:
     return (base or Path.cwd()) / "repos"
 
 
+def _repo_dir(workspace: Path, repo: str) -> Path:
+    """repos/{owner}/{name} -- owner-scoped so alice/api and bob/api don't collide."""
+    owner, name = repo.split("/", 1)
+    return workspace / _slug(owner) / _slug(name)
+
+
 def _bare_path(workspace: Path, repo: str) -> Path:
-    repo_slug = _slug(repo.split("/")[-1])
-    return workspace / repo_slug / ".bare"
+    return _repo_dir(workspace, repo) / ".bare"
 
 
 def _worktree_path(workspace: Path, repo: str, branch: str) -> Path:
-    repo_slug = _slug(repo.split("/")[-1])
-    branch_slug = _slug(branch)
-    return workspace / repo_slug / branch_slug
+    return _repo_dir(workspace, repo) / _slug(branch)
 
 
 def workspace_create(
@@ -63,32 +66,54 @@ def workspace_create(
     if worktree.exists():
         return _err(f"Worktree already exists at {worktree}")
 
-    clone_url = _clone_url_override or f"https://x-token:{token}@github.com/{repo}.git"
-
     if not bare.exists():
         bare.parent.mkdir(parents=True, exist_ok=True)
+        clone_url = (
+            _clone_url_override or f"https://x-token:{token}@github.com/{repo}.git"
+        )
         cp = _run(["git", "clone", "--bare", clone_url, str(bare)])
         if cp.returncode != 0:
             return _err(f"git clone failed: {cp.stderr.strip()}")
-        # point HEAD to main branch in bare clone for worktree add to work cleanly
+        # Rewrite remote URL to strip token from stored config (repos/ is gitignored,
+        # but clean URLs are still better practice)
+        if not _clone_url_override:
+            _run(
+                [
+                    "git",
+                    "remote",
+                    "set-url",
+                    "origin",
+                    f"https://github.com/{repo}.git",
+                ],
+                cwd=bare,
+            )
         _run(["git", "symbolic-ref", "HEAD", f"refs/heads/{base}"], cwd=bare)
     else:
+        auth_args = (
+            []
+            if _clone_url_override
+            else ["-c", f"http.extraHeader=Authorization: Bearer {token}"]
+        )
         cp = _run(
-            ["git", "fetch", "origin", "--prune", "refs/heads/*:refs/heads/*"],
+            [
+                "git",
+                *auth_args,
+                "fetch",
+                "origin",
+                "--prune",
+                "refs/heads/*:refs/heads/*",
+            ],
             cwd=bare,
         )
         if cp.returncode != 0:
             return _err(f"git fetch failed: {cp.stderr.strip()}")
 
-    # In a bare clone refs land at refs/heads/*, so check local refs
     cp = _run(
         ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=bare
     )
     if cp.returncode == 0:
-        # Branch already exists locally (was fetched from origin)
         cp = _run(["git", "worktree", "add", str(worktree), branch], cwd=bare)
     else:
-        # New branch -- create it off the base ref
         cp = _run(
             ["git", "worktree", "add", "-b", branch, str(worktree), base],
             cwd=bare,
@@ -110,21 +135,27 @@ def workspace_list(
         return _ok("No worktrees found.")
 
     lines: list[str] = []
-    repo_dirs = (
-        sorted(workspace.iterdir())
-        if not repo
-        else [workspace / _slug(repo.split("/")[-1])]
-    )
 
-    for repo_dir in repo_dirs:
-        if not repo_dir.is_dir():
-            continue
+    if repo:
+        candidates = [_repo_dir(workspace, repo)]
+    else:
+        # Walk two levels: repos/{owner}/{name}
+        candidates = [
+            name_dir
+            for owner_dir in sorted(workspace.iterdir())
+            if owner_dir.is_dir()
+            for name_dir in sorted(owner_dir.iterdir())
+            if name_dir.is_dir()
+        ]
+
+    for repo_dir in candidates:
         bare = repo_dir / ".bare"
         if not bare.exists():
             continue
         cp = _run(["git", "worktree", "list", "--porcelain"], cwd=bare)
         if cp.returncode != 0:
             continue
+        label = f"{repo_dir.parent.name}/{repo_dir.name}"
         for block in cp.stdout.strip().split("\n\n"):
             info: dict[str, str] = {}
             for line in block.strip().splitlines():
@@ -136,7 +167,7 @@ def workspace_list(
                 branch_ref.replace("refs/heads/", "") if branch_ref else "(detached)"
             )
             if wt_path and not wt_path.endswith(".bare"):
-                lines.append(f"{repo_dir.name}  {branch}  {wt_path}")
+                lines.append(f"{label}  {branch}  {wt_path}")
 
     return _ok("\n".join(lines) if lines else "No worktrees found.")
 
@@ -176,7 +207,6 @@ def workspace_prune(
     if not bare.exists():
         return _err(f"Bare repo not found at {bare}")
 
-    # Query remote directly -- avoids fetching HEAD which fails on some server configs
     remote_cp = _run(["git", "ls-remote", "--heads", "origin"], cwd=bare)
     if remote_cp.returncode != 0:
         return _err(f"git ls-remote failed: {remote_cp.stderr.strip()}")
@@ -193,7 +223,6 @@ def workspace_prune(
         if entry.name == ".bare" or not entry.is_dir():
             continue
         branch_slug = entry.name
-        # Check if any remote branch maps to this slug
         matched = any(_slug(b) == branch_slug for b in remote_branches)
         if not matched:
             cp = _run(["git", "worktree", "remove", "--force", str(entry)], cwd=bare)

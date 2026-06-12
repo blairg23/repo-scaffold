@@ -108,7 +108,7 @@ def test_workspace_create_new_branch(tmp_path: Path):
     )
 
     assert cp.returncode == 0
-    worktree = ws_base / "repos" / "myrepo" / "feat-test-branch"
+    worktree = ws_base / "repos" / "owner" / "myrepo" / "feat-test-branch"
     assert worktree.is_dir()
     assert (worktree / "README.md").exists()
 
@@ -160,8 +160,8 @@ def test_workspace_create_second_branch_reuses_bare(tmp_path: Path):
     )
 
     assert cp.returncode == 0
-    assert (ws_base / "repos" / "myrepo" / "feat-branch-a").is_dir()
-    assert (ws_base / "repos" / "myrepo" / "feat-branch-b").is_dir()
+    assert (ws_base / "repos" / "owner" / "myrepo" / "feat-branch-a").is_dir()
+    assert (ws_base / "repos" / "owner" / "myrepo" / "feat-branch-b").is_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +221,7 @@ def test_workspace_delete_removes_worktree(tmp_path: Path):
         workspace_base=ws_base,
         _clone_url_override=str(remote),
     )
-    worktree = ws_base / "repos" / "myrepo" / "feat-to-delete"
+    worktree = ws_base / "repos" / "owner" / "myrepo" / "feat-to-delete"
     assert worktree.is_dir()
 
     cp = workspace_delete(
@@ -311,5 +311,5 @@ def test_workspace_prune_removes_stale_worktrees(tmp_path: Path):
 
     assert cp.returncode == 0
     # feat/stale was never on origin and feat/keep was deleted -- both should be pruned
-    assert not (ws_base / "repos" / "myrepo" / "feat-keep").exists()
-    assert not (ws_base / "repos" / "myrepo" / "feat-stale").exists()
+    assert not (ws_base / "repos" / "owner" / "myrepo" / "feat-keep").exists()
+    assert not (ws_base / "repos" / "owner" / "myrepo" / "feat-stale").exists()
