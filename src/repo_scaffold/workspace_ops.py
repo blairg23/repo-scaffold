@@ -151,6 +151,10 @@ def _setup_bare_auth(bare: Path, token: str) -> None:
     creds_file = bare / ".git-credentials"
     # LF-only: git-credential-store rejects CRLF-terminated entries on Windows
     creds_file.write_bytes(f"https://{username}:{token}@github.com\n".encode())
+    try:
+        creds_file.chmod(0o600)
+    except NotImplementedError:
+        pass  # Windows: chmod is a no-op; PAT is protected by NTFS ACLs on the bare dir
 
     creds_posix = creds_file.as_posix()
     # Empty string resets the credential helper list, overriding the system GCM
