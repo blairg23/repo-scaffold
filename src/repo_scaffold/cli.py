@@ -1197,6 +1197,16 @@ def build_parser() -> argparse.ArgumentParser:
     ws_create.add_argument(
         "--from", default="main", dest="base", help="Base branch (default: main)"
     )
+    ws_create.add_argument(
+        "--env-source",
+        default=None,
+        dest="env_source",
+        help=(
+            "Path to a directory whose gitignored root-level files (e.g. .env, "
+            "secrets.json) should be copied into the new worktree. "
+            "Subdirectories are skipped. Missing path is a warning, not an error."
+        ),
+    )
 
     ws_list = workspace_sub.add_parser("list", help="List active worktrees")
     ws_list.add_argument("--repo", default=None, help="Filter by OWNER/REPO (optional)")
@@ -2537,7 +2547,10 @@ def main(argv: list[str] | None = None) -> int:
         token = token_from_repo(Path.cwd()) or ""
 
         if ns.workspace_command == "create":
-            cp = workspace_create(ns.repo, ns.branch, token, base=ns.base)
+            env_source = Path(ns.env_source) if ns.env_source else None
+            cp = workspace_create(
+                ns.repo, ns.branch, token, base=ns.base, env_source=env_source
+            )
             if cp.returncode != 0:
                 print(cp.stderr.strip(), file=sys.stderr)
                 return 1

@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 from repo_scaffold.workspace_ops import (
+    _copy_ignored_files,
     _slug,
     workspace_create,
     workspace_delete,
@@ -313,3 +314,138 @@ def test_workspace_prune_removes_stale_worktrees(tmp_path: Path):
     # feat/stale was never on origin and feat/keep was deleted -- both should be pruned
     assert not (ws_base / "repos" / "owner" / "myrepo" / "feat-keep").exists()
     assert not (ws_base / "repos" / "owner" / "myrepo" / "feat-stale").exists()
+
+
+# ---------------------------------------------------------------------------
+# _copy_ignored_files / --env-source
+# ---------------------------------------------------------------------------
+
+
+def _init_git_repo_with_ignored_files(tmp_path: Path) -> Path:
+    """Create a plain git repo with a mix of gitignored files to test copy filtering."""
+    repo = tmp_path / "source_repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@t.com"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "T"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+    )
+
+    # .gitignore with a mix of exact-name rules and glob patterns
+    (repo / ".gitignore").write_text(
+        ".env\n"
+        ".env.*\n"
+        "*.env\n"
+        "config.yml\n"
+        "*.csv\n"
+        "*.log\n"
+        "secrets.json\n"
+    )
+
+    # Exact-name ignored files -- should be copied
+    (repo / ".env").write_text("SECRET=abc")
+    (repo / "config.yml").write_text("db: localhost")
+    (repo / "secrets.json").write_text('{"key": "val"}')
+
+    # Glob-matched config files -- should be copied (.env.* and *.env are config globs)
+    (repo / ".env.local").write_text("LOCAL=1")
+    (repo / "production.env").write_text("PROD=1")
+
+    # Glob-matched data/log files -- should NOT be copied
+    (repo / "data.csv").write_text("a,b,c")
+    (repo / "output.log").write_text("log line")
+
+    # Tracked file -- not ignored, should not be copied
+    (repo / "README.md").write_text("hello")
+    subprocess.run(
+        ["git", "add", ".gitignore", "README.md"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "init"], cwd=str(repo), check=True, capture_output=True
+    )
+
+    return repo
+
+
+def test_copy_ignored_files_copies_exact_name_rules(tmp_path: Path):
+    source = _init_git_repo_with_ignored_files(tmp_path)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    copied = _copy_ignored_files(source, dest)
+
+    # Exact-name rules and glob-matched config files all copied
+    assert {
+        ".env",
+        "config.yml",
+        "secrets.json",
+        ".env.local",
+        "production.env",
+    }.issubset(set(copied))
+    assert (dest / ".env").read_text() == "SECRET=abc"
+    assert (dest / "config.yml").read_text() == "db: localhost"
+    assert (dest / "secrets.json").read_text() == '{"key": "val"}'
+    assert (dest / ".env.local").read_text() == "LOCAL=1"
+    assert (dest / "production.env").read_text() == "PROD=1"
+
+
+def test_copy_ignored_files_skips_glob_matched_data(tmp_path: Path):
+    source = _init_git_repo_with_ignored_files(tmp_path)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    _copy_ignored_files(source, dest)
+
+    # Data/log globs must not be copied
+    assert not (dest / "data.csv").exists()
+    assert not (dest / "output.log").exists()
+
+
+def test_workspace_create_copies_env_source(tmp_path: Path):
+    remote = _init_local_remote(tmp_path)
+    ws_base = _make_workspace_base(tmp_path)
+    source = _init_git_repo_with_ignored_files(tmp_path)
+
+    cp = workspace_create(
+        repo="owner/myrepo",
+        branch="feat/with-env",
+        token="unused",
+        base="main",
+        workspace_base=ws_base,
+        env_source=source,
+        _clone_url_override=str(remote),
+    )
+
+    assert cp.returncode == 0
+    worktree = ws_base / "repos" / "owner" / "myrepo" / "feat-with-env"
+    assert (worktree / ".env").exists()
+    assert not (worktree / "data.csv").exists()
+
+
+def test_workspace_create_missing_env_source_warns_not_errors(tmp_path: Path):
+    remote = _init_local_remote(tmp_path)
+    ws_base = _make_workspace_base(tmp_path)
+
+    cp = workspace_create(
+        repo="owner/myrepo",
+        branch="feat/no-env",
+        token="unused",
+        base="main",
+        workspace_base=ws_base,
+        env_source=tmp_path / "nonexistent",
+        _clone_url_override=str(remote),
+    )
+
+    assert cp.returncode == 0
+    assert "Warning" in cp.stdout

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -50,15 +51,92 @@ def _worktree_path(workspace: Path, repo: str, branch: str) -> Path:
     return _repo_dir(workspace, repo) / _slug(branch)
 
 
+_CONFIG_KEYWORDS = ("env", "config", "secret", "credential", "token", "key", "auth")
+
+
+def _is_config_filename(name: str) -> bool:
+    """Return True if a filename looks like a config/secrets file.
+
+    Covers dotfiles (.env, .env.local, .npmrc) and files whose name contains
+    a config-oriented keyword (config.yml, secrets.json, prod.env, etc.).
+    """
+    lower = name.lower()
+    if lower.startswith("."):
+        return True
+    return any(kw in lower for kw in _CONFIG_KEYWORDS)
+
+
+def _copy_ignored_files(source: Path, dest: Path) -> list[str]:
+    """Copy gitignored root-level config files from source into dest.
+
+    A file is copied when it satisfies either condition:
+    - It is matched by an exact-name ignore rule (no glob chars), or
+    - Its filename looks like a config/secrets file (_is_config_filename).
+
+    This means data globs like *.csv or *.log are skipped, but patterns like
+    .env.* or *.env still pull in matching config files. Subdirectories are
+    always skipped (reinstall node_modules, don't bulk-copy them).
+
+    Returns a list of copied filenames (empty if source has no git or no matches).
+    """
+    ls_cp = _run(
+        ["git", "ls-files", "--others", "--ignored", "--exclude-standard"],
+        cwd=source,
+    )
+    if ls_cp.returncode != 0:
+        return []
+
+    candidates = [
+        name.strip()
+        for name in ls_cp.stdout.splitlines()
+        if name.strip()
+        and "/" not in name.strip()
+        and "\\" not in name.strip()
+        and (source / name.strip()).is_file()
+    ]
+    if not candidates:
+        return []
+
+    # Use check-ignore -v to get the matching rule for each candidate
+    check_cp = _run(
+        ["git", "check-ignore", "-v", "--", *candidates],
+        cwd=source,
+    )
+    # check-ignore exits non-zero when some candidates are not ignored -- use stdout only
+    rule_by_file: dict[str, str] = {}
+    for line in check_cp.stdout.splitlines():
+        # Format: <source>:<linenum>:<pattern>\t<pathname>
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        pattern_token = parts[0].rsplit(":", 1)[-1]
+        rule_by_file[parts[1].strip()] = pattern_token
+
+    copied: list[str] = []
+    for name in candidates:
+        pattern = rule_by_file.get(name, "")
+        is_exact_rule = pattern and not any(c in pattern for c in ("*", "?", "["))
+        if is_exact_rule or _is_config_filename(name):
+            shutil.copy2(str(source / name), str(dest / name))
+            copied.append(name)
+    return copied
+
+
 def workspace_create(
     repo: str,
     branch: str,
     token: str,
     base: str = "main",
     workspace_base: Path | None = None,
+    env_source: Path | None = None,
     _clone_url_override: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Clone repo as a bare clone (once) then add a worktree for branch."""
+    """Clone repo as a bare clone (once) then add a worktree for branch.
+
+    env_source: if provided, copy all gitignored root-level files from that
+    directory into the new worktree (covers .env, .env.local, secrets.json, etc.).
+    Missing or non-git source directories are skipped with a warning, not an error.
+    """
     workspace = _workspace_root(workspace_base)
     bare = _bare_path(workspace, repo)
     worktree = _worktree_path(workspace, repo, branch)
@@ -122,7 +200,19 @@ def workspace_create(
     if cp.returncode != 0:
         return _err(f"git worktree add failed: {cp.stderr.strip()}")
 
-    return _ok(f"Created worktree at {worktree}")
+    notes: list[str] = [f"Created worktree at {worktree}"]
+
+    if env_source is not None:
+        if not env_source.is_dir():
+            notes.append(f"Warning: --env-source {env_source} not found, skipping.")
+        else:
+            copied = _copy_ignored_files(env_source, worktree)
+            if copied:
+                notes.append(f"Copied ignored files: {', '.join(copied)}")
+            else:
+                notes.append("No gitignored root files found in env-source.")
+
+    return _ok("\n".join(notes))
 
 
 def workspace_list(
