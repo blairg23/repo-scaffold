@@ -33,6 +33,26 @@ For each open PR:
 
 A ticket is only done when `pr view` shows `merged_at` is set. Until then, it stays in the queue.
 
+## Merge Conflict Resolution
+
+When `pr view` shows `mergeable: false` / `mergeable_state: dirty`, rebase the branch against main inside the worktree:
+
+```bash
+# Inside repos/{owner}/{repo}/{branch-slug}/
+git fetch origin
+git rebase origin/main
+# Fix any conflicts, then:
+git add <resolved-files>
+git rebase --continue
+git push origin HEAD --force-with-lease
+```
+
+Rules:
+- Always rebase (not merge) to keep history linear.
+- `--force-with-lease` only -- never `--force`. It aborts if someone else pushed.
+- After pushing, verify `mergeable_state` flips to `clean` before moving on.
+- If a rebase produces many conflicts across unrelated files, check whether the base branch order is wrong (e.g., branch A depends on branch B which hasn't merged yet).
+
 ## Rules
 
 - Work autonomously inside worktrees. The PR is the gate -- never ask permission for
