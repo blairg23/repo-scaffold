@@ -1284,12 +1284,15 @@ def pr_update(
     token: str,
     title: str | None = None,
     body: str | None = None,
+    state: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     payload: dict[str, object] = {}
     if title is not None:
         payload["title"] = title
     if body is not None:
         payload["body"] = body
+    if state is not None:
+        payload["state"] = state
     return rest("PATCH", f"/repos/{repo}/pulls/{pr_number}", token, payload)
 
 
