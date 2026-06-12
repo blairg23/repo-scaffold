@@ -900,6 +900,19 @@ Format: subject line (imperative mood) + blank line + body.
 - If `.repo-scaffold/project.json` exists, it is the canonical GitHub Project metadata for this repo.
 - Planning markdown lives in `artifacts/tickets/`.
 - Imported backlog JSON lives in `artifacts/backlog/issues.json`.
+- `GH_REPO` (set in `.env`) is the canonical repo identity for this workspace (e.g. `owner/repo`).
+
+---
+
+## GitHub Projects v2 auth
+
+For GitHub Projects v2 commands, use the `ghp` shell alias or the explicit form:
+
+```bash
+GH_TOKEN=$GH_PROJECT_TOKEN gh ...
+```
+
+`GH_PROJECT_TOKEN` is a classic PAT with `project` scope. Set it in `.env`.
 """
 
 
