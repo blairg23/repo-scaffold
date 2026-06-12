@@ -874,3 +874,51 @@ def test_pr_rerun_no_runs_returns_error() -> None:
     ):
         cp = github_api.pr_rerun("acme/repo", 42, "tok")
     assert cp.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# pr_reviews
+# ---------------------------------------------------------------------------
+
+
+def test_pr_reviews_returns_reviewer_state() -> None:
+    payload = json.dumps(
+        [
+            {
+                "id": 1,
+                "user": {"login": "alice"},
+                "state": "APPROVED",
+                "submitted_at": "2026-06-01T12:00:00Z",
+                "body": "LGTM",
+            },
+            {
+                "id": 2,
+                "user": {"login": "bob"},
+                "state": "CHANGES_REQUESTED",
+                "submitted_at": "2026-06-02T08:00:00Z",
+                "body": "Please fix the types.",
+            },
+        ]
+    )
+    with patch("urllib.request.urlopen", return_value=_mock_resp(200, payload)):
+        cp = github_api.pr_reviews("acme/repo", 42, "tok")
+    assert cp.returncode == 0
+    reviews = json.loads(cp.stdout)
+    assert len(reviews) == 2
+    assert reviews[0]["user"] == "alice"
+    assert reviews[0]["state"] == "APPROVED"
+    assert reviews[1]["user"] == "bob"
+    assert reviews[1]["state"] == "CHANGES_REQUESTED"
+
+
+def test_pr_reviews_empty_returns_empty_list() -> None:
+    with patch("urllib.request.urlopen", return_value=_mock_resp(200, "[]")):
+        cp = github_api.pr_reviews("acme/repo", 99, "tok")
+    assert cp.returncode == 0
+    assert json.loads(cp.stdout) == []
+
+
+def test_pr_reviews_api_error_propagates() -> None:
+    with patch("urllib.request.urlopen", side_effect=_http_error(404, "Not Found")):
+        cp = github_api.pr_reviews("acme/repo", 0, "tok")
+    assert cp.returncode != 0
