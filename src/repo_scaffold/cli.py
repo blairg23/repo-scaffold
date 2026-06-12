@@ -1106,6 +1106,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Read body from a UTF-8 file (mutually exclusive with --body)",
     )
+    pr_update_cmd.add_argument(
+        "--state",
+        choices=["open", "closed"],
+        default=None,
+        help="Set PR state to open or closed",
+    )
 
     pr_resolve_cmd = pr_sub.add_parser(
         "resolve-thread", help="Resolve a PR review thread"
@@ -2361,9 +2367,9 @@ def main(argv: list[str] | None = None) -> int:
 
         if ns.pr_command == "update":
             resolved_body = _resolve_body(ns.body, ns.body_file)
-            if ns.title is None and resolved_body is None:
+            if ns.title is None and resolved_body is None and ns.state is None:
                 print(
-                    "Error: at least one of --title or --body is required.",
+                    "Error: at least one of --title, --body, or --state is required.",
                     file=sys.stderr,
                 )
                 return 2
@@ -2373,6 +2379,7 @@ def main(argv: list[str] | None = None) -> int:
                 token=token,
                 title=ns.title,
                 body=resolved_body,
+                state=ns.state,
             )
             if cp.returncode != 0:
                 print(cp.stderr.strip() or "Failed updating PR.", file=sys.stderr)
