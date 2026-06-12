@@ -823,24 +823,70 @@ def _render_claude_settings_local() -> str:
 
 
 def _render_agents_md(config: ScaffoldConfig) -> str:
-    return f"""# AGENTS
+    return f"""# AGENTS.md -- {config.name}
 
-Repo-scaffold conventions for local agents:
+Agent workflow guide. Read this before touching anything.
 
-- Treat `GH_REPO` (or `GITHUB_ORG` + `GITHUB_REPO`) as the canonical GitHub repo identity for this workspace.
-- Do not mutate other repositories unless the user explicitly asks.
-- If `.repo-scaffold/project.json` exists, it is the canonical GitHub Project metadata for this repo. Read it before doing project or ticket work.
-- Prefer repo issues and the repo-linked roadmap project for planning context.
+---
+
+## Branch naming
+
+Format: `type/NNN-short-description`
+
+- `type`: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`
+- `NNN`: the GitHub issue number -- create the issue first if one does not exist
+- `short-description`: kebab-case, 3-4 words max
+
+Examples: `feat/42-user-auth`, `fix/88-crash-on-load`, `docs/17-api-reference`
+
+`main` is the only long-lived branch. Never reuse a branch after its PR has merged.
+
+---
+
+## PR titles
+
+Format: `type(scope): description (#NNN)`
+
+Example: `feat(auth): add OAuth login flow (#42)`
+
+The issue number at the end is required so the PR is immediately traceable to its ticket.
+
+---
+
+## Workflow rules
+
+- Create a GitHub issue before starting work so you have the `NNN` for the branch name.
+- Always use the PR template (`.github/pull_request_template.md`) -- no freeform bodies.
+- Always use the issue templates (`.github/ISSUE_TEMPLATE/ticket.md` or `epic.md`).
+- After creating an issue, add it to the `{config.name} Roadmap` project board.
+- Never merge or close PRs -- push the branch, open the PR, stop there.
+- Never push new commits to a branch whose PR is already merged -- cut a fresh branch from main.
+
+---
+
+## Git identity
+
+Before your first commit, confirm `git config user.name` and `git config user.email` are
+set to real values (not `Your Name` / `you@example.com`). If they are placeholders, stop
+and ask the user to configure them before continuing.
+
+---
+
+## Commit messages
+
+Format: subject line (imperative mood) + blank line + body.
+
+- Subject: 50 chars max, no trailing period
+- Body: explain WHY the change is needed, not what it does (the diff shows what)
+- No one-liner commits for non-trivial changes
+
+---
+
+## Project context
+
+- If `.repo-scaffold/project.json` exists, it is the canonical GitHub Project metadata for this repo.
 - Planning markdown lives in `artifacts/tickets/`.
 - Imported backlog JSON lives in `artifacts/backlog/issues.json`.
-- For local GitHub auth, prefer `gh auth login` or an OS credential manager. Use `.env` tokens only when the user intentionally wants repo-local token-based scripting.
-- For GitHub Projects v2 commands in WSL / Claude Code, prefer the `ghp` shell alias or `GH_TOKEN=<classic-PAT> gh ...`.
-- Do not rely on `GH_TOKEN=$GH_PROJECT_TOKEN gh ...` for project board commands in this environment.
-- `.claude/settings.local.json` is local-only and should carry `GH_PROJECT_TOKEN` for Claude Code sessions.
-
-Expected default project title:
-
-- `{config.name} Roadmap`
 """
 
 
