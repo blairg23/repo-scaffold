@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
+import urllib.request
 from pathlib import Path
 
 
@@ -122,6 +124,49 @@ def _copy_ignored_files(source: Path, dest: Path) -> list[str]:
     return copied
 
 
+def _github_username(token: str) -> str:
+    """Return the GitHub login for this token, or 'x-token' if unreachable."""
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/user",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github.v3+json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read()).get("login", "x-token")
+    except Exception:
+        return "x-token"
+
+
+def _setup_bare_auth(bare: Path, token: str) -> None:
+    """Configure the bare repo to authenticate without Windows Credential Manager.
+
+    Writes a .git-credentials file (LF-only, inside the gitignored bare dir) and
+    configures the local credential.helper to use git-credential-store, bypassing
+    the system-level 'manager' (GCM) helper that hangs in non-interactive contexts.
+    """
+    username = _github_username(token)
+    creds_file = bare / ".git-credentials"
+    # LF-only: git-credential-store rejects CRLF-terminated entries on Windows
+    creds_file.write_bytes(f"https://{username}:{token}@github.com\n".encode())
+
+    creds_posix = creds_file.as_posix()
+    # Empty string resets the credential helper list, overriding the system GCM
+    _run(["git", "config", "credential.helper", ""], cwd=bare)
+    _run(
+        [
+            "git",
+            "config",
+            "--add",
+            "credential.helper",
+            f'store --file "{creds_posix}"',
+        ],
+        cwd=bare,
+    )
+
+
 def workspace_create(
     repo: str,
     branch: str,
@@ -166,29 +211,14 @@ def workspace_create(
                 ],
                 cwd=bare,
             )
-            # Scope auth header to github.com so it doesn't leak to other hosts.
-            # Stored in the bare repo's config (inside gitignored repos/) -- same
-            # security posture as the .env file that holds GH_TOKEN.
-            _run(
-                [
-                    "git",
-                    "config",
-                    "http.https://github.com/.extraHeader",
-                    f"Authorization: Bearer {token}",
-                ],
-                cwd=bare,
-            )
+            _setup_bare_auth(bare, token)
         _run(["git", "symbolic-ref", "HEAD", f"refs/heads/{base}"], cwd=bare)
     else:
-        auth_args = (
-            []
-            if _clone_url_override
-            else ["-c", f"http.extraHeader=Authorization: Bearer {token}"]
-        )
+        if not _clone_url_override:
+            _setup_bare_auth(bare, token)
         cp = _run(
             [
                 "git",
-                *auth_args,
                 "fetch",
                 "origin",
                 "--prune",
