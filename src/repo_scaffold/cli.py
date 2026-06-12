@@ -38,6 +38,7 @@ from .github_api import (
     pr_rerun,
     pr_resolve_thread,
     pr_review_threads,
+    pr_reviews,
     pr_update,
     pr_view,
     token_from_repo,
@@ -1164,6 +1165,15 @@ def build_parser() -> argparse.ArgumentParser:
     pr_review_threads_cmd.add_argument(
         "--json", action="store_true", dest="json_output"
     )
+
+    pr_reviews_cmd = pr_sub.add_parser(
+        "reviews", help="List submitted reviews for a PR"
+    )
+    pr_reviews_cmd.add_argument("--repo", required=True)
+    pr_reviews_cmd.add_argument(
+        "--pr-number", required=True, type=int, dest="pr_number"
+    )
+    pr_reviews_cmd.add_argument("--json", action="store_true", dest="json_output")
 
     pr_list_comments_cmd = pr_sub.add_parser(
         "list-comments", help="List all inline review comments on a PR"
@@ -2488,6 +2498,30 @@ def main(argv: list[str] | None = None) -> int:
                         line = c.get("line") or c.get("originalLine") or "?"
                         body = c.get("body", "").strip()
                         print(f"[{state}] {author} on {path}:{line}")
+                        print(f"  {body[:200]}")
+            return 0
+
+        if ns.pr_command == "reviews":
+            cp = pr_reviews(target_repo, ns.pr_number, token)
+            if cp.returncode != 0:
+                print(
+                    cp.stderr.strip() or "Failed fetching reviews.",
+                    file=sys.stderr,
+                )
+                return 1
+            reviews = _json.loads(cp.stdout)
+            if ns.json_output:
+                print(_json.dumps(reviews, indent=2))
+            else:
+                if not reviews:
+                    print("No reviews found.")
+                for r in reviews:
+                    state = r.get("state", "?")
+                    user = r.get("user", "?")
+                    submitted = r.get("submitted_at", "")[:10]
+                    body = (r.get("body") or "").strip()
+                    print(f"{user}  {state}  {submitted}")
+                    if body:
                         print(f"  {body[:200]}")
             return 0
 

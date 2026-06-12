@@ -1477,6 +1477,33 @@ def pr_rerun(
     return _ok(json.dumps({"triggered": triggered, "errors": errors}))
 
 
+def pr_reviews(
+    repo: str,
+    pr_number: int,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Return submitted reviews for a PR (reviewer login, state, submitted_at, body)."""
+    cp = rest_paginated(f"/repos/{repo}/pulls/{pr_number}/reviews?per_page=100", token)
+    if cp.returncode != 0:
+        return cp
+    try:
+        reviews = json.loads(cp.stdout)
+    except json.JSONDecodeError:
+        return _err("Unexpected response from reviews API.")
+    items = [
+        {
+            "id": r.get("id"),
+            "user": r.get("user", {}).get("login", ""),
+            "state": r.get("state", ""),
+            "submitted_at": r.get("submitted_at", ""),
+            "body": r.get("body", ""),
+        }
+        for r in reviews
+        if isinstance(r, dict)
+    ]
+    return _ok(json.dumps(items))
+
+
 def token_from_repo(repo_dir: Path) -> str | None:
     """Try to resolve a GH token from the repo .env and environment."""
     env = dict(os.environ)

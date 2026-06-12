@@ -2493,6 +2493,67 @@ def test_pr_rerun(tmp_path, monkeypatch, capsys) -> None:
     assert "12345" in capsys.readouterr().out
 
 
+def test_pr_reviews_human_readable(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_reviews",
+        lambda repo, pr_number, token: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    {
+                        "id": 1,
+                        "user": "alice",
+                        "state": "APPROVED",
+                        "submitted_at": "2026-06-01T12:00:00Z",
+                        "body": "LGTM",
+                    }
+                ]
+            ),
+            stderr="",
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "reviews", "--repo", "acme/repo", "--pr-number", "5"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "alice" in out
+    assert "APPROVED" in out
+
+
+def test_pr_reviews_json(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    payload = [
+        {
+            "id": 2,
+            "user": "bob",
+            "state": "CHANGES_REQUESTED",
+            "submitted_at": "",
+            "body": "",
+        }
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_reviews",
+        lambda repo, pr_number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "reviews", "--repo", "acme/repo", "--pr-number", "5", "--json"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert json.loads(out) == payload
+
+
 def test_branch_create(tmp_path, monkeypatch, capsys) -> None:
     import json
     import subprocess
