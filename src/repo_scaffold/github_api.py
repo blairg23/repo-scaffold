@@ -1480,7 +1480,7 @@ def pr_reviews(
     token: str,
 ) -> subprocess.CompletedProcess[str]:
     """Return submitted reviews for a PR (reviewer login, state, submitted_at, body)."""
-    cp = rest("GET", f"/repos/{repo}/pulls/{pr_number}/reviews?per_page=100", token)
+    cp = rest_paginated(f"/repos/{repo}/pulls/{pr_number}/reviews?per_page=100", token)
     if cp.returncode != 0:
         return cp
     try:
