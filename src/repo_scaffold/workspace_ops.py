@@ -153,7 +153,8 @@ def workspace_create(
         if cp.returncode != 0:
             return _err(f"git clone failed: {cp.stderr.strip()}")
         # Rewrite remote URL to strip token from stored config (repos/ is gitignored,
-        # but clean URLs are still better practice)
+        # but clean URLs are still better practice), then store the token via
+        # http.extraHeader so git push/fetch work without prompting a credential dialog.
         if not _clone_url_override:
             _run(
                 [
@@ -162,6 +163,18 @@ def workspace_create(
                     "set-url",
                     "origin",
                     f"https://github.com/{repo}.git",
+                ],
+                cwd=bare,
+            )
+            # Scope auth header to github.com so it doesn't leak to other hosts.
+            # Stored in the bare repo's config (inside gitignored repos/) -- same
+            # security posture as the .env file that holds GH_TOKEN.
+            _run(
+                [
+                    "git",
+                    "config",
+                    "http.https://github.com/.extraHeader",
+                    f"Authorization: Bearer {token}",
                 ],
                 cwd=bare,
             )
