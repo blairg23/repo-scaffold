@@ -1,6 +1,8 @@
 # repo-scaffold
 
+[![CI](https://github.com/blairg23/repo-scaffold/actions/workflows/ci.yml/badge.svg)](https://github.com/blairg23/repo-scaffold/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/blairg23/repo-scaffold/graph/badge.svg)](https://codecov.io/gh/blairg23/repo-scaffold)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 `repo-scaffold` is a repo operations toolkit with seven modes:
 
