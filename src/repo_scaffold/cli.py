@@ -38,6 +38,7 @@ from .github_api import (
     pr_rerun,
     pr_resolve_thread,
     pr_review_threads,
+    pr_request_reviewer,
     pr_reviews,
     pr_update,
     pr_view,
@@ -1183,6 +1184,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--pr-number", required=True, type=int, dest="pr_number"
     )
     pr_list_comments_cmd.add_argument("--json", action="store_true", dest="json_output")
+
+    pr_request_reviewer_cmd = pr_sub.add_parser(
+        "request-reviewer", help="Request one or more reviewers on a PR"
+    )
+    pr_request_reviewer_cmd.add_argument("--repo", required=True)
+    pr_request_reviewer_cmd.add_argument(
+        "--pr-number", required=True, type=int, dest="pr_number"
+    )
+    pr_request_reviewer_cmd.add_argument(
+        "--reviewer",
+        action="append",
+        dest="reviewers",
+        required=True,
+        metavar="USER",
+        help="GitHub username to request (repeatable)",
+    )
 
     branch_cmd = subparsers.add_parser("branch", help="Manage GitHub branches")
     branch_sub = branch_cmd.add_subparsers(dest="branch_command", required=True)
@@ -2546,6 +2563,19 @@ def main(argv: list[str] | None = None) -> int:
                     body = (c.get("body") or "").strip()
                     print(f"{author} on {path}:{line}")
                     print(f"  {body[:200]}")
+            return 0
+
+        if ns.pr_command == "request-reviewer":
+            cp = pr_request_reviewer(target_repo, ns.pr_number, token, ns.reviewers)
+            if cp.returncode not in (0, 201):
+                print(
+                    cp.stderr.strip() or "Failed requesting reviewer.",
+                    file=sys.stderr,
+                )
+                return 1
+            data = _json.loads(cp.stdout)
+            requested = [r.get("login", "") for r in data.get("requested_reviewers", [])]
+            print(f"Reviewers requested on PR #{ns.pr_number}: {', '.join(requested)}")
             return 0
 
     if ns.mode == "branch":

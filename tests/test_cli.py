@@ -2753,3 +2753,38 @@ def test_body_file_non_utf8_exits_cleanly(
             ]
         )
     assert "UTF-8" in str(exc.value)
+
+
+def test_pr_request_reviewer(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    payload = {
+        "number": 42,
+        "requested_reviewers": [{"login": "blairg23"}],
+    }
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_request_reviewer",
+        lambda repo, pr_number, token, reviewers: subprocess.CompletedProcess(
+            args=[], returncode=201, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(
+        [
+            "pr",
+            "request-reviewer",
+            "--repo",
+            "acme/repo",
+            "--pr-number",
+            "42",
+            "--reviewer",
+            "blairg23",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "blairg23" in out
+    assert "42" in out
