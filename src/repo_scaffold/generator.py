@@ -450,8 +450,8 @@ def _render_gitignore(languages: Iterable[str]) -> str:
         "# Repo-scaffold local metadata",
         ".repo-scaffold/",
         "",
-        "# Local generated artifacts",
-        "artifacts/",
+        "# Local machine-only data",
+        "local/",
         "",
         "# Logs",
         "*.log",
@@ -753,7 +753,7 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
             "",
             "## Repo-scaffold GitHub workflow",
             "",
-            "- Keep repo planning markdown in `artifacts/tickets/`.",
+            "- Keep repo planning markdown in a directory of your choice; point repo-scaffold at it with `--source` or `GITHUB_TICKETS_DIR` in `.env`.",
             "- The canonical repo project metadata file is `.repo-scaffold/project.json` once a project has been created or synced.",
             "- `AGENTS.md` tells local agents to treat `GH_REPO` and `.repo-scaffold/project.json` as the repo-local GitHub context.",
             "- Prefer `gh auth login` or an OS-backed credential manager for local GitHub auth; use `.env` only when you intentionally want token-based local scripting.",
@@ -805,8 +805,11 @@ GITHUB_REPO={name}
 # GITHUB_PROJECT_TITLE=YOUR_FIXED_PROJECT_TITLE
 # GITHUB_PROJECT_TITLE_TEMPLATE={{repo}} Roadmap
 
-# Optional markdown backlog source override:
-# GITHUB_TICKETS_DIR=artifacts/tickets
+# Markdown backlog source directory (required for import backlog / apply backlog):
+# GITHUB_TICKETS_DIR=/path/to/your/tickets
+
+# Default output directory for init/create (overridden by --out):
+# SCAFFOLD_OUTPUT_DIR=/path/to/your/projects
 
 # Classic PAT for GitHub Projects v2 commands run from WSL / Claude Code.
 # Keep the export prefix so child processes inherit it.
@@ -898,8 +901,8 @@ Format: subject line (imperative mood) + blank line + body.
 ## Project context
 
 - If `.repo-scaffold/project.json` exists, it is the canonical GitHub Project metadata for this repo.
-- Planning markdown lives in `artifacts/tickets/`.
-- Imported backlog JSON lives in `artifacts/backlog/issues.json`.
+- Planning markdown lives wherever you keep it; point repo-scaffold at it with `--source` or `GITHUB_TICKETS_DIR` in `.env`.
+- Imported backlog JSON lives in `local/<owner>/<repo>/backlog.json` (gitignored).
 - `GH_REPO` (set in `.env`) is the canonical repo identity for this workspace (e.g. `owner/repo`).
 
 ---
@@ -3427,4 +3430,4 @@ def remove_tree(path: Path) -> None:
 
 
 def default_output_path(name: str) -> Path:
-    return Path("out") / name
+    return Path(name)
