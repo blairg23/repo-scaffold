@@ -922,3 +922,91 @@ def test_pr_reviews_api_error_propagates() -> None:
     with patch("urllib.request.urlopen", side_effect=_http_error(404, "Not Found")):
         cp = github_api.pr_reviews("acme/repo", 0, "tok")
     assert cp.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# Repo labels
+# ---------------------------------------------------------------------------
+
+
+def test_label_list_success() -> None:
+    payload = json.dumps([{"name": "bug", "color": "ee0701"}])
+    with patch("urllib.request.urlopen", return_value=_mock_resp(200, payload)):
+        cp = github_api.label_list("acme/repo", "tok")
+    assert cp.returncode == 0
+    assert json.loads(cp.stdout)[0]["name"] == "bug"
+
+
+def test_label_list_api_error_propagates() -> None:
+    with patch("urllib.request.urlopen", side_effect=_http_error(404, "Not Found")):
+        cp = github_api.label_list("acme/repo", "tok")
+    assert cp.returncode != 0
+
+
+def test_label_create_success() -> None:
+    payload = json.dumps({"name": "bug", "color": "ee0701"})
+    with patch("urllib.request.urlopen", return_value=_mock_resp(201, payload)) as m:
+        cp = github_api.label_create(
+            "acme/repo", "bug", "#ee0701", "tok", "Bug reports"
+        )
+    assert cp.returncode == 0
+    sent_body = json.loads(m.call_args[0][0].data)
+    assert sent_body == {"name": "bug", "color": "ee0701", "description": "Bug reports"}
+
+
+def test_label_create_api_error_propagates() -> None:
+    with patch(
+        "urllib.request.urlopen", side_effect=_http_error(422, "already_exists")
+    ):
+        cp = github_api.label_create("acme/repo", "bug", "ee0701", "tok")
+    assert cp.returncode != 0
+
+
+def test_label_delete_success() -> None:
+    with patch("urllib.request.urlopen", return_value=_mock_resp(204, "")):
+        cp = github_api.label_delete("acme/repo", "good first issue", "tok")
+    assert cp.returncode == 0
+
+
+def test_label_delete_api_error_propagates() -> None:
+    with patch("urllib.request.urlopen", side_effect=_http_error(404, "Not Found")):
+        cp = github_api.label_delete("acme/repo", "bug", "tok")
+    assert cp.returncode != 0
+
+
+def test_label_apply_preset_creates_missing_labels() -> None:
+    existing = json.dumps([{"name": "needs-triage"}])
+    created_payload = json.dumps({"name": "x"})
+    responses = [_mock_resp(200, existing)] + [
+        _mock_resp(201, created_payload) for _ in github_api.STANDARD_LABELS[1:]
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses):
+        cp = github_api.label_apply_preset("acme/repo", "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert "needs-triage" not in result["created"]
+    assert len(result["created"]) == len(github_api.STANDARD_LABELS) - 1
+    assert result["skipped"] == 1
+
+
+def test_label_apply_preset_list_error_propagates() -> None:
+    with patch("urllib.request.urlopen", side_effect=_http_error(500, "boom")):
+        cp = github_api.label_apply_preset("acme/repo", "tok")
+    assert cp.returncode != 0
+
+
+def test_label_apply_preset_unparseable_labels_returns_err() -> None:
+    with patch("urllib.request.urlopen", return_value=_mock_resp(200, "not json")):
+        cp = github_api.label_apply_preset("acme/repo", "tok")
+    assert cp.returncode != 0
+    assert "Failed to parse" in cp.stderr
+
+
+def test_label_apply_preset_create_error_propagates() -> None:
+    existing = json.dumps([])
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[_mock_resp(200, existing), _http_error(422, "boom")],
+    ):
+        cp = github_api.label_apply_preset("acme/repo", "tok")
+    assert cp.returncode != 0
