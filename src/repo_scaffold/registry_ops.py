@@ -68,7 +68,8 @@ def register_repo(
     path: Path | None = None,
 ) -> RegistryEntry:
     entries = load_registry(path)
-    entry = RegistryEntry(repo=repo, local_path=local_path, notes=notes)
+    resolved_path = str(Path(local_path).resolve())
+    entry = RegistryEntry(repo=repo, local_path=resolved_path, notes=notes)
     entries[repo] = entry
     save_registry(entries, path)
     return entry

@@ -2795,6 +2795,8 @@ def test_repo_register_list_forget_roundtrip(
 ) -> None:
     registry_path = tmp_path / "registry.json"
     monkeypatch.setenv("REPO_SCAFFOLD_REGISTRY_PATH", str(registry_path))
+    local_dir = tmp_path / "acme-repo"
+    expected_path = str(local_dir.resolve())
 
     rc = main(
         [
@@ -2803,19 +2805,19 @@ def test_repo_register_list_forget_roundtrip(
             "--repo",
             "acme/repo",
             "--path",
-            "/local/acme-repo",
+            str(local_dir),
             "--notes",
             "primary checkout",
         ]
     )
     assert rc == 0
     stdout = capsys.readouterr().out
-    assert "Registered acme/repo -> /local/acme-repo" in stdout
+    assert f"Registered acme/repo -> {expected_path}" in stdout
 
     rc = main(["repo", "list"])
     assert rc == 0
     stdout = capsys.readouterr().out
-    assert "acme/repo -> /local/acme-repo" in stdout
+    assert f"acme/repo -> {expected_path}" in stdout
     assert "primary checkout" in stdout
 
     rc = main(["repo", "forget", "--repo", "acme/repo"])
@@ -2972,6 +2974,49 @@ def test_sync_rules_no_drift_skips_apply(
     assert apply_called is False
     stdout = capsys.readouterr().out
     assert "No drift found" in stdout
+
+
+def test_sync_rules_returns_nonzero_when_apply_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/drifted", local_path="/local/drifted")],
+    )
+
+    def _fake_check(*, repo_dir, repo, out):
+        return SettingsCheckSummary(repo=repo, passed=6, failed=1, skipped=0, drifts=())
+
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn):
+        raise RuntimeError("apply failed")
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    rc = main(["sync", "rules", "--all"])
+    assert rc == 1
+
+
+def test_sync_rules_returns_nonzero_when_check_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/broken", local_path="/local/broken")],
+    )
+
+    def _fake_check(*, repo_dir, repo, out):
+        raise RuntimeError("check failed")
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+
+    rc = main(["sync", "rules", "--all"])
+    assert rc == 1
 
 
 def test_check_settings_uses_resolved_languages(

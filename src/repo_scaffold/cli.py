@@ -1997,6 +1997,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
         drifted: list[tuple[str, Path]] = []
+        errors = 0
         for target_repo, repo_dir in targets:
             try:
                 drift_summary: SettingsCheckSummary = check_repository_settings(
@@ -2006,6 +2007,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
+                errors += 1
                 continue
             print(
                 f"  {target_repo}: {drift_summary.failed} drifted, {len(drift_summary.drifts)} drift items"
@@ -2016,7 +2018,7 @@ def main(argv: list[str] | None = None) -> int:
         if not drifted:
             print("")
             print("No drift found. Nothing to apply.")
-            return 0
+            return 1 if errors else 0
 
         print("")
         applied = 0
@@ -2037,13 +2039,14 @@ def main(argv: list[str] | None = None) -> int:
                 applied += 1
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
+                errors += 1
 
         print("")
         print("Summary:")
         print(f"  repos checked: {len(targets)}")
         print(f"  repos drifted: {len(drifted)}")
         print(f"  repos applied: {applied}")
-        return 0
+        return 1 if errors else 0
 
     if ns.mode == "project":
         repo_dir = Path(ns.path)
