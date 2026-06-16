@@ -110,7 +110,7 @@ def _render_issue_epic_template() -> str:
     fallback = """---
 name: Epic
 about: Track a multi-ticket initiative
-title: "[EPIC] "
+title: ""
 labels: ["epic", "needs-triage"]
 assignees: []
 ---
@@ -141,7 +141,7 @@ def _render_issue_ticket_template() -> str:
     fallback = """---
 name: Ticket
 about: Describe one implementation task
-title: "[Ticket] "
+title: ""
 labels: ["needs-triage"]
 assignees: []
 ---

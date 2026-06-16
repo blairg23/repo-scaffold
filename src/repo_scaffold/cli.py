@@ -27,6 +27,7 @@ from .github_api import (
     issue_delete,
     issue_label,
     issue_list,
+    issue_sync_hierarchy,
     issue_update,
     label_apply_preset,
     label_create,
@@ -1197,6 +1198,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     issue_sub_issue_cmd.add_argument(
         "--child", type=int, required=True, dest="child_number", metavar="N"
+    )
+
+    issue_sync_hierarchy_cmd = issue_sub.add_parser(
+        "sync-hierarchy",
+        help="Backfill parent/child sub-issue links from the epic label convention",
+    )
+    issue_sync_hierarchy_cmd.add_argument("--repo", required=True)
+    issue_sync_hierarchy_cmd.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the backfill (default is dry-run)",
     )
 
     pr_cmd = subparsers.add_parser("pr", help="Interact with GitHub pull requests")
@@ -2597,6 +2609,32 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"Issue #{ns.child_number} linked as sub-issue of #{ns.parent_number}."
             )
+            return 0
+
+        if ns.issue_command == "sync-hierarchy":
+            cp = issue_sync_hierarchy(target_repo, token, apply=ns.apply)
+            if cp.returncode != 0:
+                print(
+                    cp.stderr.strip() or "Failed syncing issue hierarchy.",
+                    file=sys.stderr,
+                )
+                return 1
+            report = _json.loads(cp.stdout)
+            mode = "APPLY" if ns.apply else "DRY RUN"
+            print(f"Hierarchy sync for {target_repo} ({mode})")
+            for key in (
+                "linked",
+                "already_linked",
+                "would_link",
+                "conflict",
+                "ambiguous",
+                "unaffiliated",
+                "errors",
+            ):
+                items = report.get(key, [])
+                print(f"  {key}: {len(items)}")
+                for item in items:
+                    print(f"    {item}")
             return 0
 
     if ns.mode == "pr":

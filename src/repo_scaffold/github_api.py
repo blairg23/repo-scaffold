@@ -13,6 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 _GITHUB_API = "https://api.github.com"
 _GITHUB_GRAPHQL = "https://api.github.com/graphql"
@@ -140,7 +141,7 @@ def graphql(
         payload = json.loads(cp.stdout)
     except json.JSONDecodeError:
         return _err("GraphQL response was not valid JSON.")
-    if "errors" in payload and "data" not in payload:
+    if "errors" in payload:
         msgs = "; ".join(e.get("message", "") for e in payload["errors"])
         return _err(msgs)
     return _ok(json.dumps(payload.get("data", {})))
@@ -1176,6 +1177,132 @@ def issue_add_sub_issue(
         return _ok(json.dumps(result))
     except (json.JSONDecodeError, AttributeError):
         return _err("Unexpected response from addSubIssue.")
+
+
+_GQL_ISSUE_PARENT = """
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) { parent { number } }
+  }
+}
+"""
+
+
+def issue_sync_hierarchy(
+    repo: str,
+    token: str,
+    apply: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    """Backfill native parent/child sub-issue links from the epic label convention.
+
+    Groups open issues by every `epic:<slug>` label. Within each group, the
+    issue(s) that also carry the bare `epic` label are header candidates.
+    Exactly one header resolves the group; zero or multiple are reported as
+    ambiguous and skipped. Non-header members are linked under the header
+    unless already linked (no-op) or already parented by a different issue
+    (conflict, never overwritten automatically).
+    """
+    owner, name = repo.split("/", 1)
+    cp = issue_list(repo, token, state="open")
+    if cp.returncode != 0:
+        return cp
+    try:
+        issues = json.loads(cp.stdout)
+    except json.JSONDecodeError:
+        return _err("issue_list response was not valid JSON.")
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    unaffiliated: list[int] = []
+    for issue in issues:
+        labels = [
+            lbl["name"] if isinstance(lbl, dict) else lbl
+            for lbl in issue.get("labels", [])
+        ]
+        slugs = [lbl.split(":", 1)[1] for lbl in labels if lbl.startswith("epic:")]
+        if not slugs:
+            unaffiliated.append(issue["number"])
+            continue
+        for slug in slugs:
+            groups.setdefault(slug, []).append(
+                {"number": issue["number"], "labels": labels}
+            )
+
+    report: dict[str, list[Any]] = {
+        "linked": [],
+        "already_linked": [],
+        "would_link": [],
+        "conflict": [],
+        "ambiguous": [],
+        "unaffiliated": list(unaffiliated),
+        "errors": [],
+    }
+
+    for slug, members in groups.items():
+        headers = [m for m in members if "epic" in m["labels"]]
+        if len(headers) != 1:
+            report["ambiguous"].append(
+                {
+                    "slug": slug,
+                    "candidates": [m["number"] for m in headers]
+                    or [m["number"] for m in members],
+                }
+            )
+            continue
+        header_number: int = headers[0]["number"]
+        for member in members:
+            child_number: int = member["number"]
+            if child_number == header_number:
+                continue
+            parent_cp = graphql(
+                _GQL_ISSUE_PARENT,
+                {"owner": owner, "repo": name, "number": child_number},
+                token,
+            )
+            if parent_cp.returncode != 0:
+                report["errors"].append(
+                    {"child": child_number, "message": parent_cp.stderr}
+                )
+                continue
+            try:
+                parent_data = (
+                    json.loads(parent_cp.stdout)
+                    .get("repository", {})
+                    .get("issue", {})
+                    .get("parent")
+                )
+            except (json.JSONDecodeError, AttributeError):
+                parent_data = None
+            if parent_data is None:
+                if apply:
+                    link_cp = issue_add_sub_issue(
+                        owner, name, header_number, child_number, token
+                    )
+                    if link_cp.returncode != 0:
+                        report["errors"].append(
+                            {"child": child_number, "message": link_cp.stderr}
+                        )
+                        continue
+                    report["linked"].append(
+                        {"epic": header_number, "child": child_number}
+                    )
+                else:
+                    report["would_link"].append(
+                        {"epic": header_number, "child": child_number}
+                    )
+            elif parent_data.get("number") == header_number:
+                report["already_linked"].append(
+                    {"epic": header_number, "child": child_number}
+                )
+            else:
+                report["conflict"].append(
+                    {
+                        "epic": header_number,
+                        "child": child_number,
+                        "current_parent": parent_data.get("number"),
+                    }
+                )
+
+    return _ok(json.dumps(report))
 
 
 # ---------------------------------------------------------------------------

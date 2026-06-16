@@ -2172,6 +2172,57 @@ def test_issue_add_sub_issue_failure_returns_1(
     assert rc == 1
 
 
+def test_issue_sync_hierarchy_dry_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_sync_hierarchy",
+        lambda repo, token, apply=False: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "linked": [],
+                    "already_linked": [{"epic": 1, "child": 2}],
+                    "would_link": [{"epic": 1, "child": 3}],
+                    "conflict": [],
+                    "ambiguous": [],
+                    "unaffiliated": [4],
+                    "errors": [],
+                }
+            ),
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(["issue", "sync-hierarchy", "--repo", "acme/repo"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "DRY RUN" in out
+    assert "would_link: 1" in out
+
+
+def test_issue_sync_hierarchy_apply_failure_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_sync_hierarchy",
+        lambda repo, token, apply=False: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="boom"
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(["issue", "sync-hierarchy", "--repo", "acme/repo", "--apply"])
+    assert rc == 1
+
+
 # ---------------------------------------------------------------------------
 # pr command tests
 # ---------------------------------------------------------------------------
