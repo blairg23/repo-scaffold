@@ -20,7 +20,7 @@ Workflow model:
 
 - run `init` to generate local repo content
 - run `create` to create/push the remote repository + baseline settings
-- run `import backlog` inside a target repo when you want to turn `artifacts/tickets/*.md` into `artifacts/backlog/issues.json`
+- run `import backlog` inside a target repo when you want to turn markdown tickets into `local/<owner>/<repo>/backlog.json`
 - run `apply ...` from this toolkit repo to manage templates/CI/dependabot/backlog/rules for any target repo
 - run `check ...` from this toolkit repo to verify current GitHub settings against the repo-scaffold baseline
 - run `project ...` from this toolkit repo when you need to inspect or manage GitHub Projects directly
@@ -54,7 +54,7 @@ Defaults:
 
 - `--name` defaults to `GITHUB_REPO` (if set), otherwise `repo-scaffold-e2e-<UTC timestamp>`
 - `--languages` defaults to `go,python,react`
-- output defaults to `./out/<name>`
+- output defaults to `./<name>` relative to CWD, or `$SCAFFOLD_OUTPUT_DIR/<name>` when that env var is set in `.env`
 - scaffolds include `.pre-commit-config.yaml`
 - Python scaffolds include `tox.ini`; generated CI runs `tox` (`lint`, `type`, `coverage`)
 - scaffolds include `.env.example`, `.claude/settings.local.json`, and `scripts/first_time_setup.sh` for local GitHub Projects v2 setup
@@ -77,7 +77,7 @@ poetry run repo-scaffold create --path /tmp/payments-api --repo acme/payments-ap
 
 Defaults:
 
-- if `--path` is omitted, defaults to `./out/<repo-name>` and auto-runs `init` when the folder is missing or empty
+- if `--path` is omitted, defaults to `./<repo-name>` (or `$SCAFFOLD_OUTPUT_DIR/<repo-name>`) and auto-runs `init` when the folder is missing or empty
 - `<repo-name>` defaults in this order: `--repo` name part, then `GITHUB_REPO` (or `GH_REPO`/`GITHUB_REPOSITORY`), then `repo-scaffold-e2e-<UTC timestamp>`
 - `--repo` is the primary target selector (`owner/repo`)
 - `--name` is a fallback name only when `--repo` is omitted
@@ -118,10 +118,10 @@ poetry run repo-scaffold import backlog --path /path/to/repo --yes
 
 Behavior:
 
-- defaults source markdown to `<path>/artifacts/tickets`
-- if `<path>/artifacts/tickets` is missing, falls back to `<path>/tickets`
-- if both are missing, falls back to legacy `<path>/.future_tickets`
-- defaults output JSON to `<path>/artifacts/backlog/issues.json`
+- requires `--source <dir>` or `GITHUB_TICKETS_DIR` in `.env`; no default source directory is assumed
+- with `--repo owner/repo`: output goes to `local/<owner>/<repo>/backlog.json` (CWD-relative, gitignored)
+- without `--repo`: output goes to `<path>/local/backlog.json`
+- explicit `--out <path>` overrides the output location
 - accepts the same overwrite-policy flags as other file-writing commands: `--yes`, `--no`, `--force`, `--dry-run`, `--backup`
 - scans `*.md` recursively under the source directory
 - imports explicit epic markdown files and ticket markdown files
@@ -189,7 +189,7 @@ Behavior:
 - `create` and `edit` are standard write operations and support `--dry-run`
 - destructive commands (`delete`, `item-delete`) require `--danger`
 - destructive commands still prompt `y/N` unless `--yes` is passed
-- destructive commands write a backup snapshot to `<path>/artifacts/project-backups` by default
+- destructive commands write a backup snapshot to `local/<owner>/backups/` (CWD-relative, gitignored) by default
 - `sync-metadata`, `create`, `edit`, and project restores keep `<path>/.repo-scaffold/project.json` aligned with the resolved project
 - the summary prints an exact `project undo --backup-file ...` command after a destructive write
 - undo restores project membership and draft items, but does not recreate custom project fields or field values
@@ -205,7 +205,7 @@ Typical destructive flow:
 ```bash
 poetry run repo-scaffold project items --project-owner acme --project-title "Roadmap"
 poetry run repo-scaffold project item-delete --project-owner acme --project-title "Roadmap" --issue-number 42 --danger --yes
-poetry run repo-scaffold project undo --backup-file /path/to/artifacts/project-backups/project-item-delete-<timestamp>-<suffix>.json
+poetry run repo-scaffold project undo --backup-file local/<owner>/backups/project-item-delete-<timestamp>-<suffix>.json
 ```
 
 ### `issue`
@@ -360,29 +360,29 @@ Use default project title from repo name (or env override) with one flag:
 poetry run repo-scaffold apply backlog --path /path/to/repo --repo OWNER/REPO --with-project
 ```
 
-If `--file` is omitted and markdown source exists under `<repo-path>/artifacts/tickets` (or fallback source dirs), `apply backlog` auto-imports markdown into backlog JSON before applying. You can also override the markdown source with `GITHUB_TICKETS_DIR`. That means you can use repo-scaffold as the source-of-truth workspace:
+If `--file` is omitted and `GITHUB_TICKETS_DIR` is set, `apply backlog` auto-imports markdown into backlog JSON before applying. Set `GITHUB_TICKETS_DIR` in `.env` to point at your ticket directory:
 
 ```bash
 poetry run repo-scaffold apply backlog --repo OWNER/REPO --with-project --dry-run
 poetry run repo-scaffold apply backlog --repo OWNER/REPO --with-project
 ```
 
-When the markdown tickets live in this repo but the target backlog belongs to another checkout, pass the target repo path and point `GITHUB_TICKETS_DIR` at this repo's ticket directory. Use an absolute path because relative `GITHUB_TICKETS_DIR` values resolve from `--path`.
+When the markdown tickets live in this repo but the target backlog belongs to another checkout, pass the target repo path and point `GITHUB_TICKETS_DIR` at your ticket directory. Use an absolute path because relative `GITHUB_TICKETS_DIR` values resolve from `--path`.
 
 ```bash
-GITHUB_TICKETS_DIR="$PWD/artifacts/tickets" \
+GITHUB_TICKETS_DIR="/absolute/path/to/tickets" \
   poetry run repo-scaffold apply backlog \
   --path /path/to/gallery-dl-wrapper \
   --repo OWNER/gallery-dl-wrapper \
   --dry-run
 
-GITHUB_TICKETS_DIR="$PWD/artifacts/tickets" \
+GITHUB_TICKETS_DIR="/absolute/path/to/tickets" \
   poetry run repo-scaffold apply backlog \
   --path /path/to/gallery-dl-wrapper \
   --repo OWNER/gallery-dl-wrapper
 ```
 
-When `--with-project` resolves or creates a GitHub Project, repo-scaffold also writes `<repo-path>/.repo-scaffold/project.json`. That gives the target repo a stable local pointer to its roadmap project for repo-local agents and scripts without depending on disposable `artifacts/`.
+When `--with-project` resolves or creates a GitHub Project, repo-scaffold also writes `<repo-path>/.repo-scaffold/project.json`. That gives the target repo a stable local pointer to its roadmap project for repo-local agents and scripts.
 
 SOP for an older repo that already has a GitHub Project:
 
@@ -401,21 +401,14 @@ poetry run repo-scaffold project sync-metadata \
 poetry run repo-scaffold import backlog --path /path/to/repo --yes
 ```
 
-Default paths:
+Paths:
 
-1. markdown source: `<repo-path>/artifacts/tickets`
-2. JSON output: `<repo-path>/artifacts/backlog/issues.json`
+- markdown source: `--source <dir>` or `GITHUB_TICKETS_DIR` in `.env` (required; no default)
+- JSON output with `--repo owner/repo`: `local/<owner>/<repo>/backlog.json` (CWD-relative, gitignored)
+- JSON output without `--repo`: `<path>/local/backlog.json`
+- explicit `--out <path>` overrides the output location
 
-Env override:
-
-- `GITHUB_TICKETS_DIR=/absolute/or/relative/path`
-- relative paths resolve from `<repo-path>`
-- explicit `--source` still wins over the env var
-
-Legacy fallback:
-
-- if `<repo-path>/artifacts/tickets` does not exist, import tries `<repo-path>/tickets`
-- if `<repo-path>/tickets` also does not exist, import uses `<repo-path>/.future_tickets`
+Source resolution order: `--source` > `GITHUB_TICKETS_DIR` > error.
 
 Supported markdown import conventions:
 
@@ -424,21 +417,20 @@ Supported markdown import conventions:
 - directory grouping for ticket-to-epic mapping
 - `epic:<KEY>` labels for explicit ticket-to-epic association
 
-If you already have JSON, or after import completes, `apply backlog` resolves `--file` with this fallback order:
-1. `local/backlog/issues.json` (when present in the current working directory)
-2. `<repo-path>/artifacts/backlog/issues.json` (where `--path` defaults to `.`)
-3. legacy `<repo-path>/backlog/issues.json`
+If you already have JSON, or after import completes, `apply backlog` resolves `--file` in this order:
+1. `local/<owner>/<repo>/backlog.json` (CWD-relative, when `--repo` is set)
+2. `<repo-path>/local/backlog.json` (when `--repo` is omitted)
 
 Completed sample file: `examples/backlog/issues.sample.json`.
-Workspace-local private path in this repo: `local/backlog/issues.json` (git-ignored).
+Workspace-local private path: `local/<owner>/<repo>/backlog.json` (git-ignored under `local/`).
 
-If you apply backlog to a different `--path` repo, pass an absolute `--file` path:
+If you apply backlog to a different `--path` repo, pass an explicit `--file` path:
 
 ```bash
 poetry run repo-scaffold apply backlog \
   --path /path/to/target/repo \
   --repo OWNER/REPO \
-  --file "$(pwd)/local/backlog/issues.json"
+  --file "$(pwd)/local/OWNER/REPO/backlog.json"
 ```
 
 ```json
@@ -514,7 +506,7 @@ Edit these source templates to customize generated `.github` markdown:
 - `src/repo_scaffold/templates/github/ISSUE_TEMPLATE/epic.md`
 - `src/repo_scaffold/templates/github/ISSUE_TEMPLATE/ticket.md`
 
-`init` does not create a backlog file by default. Keep backlog JSON in this toolkit repo (for example `local/backlog/issues.json`); `apply backlog` now picks it up automatically when `--file` is omitted.
+`init` does not create a backlog file by default. After running `import backlog --repo OWNER/REPO`, the compiled JSON lands at `local/<owner>/<repo>/backlog.json` and `apply backlog` picks it up automatically when `--file` is omitted.
 
 ## PR Creation Workflow
 
