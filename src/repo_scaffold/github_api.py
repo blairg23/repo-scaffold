@@ -1195,15 +1195,17 @@ def issue_sync_hierarchy(
 ) -> subprocess.CompletedProcess[str]:
     """Backfill native parent/child sub-issue links from the epic label convention.
 
-    Groups open issues by every `epic:<slug>` label. Within each group, the
-    issue(s) that also carry the bare `epic` label are header candidates.
-    Exactly one header resolves the group; zero or multiple are reported as
-    ambiguous and skipped. Non-header members are linked under the header
-    unless already linked (no-op) or already parented by a different issue
-    (conflict, never overwritten automatically).
+    Groups all issues (open and closed) by every `epic:<slug>` label. Within
+    each group, the issue(s) that also carry the bare `epic` label are header
+    candidates. Exactly one header resolves the group; zero or multiple are
+    reported as ambiguous and skipped. Non-header members are linked under the
+    header unless already linked (no-op) or already parented by a different
+    issue (conflict, never overwritten automatically). Closed issues are
+    included so headers/children that have since been closed are still
+    correctly grouped and linked.
     """
     owner, name = repo.split("/", 1)
-    cp = issue_list(repo, token, state="open")
+    cp = issue_list(repo, token, state="all")
     if cp.returncode != 0:
         return cp
     try:
