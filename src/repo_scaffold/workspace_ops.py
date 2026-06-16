@@ -10,9 +10,14 @@ import urllib.request
 from pathlib import Path
 
 
-def _run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    args: list[str], cwd: Path | None = None, bare: bool = False
+) -> subprocess.CompletedProcess[str]:
+    git_args = args
+    if bare and args and args[0] == "git":
+        git_args = ["git", "-c", "safe.bareRepository=all"] + args[1:]
     return subprocess.run(
-        args,
+        git_args,
         cwd=str(cwd) if cwd else None,
         capture_output=True,
         text=True,
@@ -158,7 +163,7 @@ def _setup_bare_auth(bare: Path, token: str) -> None:
 
     creds_posix = creds_file.as_posix()
     # Empty string resets the credential helper list, overriding the system GCM
-    _run(["git", "config", "credential.helper", ""], cwd=bare)
+    _run(["git", "config", "credential.helper", ""], cwd=bare, bare=True)
     _run(
         [
             "git",
@@ -168,6 +173,7 @@ def _setup_bare_auth(bare: Path, token: str) -> None:
             f'store --file "{creds_posix}"',
         ],
         cwd=bare,
+        bare=True,
     )
 
 
@@ -214,34 +220,57 @@ def workspace_create(
                     f"https://github.com/{repo}.git",
                 ],
                 cwd=bare,
+                bare=True,
             )
             _setup_bare_auth(bare, token)
-        _run(["git", "symbolic-ref", "HEAD", f"refs/heads/{base}"], cwd=bare)
+        _run(["git", "symbolic-ref", "HEAD", f"refs/heads/{base}"], cwd=bare, bare=True)
     else:
         if not _clone_url_override:
             _setup_bare_auth(bare, token)
+        # Fetch to remote-tracking refs so we never touch branches checked out
+        # in existing worktrees (git refuses to update those via local ref mapping).
         cp = _run(
             [
                 "git",
                 "fetch",
                 "origin",
                 "--prune",
-                "refs/heads/*:refs/heads/*",
+                "+refs/heads/*:refs/remotes/origin/*",
             ],
             cwd=bare,
+            bare=True,
         )
         if cp.returncode != 0:
             return _err(f"git fetch failed: {cp.stderr.strip()}")
+        # Sync the base branch local ref so worktree add can use it by name.
+        _run(
+            ["git", "fetch", "origin", f"+refs/heads/{base}:refs/heads/{base}"],
+            cwd=bare,
+            bare=True,
+        )
+        # Also sync the requested branch's local ref, if it exists on origin, so an
+        # existing remote branch is checked out at its current commit rather than
+        # falling through to a stale local ref or a fresh branch off base below.
+        _run(
+            ["git", "fetch", "origin", f"+refs/heads/{branch}:refs/heads/{branch}"],
+            cwd=bare,
+            bare=True,
+        )
 
     cp = _run(
-        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=bare
+        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        cwd=bare,
+        bare=True,
     )
     if cp.returncode == 0:
-        cp = _run(["git", "worktree", "add", str(worktree), branch], cwd=bare)
+        cp = _run(
+            ["git", "worktree", "add", str(worktree), branch], cwd=bare, bare=True
+        )
     else:
         cp = _run(
             ["git", "worktree", "add", "-b", branch, str(worktree), base],
             cwd=bare,
+            bare=True,
         )
 
     if cp.returncode != 0:
@@ -289,7 +318,7 @@ def workspace_list(
         bare = repo_dir / ".bare"
         if not bare.exists():
             continue
-        cp = _run(["git", "worktree", "list", "--porcelain"], cwd=bare)
+        cp = _run(["git", "worktree", "list", "--porcelain"], cwd=bare, bare=True)
         if cp.returncode != 0:
             continue
         label = f"{repo_dir.parent.name}/{repo_dir.name}"
@@ -325,11 +354,13 @@ def workspace_delete(
     if not bare.exists():
         return _err(f"Bare repo not found at {bare}")
 
-    cp = _run(["git", "worktree", "remove", "--force", str(worktree)], cwd=bare)
+    cp = _run(
+        ["git", "worktree", "remove", "--force", str(worktree)], cwd=bare, bare=True
+    )
     if cp.returncode != 0:
         return _err(f"git worktree remove failed: {cp.stderr.strip()}")
 
-    _run(["git", "worktree", "prune"], cwd=bare)
+    _run(["git", "worktree", "prune"], cwd=bare, bare=True)
     return _ok(f"Deleted worktree at {worktree}")
 
 
@@ -344,7 +375,7 @@ def workspace_prune(
     if not bare.exists():
         return _err(f"Bare repo not found at {bare}")
 
-    remote_cp = _run(["git", "ls-remote", "--heads", "origin"], cwd=bare)
+    remote_cp = _run(["git", "ls-remote", "--heads", "origin"], cwd=bare, bare=True)
     if remote_cp.returncode != 0:
         return _err(f"git ls-remote failed: {remote_cp.stderr.strip()}")
 
@@ -362,11 +393,15 @@ def workspace_prune(
         branch_slug = entry.name
         matched = any(_slug(b) == branch_slug for b in remote_branches)
         if not matched:
-            cp = _run(["git", "worktree", "remove", "--force", str(entry)], cwd=bare)
+            cp = _run(
+                ["git", "worktree", "remove", "--force", str(entry)],
+                cwd=bare,
+                bare=True,
+            )
             if cp.returncode == 0:
                 removed.append(str(entry))
 
-    _run(["git", "worktree", "prune"], cwd=bare)
+    _run(["git", "worktree", "prune"], cwd=bare, bare=True)
 
     if removed:
         return _ok("Pruned:\n" + "\n".join(removed))

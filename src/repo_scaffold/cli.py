@@ -28,6 +28,10 @@ from .github_api import (
     issue_label,
     issue_list,
     issue_update,
+    label_apply_preset,
+    label_create,
+    label_delete,
+    label_list,
     pr_annotations,
     pr_checks,
     pr_comment,
@@ -60,7 +64,6 @@ from .generator import (
     build_dependabot_files,
     build_scaffold_files,
     build_template_files,
-    default_output_path,
     detect_languages_from_repo,
     parse_language_csv,
 )
@@ -73,7 +76,6 @@ from .registry_ops import (
     register_repo,
 )
 from .project_ops import (
-    DEFAULT_PROJECT_BACKUP_REL_DIR,
     ProjectItemsSummary,
     ProjectListSummary,
     ProjectMutationSummary,
@@ -95,10 +97,8 @@ from .project_ops import (
 
 DEFAULT_INIT_NAME_PREFIX = "repo-scaffold-e2e"
 DEFAULT_INIT_LANGUAGES = "go,python,react"
-DEFAULT_BACKLOG_REL_PATH = "artifacts/backlog/issues.json"
-DEFAULT_LOCAL_BACKLOG_SLUG_DIR = "local/backlog"
-DEFAULT_MARKDOWN_BACKLOG_REL_DIR = "artifacts/tickets"
 BACKLOG_TICKETS_DIR_ENV = "GITHUB_TICKETS_DIR"
+SCAFFOLD_OUTPUT_DIR_ENV = "SCAFFOLD_OUTPUT_DIR"
 
 
 def _repo_name_from_repo_ref(raw: str | None) -> str | None:
@@ -271,8 +271,9 @@ def _resolve_repo_targets(
     return [(target_repo, Path.cwd())], None
 
 
-def _local_backlog_slug_path(repo: str) -> Path:
-    return Path.cwd() / DEFAULT_LOCAL_BACKLOG_SLUG_DIR / repo / "issues.json"
+def _local_backlog_path(repo: str) -> Path:
+    # repo is owner/repo — resolves to local/{owner}/{repo}/backlog.json relative to CWD
+    return Path.cwd() / "local" / repo / "backlog.json"
 
 
 def _resolve_backlog_file_path(
@@ -283,20 +284,17 @@ def _resolve_backlog_file_path(
         return backlog_file if backlog_file.is_absolute() else (repo_dir / backlog_file)
 
     if repo:
-        slug_path = _local_backlog_slug_path(repo)
-        if slug_path.exists():
-            return slug_path
-        artifacts_path = repo_dir / DEFAULT_BACKLOG_REL_PATH
-        if artifacts_path.exists():
-            return artifacts_path
+        local_path = _local_backlog_path(repo)
+        if local_path.exists():
+            return local_path
         raise FileNotFoundError(
             f"No backlog file found for {repo!r}. "
-            f"Expected: {slug_path}. "
+            f"Expected: {local_path}. "
             f"Run 'repo-scaffold import backlog --repo {repo}' to generate it, "
             f"or pass --file to specify the path explicitly."
         )
 
-    return repo_dir / DEFAULT_BACKLOG_REL_PATH
+    return repo_dir / "local" / "backlog.json"
 
 
 def _resolve_markdown_source_dir(*, repo_dir: Path, source_arg: str | None) -> Path:
@@ -304,7 +302,10 @@ def _resolve_markdown_source_dir(*, repo_dir: Path, source_arg: str | None) -> P
     if source_value:
         source_dir = Path(source_value)
         return source_dir if source_dir.is_absolute() else (repo_dir / source_dir)
-    return repo_dir / DEFAULT_MARKDOWN_BACKLOG_REL_DIR
+    raise RuntimeError(
+        f"No markdown source directory specified. "
+        f"Pass --source <dir> or set {BACKLOG_TICKETS_DIR_ENV} in .env."
+    )
 
 
 def _find_existing_markdown_source_dir(repo_dir: Path) -> Path | None:
@@ -317,8 +318,14 @@ def _find_existing_markdown_source_dir(repo_dir: Path) -> Path | None:
         raise RuntimeError(
             f"Error: {BACKLOG_TICKETS_DIR_ENV} points to a missing markdown source directory: {resolved}"
         )
-    candidate = repo_dir / DEFAULT_MARKDOWN_BACKLOG_REL_DIR
-    return candidate if candidate.exists() else None
+    return None
+
+
+def _resolve_output_path(name: str) -> Path:
+    base = (os.environ.get(SCAFFOLD_OUTPUT_DIR_ENV) or "").strip()
+    if base:
+        return Path(base) / name
+    return Path(name)
 
 
 def _seed_env_for_parsed_mode(ns: argparse.Namespace) -> None:
@@ -370,7 +377,10 @@ def _add_scaffold_args(parser: argparse.ArgumentParser) -> None:
         choices=[SUPPORTED_LICENSE],
         help="License identifier (only apache-2.0 is currently supported)",
     )
-    parser.add_argument("--out", help="Output path (default: ./out/<name>)")
+    parser.add_argument(
+        "--out",
+        help="Output path (default: $SCAFFOLD_OUTPUT_DIR/<name> or ./<name>)",
+    )
 
 
 def _resolve_body(body: str | None, body_file: str | None) -> str | None:
@@ -435,10 +445,7 @@ def _add_danger_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--backup-dir",
-        help=(
-            "Backup directory for destructive project operations "
-            f"(default: <path>/{DEFAULT_PROJECT_BACKUP_REL_DIR})"
-        ),
+        help="Backup directory for destructive project operations (default: local/<owner>/backups/)",
     )
 
 
@@ -597,9 +604,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--file",
         help=(
             "Backlog JSON path. If omitted, auto-imports from markdown when "
-            "<repo-path>/artifacts/tickets (or fallback source dirs) exists; otherwise resolves "
-            "in this order: ./local/backlog/<owner>/<repo>/issues.json (when --repo is set), "
-            "<repo-path>/artifacts/backlog/issues.json"
+            "GITHUB_TICKETS_DIR is set; otherwise resolves to "
+            "./local/<owner>/<repo>/backlog.json (when --repo is set), "
+            "or <repo-path>/local/backlog.json"
         ),
     )
     apply_backlog_cmd.add_argument(
@@ -1040,7 +1047,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_backlog = import_sub.add_parser(
         "backlog",
         parents=[apply_parent],
-        help="Import markdown backlog files into artifacts/backlog/issues.json",
+        help="Import markdown backlog files into local/<owner>/<repo>/backlog.json",
     )
     import_backlog.add_argument(
         "--path",
@@ -1050,22 +1057,21 @@ def build_parser() -> argparse.ArgumentParser:
     import_backlog.add_argument(
         "--source",
         help=(
-            "Markdown source directory "
-            "(default: <path>/artifacts/tickets; env override: GITHUB_TICKETS_DIR)"
+            "Markdown source directory (required unless GITHUB_TICKETS_DIR is set in .env)"
         ),
     )
     import_backlog.add_argument(
         "--repo",
         help=(
             "Target GitHub repo (owner/repo). When provided and --out is omitted, "
-            "output defaults to local/backlog/<owner>/<repo>/issues.json"
+            "output defaults to local/<owner>/<repo>/backlog.json"
         ),
     )
     import_backlog.add_argument(
         "--out",
         help=(
-            "Backlog JSON output path. Defaults to local/backlog/<owner>/<repo>/issues.json "
-            "when --repo is provided, otherwise <path>/artifacts/backlog/issues.json"
+            "Backlog JSON output path. Defaults to local/<owner>/<repo>/backlog.json "
+            "when --repo is provided, otherwise <path>/local/backlog.json"
         ),
     )
 
@@ -1360,6 +1366,31 @@ def build_parser() -> argparse.ArgumentParser:
     branch_delete_cmd.add_argument("--repo", required=True)
     branch_delete_cmd.add_argument("--name", required=True, help="Branch to delete")
 
+    label_cmd = subparsers.add_parser("label", help="Manage repository labels")
+    label_sub = label_cmd.add_subparsers(dest="label_command", required=True)
+
+    label_list_cmd = label_sub.add_parser("list", help="List all labels in a repo")
+    label_list_cmd.add_argument("--repo", required=True)
+    label_list_cmd.add_argument("--json", action="store_true")
+
+    label_create_cmd = label_sub.add_parser("create", help="Create a label in a repo")
+    label_create_cmd.add_argument("--repo", required=True)
+    label_create_cmd.add_argument("--name", required=True, help="Label name")
+    label_create_cmd.add_argument(
+        "--color", required=True, help="6-char hex color (without #)"
+    )
+    label_create_cmd.add_argument("--description", default="", help="Label description")
+
+    label_delete_cmd = label_sub.add_parser("delete", help="Delete a label from a repo")
+    label_delete_cmd.add_argument("--repo", required=True)
+    label_delete_cmd.add_argument("--name", required=True, help="Label name to delete")
+
+    label_preset_cmd = label_sub.add_parser(
+        "apply-preset",
+        help="Idempotently create the standard label set on a repo",
+    )
+    label_preset_cmd.add_argument("--repo", required=True)
+
     workspace_cmd = subparsers.add_parser(
         "workspace", help="Manage per-branch git worktrees under repos/"
     )
@@ -1412,6 +1443,7 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
         "check",
         "delete",
         "import",
+        "label",
         "project",
         "issue",
         "pr",
@@ -1479,7 +1511,7 @@ def main(argv: list[str] | None = None) -> int:
             or (ns.name or "").strip()
             or _default_init_name()
         )
-        repo_dir = Path(ns.path) if ns.path else default_output_path(repo_name_hint)
+        repo_dir = Path(ns.path) if ns.path else _resolve_output_path(repo_name_hint)
         if repo_dir.exists() and not repo_dir.is_dir():
             print(
                 f"Error: local repo path exists and is not a directory: {repo_dir}",
@@ -1615,7 +1647,7 @@ def main(argv: list[str] | None = None) -> int:
     if ns.mode == "init":
         init_name = (ns.name or "").strip() or _default_init_name()
         languages = _parse_languages_or_die(parser, ns.languages)
-        out_dir = Path(ns.out) if ns.out else default_output_path(init_name)
+        out_dir = Path(ns.out) if ns.out else _resolve_output_path(init_name)
         if out_dir.exists() and not out_dir.is_dir():
             print(
                 f"Error: output path '{out_dir}' exists and is not a directory.",
@@ -1769,9 +1801,14 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             if markdown_source_dir is not None:
                 try:
+                    auto_output = (
+                        _local_backlog_path(target_repo)
+                        if target_repo
+                        else repo_dir / "local" / "backlog.json"
+                    )
                     imported_backlog_file, import_summary = build_backlog_import_file(
                         source_dir=markdown_source_dir,
-                        output_file=repo_dir / DEFAULT_BACKLOG_REL_PATH,
+                        output_file=auto_output,
                     )
                 except RuntimeError as exc:
                     print(str(exc), file=sys.stderr)
@@ -2313,9 +2350,6 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
-        source_dir = _resolve_markdown_source_dir(
-            repo_dir=repo_dir, source_arg=ns.source
-        )
         if ns.out:
             p = Path(ns.out)
             output_file = p if p.is_absolute() else repo_dir / p
@@ -2327,9 +2361,17 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 2
-            output_file = _local_backlog_slug_path(normalized_repo)
+            output_file = _local_backlog_path(normalized_repo)
         else:
-            output_file = repo_dir / DEFAULT_BACKLOG_REL_PATH
+            output_file = repo_dir / "local" / "backlog.json"
+
+        try:
+            source_dir = _resolve_markdown_source_dir(
+                repo_dir=repo_dir, source_arg=ns.source
+            )
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
 
         try:
             imported_backlog_file, import_summary = build_backlog_import_file(
@@ -2866,6 +2908,62 @@ def main(argv: list[str] | None = None) -> int:
                 print(cp.stderr.strip() or "Failed deleting branch.", file=sys.stderr)
                 return 1
             print(f"Branch deleted: {ns.name}")
+            return 0
+
+    if ns.mode == "label":
+        import json as _json
+
+        target_repo, repo_error = _resolve_repo_from_args_or_env(
+            repo=ns.repo, fallback_name=None
+        )
+        if repo_error:
+            print(repo_error, file=sys.stderr)
+            return 2
+        assert target_repo is not None
+        token = token_from_repo(Path.cwd()) or ""
+
+        if ns.label_command == "list":
+            cp = label_list(target_repo, token)
+            if cp.returncode not in (0, 200):
+                print(cp.stderr.strip() or "Failed listing labels.", file=sys.stderr)
+                return 1
+            labels = _json.loads(cp.stdout)
+            if getattr(ns, "json", False):
+                print(cp.stdout)
+                return 0
+            for lbl in labels:
+                desc = f" -- {lbl['description']}" if lbl.get("description") else ""
+                print(f"  #{lbl['color']}  {lbl['name']}{desc}")
+            print(f"\nTotal: {len(labels)}")
+            return 0
+
+        if ns.label_command == "create":
+            cp = label_create(target_repo, ns.name, ns.color, token, ns.description)
+            if cp.returncode not in (0, 200, 201):
+                print(cp.stderr.strip() or "Failed creating label.", file=sys.stderr)
+                return 1
+            print(f"Label created: {ns.name}")
+            return 0
+
+        if ns.label_command == "delete":
+            cp = label_delete(target_repo, ns.name, token)
+            if cp.returncode not in (0, 200, 204):
+                print(cp.stderr.strip() or "Failed deleting label.", file=sys.stderr)
+                return 1
+            print(f"Label deleted: {ns.name}")
+            return 0
+
+        if ns.label_command == "apply-preset":
+            cp = label_apply_preset(target_repo, token)
+            if cp.returncode not in (0, 200):
+                print(cp.stderr.strip() or "Failed applying preset.", file=sys.stderr)
+                return 1
+            result = _json.loads(cp.stdout)
+            created = result.get("created", [])
+            skipped = result.get("skipped", 0)
+            if created:
+                print(f"Created: {', '.join(created)}")
+            print(f"Skipped (already exist): {skipped}")
             return 0
 
     if ns.mode == "workspace":

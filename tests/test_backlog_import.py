@@ -107,7 +107,7 @@ priority: P1
 
     scaffold_file, summary = build_backlog_import_file(
         source_dir=source_dir.parent,
-        output_file=tmp_path / "artifacts" / "backlog" / "issues.json",
+        output_file=tmp_path / "local" / "backlog.json",
     )
 
     payload = json.loads(scaffold_file.content)
@@ -199,7 +199,7 @@ Ship release notes
         encoding="utf-8",
     )
 
-    output_file = tmp_path / "artifacts" / "backlog" / "issues.json"
+    output_file = tmp_path / "local" / "backlog.json"
     output_file.parent.mkdir(parents=True)
     output_file.write_text(
         json.dumps(
