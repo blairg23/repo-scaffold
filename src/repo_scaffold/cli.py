@@ -2574,7 +2574,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 1
             data = _json.loads(cp.stdout)
-            requested = [r.get("login", "") for r in data.get("requested_reviewers", [])]
+            requested = [
+                r.get("login", "") for r in data.get("requested_reviewers", [])
+            ]
             print(f"Reviewers requested on PR #{ns.pr_number}: {', '.join(requested)}")
             return 0
 
