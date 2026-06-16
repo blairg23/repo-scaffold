@@ -498,6 +498,7 @@ def _compare_ruleset_against_baseline(
     rulesets: list[dict[str, object]],
     *,
     default_branch: str,
+    languages: list[str] | None = None,
 ) -> list[str]:
     drifts: list[str] = []
     managed_rulesets = [
@@ -628,6 +629,35 @@ def _compare_ruleset_against_baseline(
                 if actual != expected:
                     drifts.append(
                         f"copilot_code_review.{key} expected {expected!r} got {actual!r}"
+                    )
+
+    if languages:
+        expected_contexts = list(
+            dict.fromkeys(
+                _LANGUAGE_CI_CONTEXT[lang]
+                for lang in languages
+                if lang in _LANGUAGE_CI_CONTEXT
+            )
+        )
+        if expected_contexts:
+            status_checks_rule = rule_map.get("required_status_checks")
+            if not isinstance(status_checks_rule, dict):
+                drifts.append("missing rule: required_status_checks")
+            else:
+                status_parameters = status_checks_rule.get("parameters")
+                actual_contexts = (
+                    [
+                        item.get("context")
+                        for item in status_parameters.get("required_status_checks", [])
+                        if isinstance(item, dict)
+                    ]
+                    if isinstance(status_parameters, dict)
+                    else []
+                )
+                missing = [c for c in expected_contexts if c not in actual_contexts]
+                if missing:
+                    drifts.append(
+                        "required_status_checks missing contexts: " f"{missing!r}"
                     )
 
     return drifts
@@ -914,11 +944,14 @@ def check_repository_settings(
     repo_dir: Path,
     repo: str,
     out: Callable[[str], None] = print,
+    languages: list[str] | None = None,
 ) -> SettingsCheckSummary:
     _ensure_tools()
     env = _build_env(repo_dir)
     _ensure_gh_auth(repo_dir, env)
-    return _check_settings(repo_dir=repo_dir.resolve(), env=env, repo=repo, out=out)
+    return _check_settings(
+        repo_dir=repo_dir.resolve(), env=env, repo=repo, out=out, languages=languages
+    )
 
 
 def _create_or_push_repo(
@@ -1074,6 +1107,7 @@ def _check_settings(
     env: dict[str, str],
     repo: str,
     out: Callable[[str], None],
+    languages: list[str] | None = None,
 ) -> SettingsCheckSummary:
     out(f"check repository settings: {repo}")
     repo_info = _get_repo_info(repo_dir=repo_dir, env=env, repo=repo)
@@ -1123,6 +1157,7 @@ def _check_settings(
     ruleset_drifts = _compare_ruleset_against_baseline(
         detailed_rulesets,
         default_branch=default_branch,
+        languages=languages,
     )
     if ruleset_drifts:
         failed += 1
