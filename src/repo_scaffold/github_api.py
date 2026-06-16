@@ -1179,6 +1179,62 @@ def issue_add_sub_issue(
 
 
 # ---------------------------------------------------------------------------
+# Repo labels
+# ---------------------------------------------------------------------------
+
+STANDARD_LABELS: list[dict[str, str]] = [
+    {"name": "needs-triage", "color": "e4e669", "description": "New issue awaiting review"},
+    {"name": "good first issue", "color": "7057ff", "description": "Good for newcomers"},
+    {"name": "help wanted", "color": "008672", "description": "Extra attention needed"},
+    {"name": "breaking change", "color": "e98014", "description": "Breaking API or behavior change"},
+    {"name": "documentation", "color": "0075ca", "description": "Documentation only"},
+]
+
+
+def label_list(repo: str, token: str) -> subprocess.CompletedProcess[str]:
+    return rest("GET", f"/repos/{repo}/labels?per_page=100", token)
+
+
+def label_create(
+    repo: str,
+    name: str,
+    color: str,
+    token: str,
+    description: str = "",
+) -> subprocess.CompletedProcess[str]:
+    return rest(
+        "POST",
+        f"/repos/{repo}/labels",
+        token,
+        {"name": name, "color": color.lstrip("#"), "description": description},
+    )
+
+
+def label_delete(repo: str, name: str, token: str) -> subprocess.CompletedProcess[str]:
+    encoded = urllib.parse.quote(name, safe="")
+    return rest("DELETE", f"/repos/{repo}/labels/{encoded}", token)
+
+
+def label_apply_preset(repo: str, token: str) -> subprocess.CompletedProcess[str]:
+    cp = label_list(repo, token)
+    if cp.returncode not in (0, 200):
+        return cp
+    try:
+        existing = {lbl["name"] for lbl in json.loads(cp.stdout)}
+    except (json.JSONDecodeError, KeyError):
+        return _err("Failed to parse existing labels.")
+    created = []
+    for lbl in STANDARD_LABELS:
+        if lbl["name"] in existing:
+            continue
+        cp2 = label_create(repo, lbl["name"], lbl["color"], token, lbl["description"])
+        if cp2.returncode not in (0, 200, 201):
+            return cp2
+        created.append(lbl["name"])
+    return _ok(json.dumps({"created": created, "skipped": len(STANDARD_LABELS) - len(created)}))
+
+
+# ---------------------------------------------------------------------------
 # Pull requests
 # ---------------------------------------------------------------------------
 

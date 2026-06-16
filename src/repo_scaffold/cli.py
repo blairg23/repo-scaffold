@@ -28,6 +28,10 @@ from .github_api import (
     issue_label,
     issue_list,
     issue_update,
+    label_apply_preset,
+    label_create,
+    label_delete,
+    label_list,
     pr_annotations,
     pr_checks,
     pr_comment,
@@ -1198,6 +1202,31 @@ def build_parser() -> argparse.ArgumentParser:
     branch_delete_cmd.add_argument("--repo", required=True)
     branch_delete_cmd.add_argument("--name", required=True, help="Branch to delete")
 
+    label_cmd = subparsers.add_parser("label", help="Manage repository labels")
+    label_sub = label_cmd.add_subparsers(dest="label_command", required=True)
+
+    label_list_cmd = label_sub.add_parser("list", help="List all labels in a repo")
+    label_list_cmd.add_argument("--repo", required=True)
+    label_list_cmd.add_argument("--json", action="store_true")
+
+    label_create_cmd = label_sub.add_parser("create", help="Create a label in a repo")
+    label_create_cmd.add_argument("--repo", required=True)
+    label_create_cmd.add_argument("--name", required=True, help="Label name")
+    label_create_cmd.add_argument(
+        "--color", required=True, help="6-char hex color (without #)"
+    )
+    label_create_cmd.add_argument("--description", default="", help="Label description")
+
+    label_delete_cmd = label_sub.add_parser("delete", help="Delete a label from a repo")
+    label_delete_cmd.add_argument("--repo", required=True)
+    label_delete_cmd.add_argument("--name", required=True, help="Label name to delete")
+
+    label_preset_cmd = label_sub.add_parser(
+        "apply-preset",
+        help="Idempotently create the standard label set on a repo",
+    )
+    label_preset_cmd.add_argument("--repo", required=True)
+
     workspace_cmd = subparsers.add_parser(
         "workspace", help="Manage per-branch git worktrees under repos/"
     )
@@ -1250,6 +1279,7 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
         "check",
         "delete",
         "import",
+        "label",
         "project",
         "issue",
         "pr",
@@ -2575,6 +2605,62 @@ def main(argv: list[str] | None = None) -> int:
                 print(cp.stderr.strip() or "Failed deleting branch.", file=sys.stderr)
                 return 1
             print(f"Branch deleted: {ns.name}")
+            return 0
+
+    if ns.mode == "label":
+        import json as _json
+
+        target_repo, repo_error = _resolve_repo_from_args_or_env(
+            repo=ns.repo, fallback_name=None
+        )
+        if repo_error:
+            print(repo_error, file=sys.stderr)
+            return 2
+        assert target_repo is not None
+        token = token_from_repo(Path.cwd()) or ""
+
+        if ns.label_command == "list":
+            cp = label_list(target_repo, token)
+            if cp.returncode not in (0, 200):
+                print(cp.stderr.strip() or "Failed listing labels.", file=sys.stderr)
+                return 1
+            labels = _json.loads(cp.stdout)
+            if getattr(ns, "json", False):
+                print(cp.stdout)
+                return 0
+            for lbl in labels:
+                desc = f" -- {lbl['description']}" if lbl.get("description") else ""
+                print(f"  #{lbl['color']}  {lbl['name']}{desc}")
+            print(f"\nTotal: {len(labels)}")
+            return 0
+
+        if ns.label_command == "create":
+            cp = label_create(target_repo, ns.name, ns.color, token, ns.description)
+            if cp.returncode not in (0, 200, 201):
+                print(cp.stderr.strip() or "Failed creating label.", file=sys.stderr)
+                return 1
+            print(f"Label created: {ns.name}")
+            return 0
+
+        if ns.label_command == "delete":
+            cp = label_delete(target_repo, ns.name, token)
+            if cp.returncode not in (0, 200, 204):
+                print(cp.stderr.strip() or "Failed deleting label.", file=sys.stderr)
+                return 1
+            print(f"Label deleted: {ns.name}")
+            return 0
+
+        if ns.label_command == "apply-preset":
+            cp = label_apply_preset(target_repo, token)
+            if cp.returncode not in (0, 200):
+                print(cp.stderr.strip() or "Failed applying preset.", file=sys.stderr)
+                return 1
+            result = _json.loads(cp.stdout)
+            created = result.get("created", [])
+            skipped = result.get("skipped", 0)
+            if created:
+                print(f"Created: {', '.join(created)}")
+            print(f"Skipped (already exist): {skipped}")
             return 0
 
     if ns.mode == "workspace":
