@@ -106,11 +106,13 @@ def test_backup_paths_are_unique_within_same_second(
     first, first_stamp = project_ops._backup_paths(
         repo_dir=repo_dir,
         backup_dir=None,
+        owner="acme",
         prefix="project-delete",
     )
     second, second_stamp = project_ops._backup_paths(
         repo_dir=repo_dir,
         backup_dir=None,
+        owner="acme",
         prefix="project-delete",
     )
 
