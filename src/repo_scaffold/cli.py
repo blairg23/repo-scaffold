@@ -315,7 +315,7 @@ def _add_scaffold_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--out",
-        help=f"Output path (default: $SCAFFOLD_OUTPUT_DIR/<name> or ./<name>)",
+        help="Output path (default: $SCAFFOLD_OUTPUT_DIR/<name> or ./<name>)",
     )
 
 

@@ -19,6 +19,7 @@ from .backlog_ops import (
 )
 from .project_metadata import write_project_metadata
 
+
 @dataclass(frozen=True)
 class ProjectInfo:
     owner: str
