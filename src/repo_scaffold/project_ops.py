@@ -19,8 +19,6 @@ from .backlog_ops import (
 )
 from .project_metadata import write_project_metadata
 
-DEFAULT_PROJECT_BACKUP_REL_DIR = "artifacts/project-backups"
-
 
 @dataclass(frozen=True)
 class ProjectInfo:
@@ -904,14 +902,14 @@ def edit_project(
     )
 
 
-def _default_backup_dir(repo_dir: Path) -> Path:
-    return repo_dir / DEFAULT_PROJECT_BACKUP_REL_DIR
+def _default_backup_dir(owner: str) -> Path:
+    return Path.cwd() / "local" / owner / "backups"
 
 
 def _backup_paths(
-    *, repo_dir: Path, backup_dir: str | None, prefix: str
+    *, repo_dir: Path, backup_dir: str | None, owner: str, prefix: str
 ) -> tuple[Path, str]:
-    root = Path(backup_dir) if backup_dir else _default_backup_dir(repo_dir)
+    root = Path(backup_dir) if backup_dir else _default_backup_dir(owner)
     backup_root = root if root.is_absolute() else (repo_dir / root)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     suffix = uuid.uuid4().hex[:8]
@@ -1064,6 +1062,7 @@ def delete_project(
     backup_file, _ = _backup_paths(
         repo_dir=repo_dir,
         backup_dir=backup_dir,
+        owner=project.owner,
         prefix=f"project-delete-{project.owner}-{project.number}",
     )
     _write_backup_file(
@@ -1206,6 +1205,7 @@ def delete_project_item(
     backup_file, _ = _backup_paths(
         repo_dir=repo_dir,
         backup_dir=backup_dir,
+        owner=project.owner,
         prefix=f"project-item-delete-{project.owner}-{project.number}",
     )
     _write_backup_file(

@@ -209,7 +209,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "!.env.example" in gitignore
     assert ".claude/settings.local.json" in gitignore
     assert ".repo-scaffold/" in gitignore
-    assert "artifacts/" in gitignore
+    assert "local/" in gitignore
     assert ".coverage" in gitignore
     assert "coverage.xml" in gitignore
     assert "htmlcov/" in gitignore

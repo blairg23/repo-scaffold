@@ -23,11 +23,8 @@ htmlcov/
 .claude/settings.local.json
 .claude/settings.json
 
-# Local-only backlog data (do not commit)
-local/backlog/issues.json
-
-# Local generated artifacts (do not commit)
-artifacts/
+# Local machine-only data (do not commit)
+local/
 
 # Repo-scaffold local metadata (do not commit)
 .repo-scaffold/
