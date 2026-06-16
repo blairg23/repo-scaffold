@@ -1183,10 +1183,22 @@ def issue_add_sub_issue(
 # ---------------------------------------------------------------------------
 
 STANDARD_LABELS: list[dict[str, str]] = [
-    {"name": "needs-triage", "color": "e4e669", "description": "New issue awaiting review"},
-    {"name": "good first issue", "color": "7057ff", "description": "Good for newcomers"},
+    {
+        "name": "needs-triage",
+        "color": "e4e669",
+        "description": "New issue awaiting review",
+    },
+    {
+        "name": "good first issue",
+        "color": "7057ff",
+        "description": "Good for newcomers",
+    },
     {"name": "help wanted", "color": "008672", "description": "Extra attention needed"},
-    {"name": "breaking change", "color": "e98014", "description": "Breaking API or behavior change"},
+    {
+        "name": "breaking change",
+        "color": "e98014",
+        "description": "Breaking API or behavior change",
+    },
     {"name": "documentation", "color": "0075ca", "description": "Documentation only"},
 ]
 
@@ -1231,7 +1243,9 @@ def label_apply_preset(repo: str, token: str) -> subprocess.CompletedProcess[str
         if cp2.returncode not in (0, 200, 201):
             return cp2
         created.append(lbl["name"])
-    return _ok(json.dumps({"created": created, "skipped": len(STANDARD_LABELS) - len(created)}))
+    return _ok(
+        json.dumps({"created": created, "skipped": len(STANDARD_LABELS) - len(created)})
+    )
 
 
 # ---------------------------------------------------------------------------

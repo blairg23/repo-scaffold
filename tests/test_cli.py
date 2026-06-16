@@ -2629,7 +2629,16 @@ def test_label_create(tmp_path, monkeypatch, capsys) -> None:
     from repo_scaffold.cli import main
 
     rc = main(
-        ["label", "create", "--repo", "acme/repo", "--name", "needs-triage", "--color", "e4e669"]
+        [
+            "label",
+            "create",
+            "--repo",
+            "acme/repo",
+            "--name",
+            "needs-triage",
+            "--color",
+            "e4e669",
+        ]
     )
     assert rc == 0
     assert "needs-triage" in capsys.readouterr().out
@@ -2662,7 +2671,9 @@ def test_label_apply_preset(tmp_path, monkeypatch, capsys) -> None:
         lambda repo, token: subprocess.CompletedProcess(
             args=[],
             returncode=200,
-            stdout=json.dumps({"created": ["needs-triage", "good first issue"], "skipped": 3}),
+            stdout=json.dumps(
+                {"created": ["needs-triage", "good first issue"], "skipped": 3}
+            ),
             stderr="",
         ),
     )
