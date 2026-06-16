@@ -2788,3 +2788,227 @@ def test_pr_request_reviewer(tmp_path, monkeypatch, capsys) -> None:
     out = capsys.readouterr().out
     assert "blairg23" in out
     assert "42" in out
+
+
+def test_repo_register_list_forget_roundtrip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry_path = tmp_path / "registry.json"
+    monkeypatch.setenv("REPO_SCAFFOLD_REGISTRY_PATH", str(registry_path))
+
+    rc = main(
+        [
+            "repo",
+            "register",
+            "--repo",
+            "acme/repo",
+            "--path",
+            "/local/acme-repo",
+            "--notes",
+            "primary checkout",
+        ]
+    )
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "Registered acme/repo -> /local/acme-repo" in stdout
+
+    rc = main(["repo", "list"])
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "acme/repo -> /local/acme-repo" in stdout
+    assert "primary checkout" in stdout
+
+    rc = main(["repo", "forget", "--repo", "acme/repo"])
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "Removed acme/repo from the registry." in stdout
+
+    rc = main(["repo", "list"])
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "No repos registered." in stdout
+
+
+def test_repo_forget_missing_repo_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("REPO_SCAFFOLD_REGISTRY_PATH", str(tmp_path / "registry.json"))
+    rc = main(["repo", "forget", "--repo", "acme/missing"])
+    assert rc == 2
+    stderr = capsys.readouterr().err
+    assert "not registered" in stderr
+
+
+def test_apply_rules_with_repos_flag_uses_registry_paths(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [
+            RegistryEntry(repo="acme/a", local_path="/local/a"),
+            RegistryEntry(repo="acme/b", local_path="/local/b"),
+        ],
+    )
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn):
+        calls.append({"repo_dir": repo_dir, "repo": repo})
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
+
+    rc = main(["apply", "rules", "--repos", "acme/a,acme/b", "--apply"])
+    assert rc == 0
+    assert [c["repo"] for c in calls] == ["acme/a", "acme/b"]
+    assert calls[0]["repo_dir"] == Path("/local/a")
+    assert calls[1]["repo_dir"] == Path("/local/b")
+    stdout = capsys.readouterr().out
+    assert "repos: 2" in stdout
+
+
+def test_apply_rules_with_repos_flag_rejects_unregistered_repo(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("repo_scaffold.cli.list_registry", lambda: [])
+
+    rc = main(["apply", "rules", "--repos", "acme/unknown", "--apply"])
+    assert rc == 2
+    stderr = capsys.readouterr().err
+    assert "not registered" in stderr
+
+
+def test_check_rules_with_all_flag_iterates_registry(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/a", local_path="/local/a")],
+    )
+
+    def _fake_check(*, repo_dir, repo, out):
+        out(f"check repository settings: {repo}")
+        return SettingsCheckSummary(repo=repo, passed=8, failed=0, skipped=0, drifts=())
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+
+    rc = main(["check", "rules", "--all"])
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "check repository settings: acme/a" in stdout
+
+
+def test_check_rules_rejects_multiple_selectors(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc = main(["check", "rules", "--repo", "acme/a", "--all"])
+    assert rc == 2
+    stderr = capsys.readouterr().err
+    assert "only one of" in stderr
+
+
+def test_sync_rules_applies_only_confirmed_repos(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [
+            RegistryEntry(repo="acme/drifted", local_path="/local/drifted"),
+            RegistryEntry(repo="acme/clean", local_path="/local/clean"),
+        ],
+    )
+
+    def _fake_check(*, repo_dir, repo, out):
+        failed = 1 if repo == "acme/drifted" else 0
+        return SettingsCheckSummary(
+            repo=repo, passed=7, failed=failed, skipped=0, drifts=()
+        )
+
+    applied: list[str] = []
+
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn):
+        applied.append(repo)
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    rc = main(["sync", "rules", "--all"])
+    assert rc == 0
+    assert applied == ["acme/drifted"]
+    stdout = capsys.readouterr().out
+    assert "repos applied: 1" in stdout
+
+
+def test_sync_rules_no_drift_skips_apply(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/clean", local_path="/local/clean")],
+    )
+
+    def _fake_check(*, repo_dir, repo, out):
+        return SettingsCheckSummary(repo=repo, passed=8, failed=0, skipped=0, drifts=())
+
+    apply_called = False
+
+    def _fake_apply(**_kwargs):
+        nonlocal apply_called
+        apply_called = True
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
+
+    rc = main(["sync", "rules", "--all"])
+    assert rc == 0
+    assert apply_called is False
+    stdout = capsys.readouterr().out
+    assert "No drift found" in stdout
+
+
+def test_check_settings_uses_resolved_languages(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        "repo_scaffold.cli.resolve_languages", lambda _repo_dir: ["python", "react"]
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_check(*, repo_dir, repo, out, languages):
+        captured["languages"] = languages
+        return SettingsCheckSummary(repo=repo, passed=8, failed=0, skipped=0, drifts=())
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+
+    rc = main(["check", "settings", "--repo", "acme/repo"])
+    assert rc == 0
+    assert captured["languages"] == ["python", "react"]
+    stdout = capsys.readouterr().out
+    assert "languages: python, react" in stdout
+
+
+def test_check_settings_languages_flag_overrides_config(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("repo_scaffold.cli.resolve_languages", lambda _repo_dir: ["go"])
+
+    captured: dict[str, object] = {}
+
+    def _fake_check(*, repo_dir, repo, out, languages):
+        captured["languages"] = languages
+        return SettingsCheckSummary(repo=repo, passed=8, failed=0, skipped=0, drifts=())
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+
+    rc = main(["check", "settings", "--repo", "acme/repo", "--languages", "python"])
+    assert rc == 0
+    assert captured["languages"] == ["python"]

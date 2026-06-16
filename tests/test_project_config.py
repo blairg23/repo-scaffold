@@ -14,6 +14,7 @@ from repo_scaffold.project_config import (
     find_config_file,
     load_config,
     prompt_config,
+    resolve_languages,
     save_config,
 )
 
@@ -143,3 +144,35 @@ def test_prompt_config_overrides_workflow(tmp_path: Path) -> None:
     result = prompt_config(cfg, prompt_fn=_prompt, out=lambda _: None)
     first_workflow_key = next(iter(cfg.workflows))
     assert result.workflows[first_workflow_key] == "Custom Status"
+
+
+def test_default_config_has_no_languages() -> None:
+    cfg = default_config()
+    assert cfg.languages == []
+
+
+def test_save_and_load_config_roundtrips_languages(tmp_path: Path) -> None:
+    cfg = default_config()
+    cfg.languages = ["python", "react"]
+    save_config(cfg, tmp_path / CONFIG_FILENAME)
+    reloaded = load_config(tmp_path)
+    assert reloaded.languages == ["python", "react"]
+
+
+def test_save_config_omits_languages_section_when_empty(tmp_path: Path) -> None:
+    cfg = default_config()
+    save_config(cfg, tmp_path / CONFIG_FILENAME)
+    text = (tmp_path / CONFIG_FILENAME).read_text(encoding="utf-8")
+    assert "languages:" not in text
+
+
+def test_resolve_languages_prefers_declared_config(tmp_path: Path) -> None:
+    cfg = default_config()
+    cfg.languages = ["go"]
+    save_config(cfg, tmp_path / CONFIG_FILENAME)
+    assert resolve_languages(tmp_path) == ["go"]
+
+
+def test_resolve_languages_falls_back_to_detection(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.poetry]\n", encoding="utf-8")
+    assert resolve_languages(tmp_path) == ["python"]

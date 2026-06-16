@@ -65,6 +65,13 @@ from .generator import (
     parse_language_csv,
 )
 from .overwrite_policy import ApplySummary, OverwritePolicy, apply_files
+from .project_config import resolve_languages
+from .registry_ops import (
+    RegistryEntry,
+    forget_repo,
+    list_registry,
+    register_repo,
+)
 from .project_ops import (
     DEFAULT_PROJECT_BACKUP_REL_DIR,
     ProjectItemsSummary,
@@ -210,6 +217,58 @@ def _resolve_repo_from_args_or_env(
         None,
         "Error: could not resolve target repo. Pass --repo owner/repo or set GH_REPO (or GITHUB_ORG + GITHUB_REPO) in .env.",
     )
+
+
+def _resolve_repo_targets(
+    ns: argparse.Namespace,
+) -> tuple[list[tuple[str, Path]], str | None]:
+    """Resolve one or more (repo, repo_dir) targets from --repo/--repos/--all.
+
+    --repo uses the current working directory as repo_dir (existing single-repo
+    behavior). --repos/--all resolve repo_dir from the local registry, since
+    settings checks need a local git checkout to authenticate against.
+    """
+    selected = [
+        flag
+        for flag, value in (
+            ("--repo", getattr(ns, "repo", None)),
+            ("--repos", getattr(ns, "repos", None)),
+            ("--all", getattr(ns, "all_repos", False)),
+        )
+        if value
+    ]
+    if len(selected) > 1:
+        return [], f"Error: pass only one of {', '.join(selected)}."
+
+    if getattr(ns, "all_repos", False):
+        entries = list_registry()
+        if not entries:
+            return [], "Error: no repos registered. Run 'repo register' first."
+        return [(e.repo, Path(e.local_path)) for e in entries], None
+
+    if getattr(ns, "repos", None):
+        registry = {e.repo: e for e in list_registry()}
+        targets: list[tuple[str, Path]] = []
+        for raw in ns.repos.split(","):
+            repo = raw.strip()
+            if not repo:
+                continue
+            entry = registry.get(repo)
+            if entry is None:
+                return (
+                    [],
+                    f"Error: repo not registered: {repo}. Run 'repo register' first.",
+                )
+            targets.append((repo, Path(entry.local_path)))
+        return targets, None
+
+    target_repo, repo_error = _resolve_repo_from_args_or_env(
+        repo=getattr(ns, "repo", None), fallback_name=None
+    )
+    if repo_error:
+        return [], repo_error
+    assert target_repo is not None
+    return [(target_repo, Path.cwd())], None
 
 
 def _local_backlog_slug_path(repo: str) -> Path:
@@ -575,6 +634,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     apply_rules.add_argument("--repo", help="Target GitHub repo (owner/repo)")
     apply_rules.add_argument(
+        "--repos", help="Comma-separated registered repos (owner/repo,owner/repo)"
+    )
+    apply_rules.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_repos",
+        help="Target every repo in the local registry",
+    )
+    apply_rules.add_argument(
         "--apply",
         action="store_true",
         dest="do_apply",
@@ -607,6 +675,83 @@ def build_parser() -> argparse.ArgumentParser:
         help="Check merge settings, managed ruleset, and security defaults",
     )
     check_rules.add_argument("--repo", help="Target GitHub repo (owner/repo)")
+    check_rules.add_argument(
+        "--repos", help="Comma-separated registered repos (owner/repo,owner/repo)"
+    )
+    check_rules.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_repos",
+        help="Target every repo in the local registry",
+    )
+
+    check_settings_cmd = check_sub.add_parser(
+        "settings",
+        help="Check repository settings including required status checks",
+    )
+    check_settings_cmd.add_argument(
+        "--repo",
+        required=True,
+        help="Target GitHub repo (owner/repo)",
+    )
+    check_settings_cmd.add_argument(
+        "--languages",
+        default="",
+        help=(
+            "Comma-separated language list to require as status checks "
+            "(default: read from .repo-scaffold.yml, falling back to file detection)"
+        ),
+    )
+
+    repo_cmd = subparsers.add_parser(
+        "repo",
+        help="Manage the local registry of repos repo-scaffold knows about",
+    )
+    repo_sub = repo_cmd.add_subparsers(dest="repo_command", required=True)
+    repo_register_cmd = repo_sub.add_parser(
+        "register", help="Register a repo in the local registry"
+    )
+    repo_register_cmd.add_argument(
+        "--repo", required=True, help="GitHub repo (owner/repo)"
+    )
+    repo_register_cmd.add_argument(
+        "--path", required=True, help="Local path to the repo's checkout"
+    )
+    repo_register_cmd.add_argument(
+        "--notes", default="", help="Free-text notes about this repo"
+    )
+    repo_sub.add_parser("list", help="List registered repos")
+    repo_forget_cmd = repo_sub.add_parser(
+        "forget", help="Remove a repo from the local registry"
+    )
+    repo_forget_cmd.add_argument(
+        "--repo", required=True, help="GitHub repo (owner/repo)"
+    )
+
+    sync_cmd = subparsers.add_parser(
+        "sync",
+        help="Check then apply settings/rules across one or more repos",
+    )
+    sync_sub = sync_cmd.add_subparsers(dest="sync_command", required=True)
+    sync_rules_cmd = sync_sub.add_parser(
+        "rules",
+        help="Check merge settings/ruleset/security defaults, then apply per-repo on confirm",
+    )
+    sync_rules_cmd.add_argument("--repo", help="Target GitHub repo (owner/repo)")
+    sync_rules_cmd.add_argument(
+        "--repos", help="Comma-separated registered repos (owner/repo,owner/repo)"
+    )
+    sync_rules_cmd.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_repos",
+        help="Target every repo in the local registry",
+    )
+    sync_rules_cmd.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the per-repo confirmation prompt and apply all drifted repos",
+    )
 
     project_cmd = subparsers.add_parser(
         "project",
@@ -1272,6 +1417,8 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
         "pr",
         "branch",
         "workspace",
+        "repo",
+        "sync",
     }:
         return raw
     # Backward-compatible behavior: previous root command maps to init.
@@ -1733,48 +1880,77 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if ns.mode == "apply" and ns.apply_command == "rules":
-        target_repo, repo_error = _resolve_repo_from_args_or_env(
-            repo=ns.repo, fallback_name=None
-        )
-        if repo_error:
-            print(repo_error, file=sys.stderr)
+        targets, targets_error = _resolve_repo_targets(ns)
+        if targets_error:
+            print(targets_error, file=sys.stderr)
             return 2
-        assert target_repo is not None
         preview_only = not ns.do_apply or getattr(ns, "dry_run", False)
-        try:
-            apply_repository_settings(
-                repo_dir=Path.cwd(),
-                repo=target_repo,
-                dry_run=preview_only,
-                out=print,
-                warn=lambda line: print(line, file=sys.stderr),
-            )
-        except RuntimeError as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
+        failures = 0
+        for target_repo, repo_dir in targets:
+            try:
+                apply_repository_settings(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    dry_run=preview_only,
+                    out=print,
+                    warn=lambda line: print(line, file=sys.stderr),
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                failures += 1
 
         print("")
         print("Summary:")
+        if len(targets) > 1:
+            print(f"  repos: {len(targets)}")
+            print(f"  failures: {failures}")
         if preview_only:
             print("  mode: dry-run")
             print("  settings planned: True")
         else:
             print("  settings applied: True")
-        return 0
+        return 1 if failures else 0
 
     if ns.mode == "check" and ns.check_command == "rules":
-        target_repo, repo_error = _resolve_repo_from_args_or_env(
-            repo=ns.repo, fallback_name=None
-        )
-        if repo_error:
-            print(repo_error, file=sys.stderr)
+        targets, targets_error = _resolve_repo_targets(ns)
+        if targets_error:
+            print(targets_error, file=sys.stderr)
             return 2
-        assert target_repo is not None
+        total_failed = 0
+        for target_repo, repo_dir in targets:
+            try:
+                check_summary: SettingsCheckSummary = check_repository_settings(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    out=print,
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                total_failed += 1
+                continue
+
+            print("")
+            print("Summary:")
+            print(f"  repo: {check_summary.repo}")
+            print(f"  checks passed: {check_summary.passed}")
+            print(f"  checks failed: {check_summary.failed}")
+            print(f"  checks skipped: {check_summary.skipped}")
+            print(f"  drift items: {len(check_summary.drifts)}")
+            total_failed += check_summary.failed
+        return 1 if total_failed > 0 else 0
+
+    if ns.mode == "check" and ns.check_command == "settings":
+        langs = (
+            _parse_languages_or_die(parser, ns.languages)
+            if ns.languages
+            else tuple(resolve_languages(Path.cwd()))
+        )
         try:
-            check_summary: SettingsCheckSummary = check_repository_settings(
+            settings_summary: SettingsCheckSummary = check_repository_settings(
                 repo_dir=Path.cwd(),
-                repo=target_repo,
+                repo=ns.repo,
                 out=print,
+                languages=list(langs) if langs else None,
             )
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
@@ -1782,12 +1958,92 @@ def main(argv: list[str] | None = None) -> int:
 
         print("")
         print("Summary:")
-        print(f"  repo: {check_summary.repo}")
-        print(f"  checks passed: {check_summary.passed}")
-        print(f"  checks failed: {check_summary.failed}")
-        print(f"  checks skipped: {check_summary.skipped}")
-        print(f"  drift items: {len(check_summary.drifts)}")
-        return 1 if check_summary.failed > 0 else 0
+        print(f"  repo: {settings_summary.repo}")
+        if langs:
+            print(f"  languages: {', '.join(langs)}")
+        print(f"  checks passed: {settings_summary.passed}")
+        print(f"  checks failed: {settings_summary.failed}")
+        print(f"  checks skipped: {settings_summary.skipped}")
+        print(f"  drift items: {len(settings_summary.drifts)}")
+        return 1 if settings_summary.failed > 0 else 0
+
+    if ns.mode == "repo" and ns.repo_command == "register":
+        entry: RegistryEntry = register_repo(ns.repo, ns.path, ns.notes)
+        print(f"Registered {entry.repo} -> {entry.local_path}")
+        return 0
+
+    if ns.mode == "repo" and ns.repo_command == "list":
+        entries = list_registry()
+        if not entries:
+            print("No repos registered.")
+            return 0
+        for entry in entries:
+            suffix = f"  ({entry.notes})" if entry.notes else ""
+            print(f"{entry.repo} -> {entry.local_path}{suffix}")
+        return 0
+
+    if ns.mode == "repo" and ns.repo_command == "forget":
+        removed = forget_repo(ns.repo)
+        if not removed:
+            print(f"Error: repo not registered: {ns.repo}", file=sys.stderr)
+            return 2
+        print(f"Removed {ns.repo} from the registry.")
+        return 0
+
+    if ns.mode == "sync" and ns.sync_command == "rules":
+        targets, targets_error = _resolve_repo_targets(ns)
+        if targets_error:
+            print(targets_error, file=sys.stderr)
+            return 2
+
+        drifted: list[tuple[str, Path]] = []
+        for target_repo, repo_dir in targets:
+            try:
+                drift_summary: SettingsCheckSummary = check_repository_settings(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    out=print,
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                continue
+            print(
+                f"  {target_repo}: {drift_summary.failed} drifted, {len(drift_summary.drifts)} drift items"
+            )
+            if drift_summary.failed > 0:
+                drifted.append((target_repo, repo_dir))
+
+        if not drifted:
+            print("")
+            print("No drift found. Nothing to apply.")
+            return 0
+
+        print("")
+        applied = 0
+        for target_repo, repo_dir in drifted:
+            if not ns.yes:
+                answer = input(f"Apply fixes for {target_repo}? [y/N] ").strip().lower()
+                if answer != "y":
+                    print(f"Skipped {target_repo}.")
+                    continue
+            try:
+                apply_repository_settings(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    dry_run=False,
+                    out=print,
+                    warn=lambda line: print(line, file=sys.stderr),
+                )
+                applied += 1
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+
+        print("")
+        print("Summary:")
+        print(f"  repos checked: {len(targets)}")
+        print(f"  repos drifted: {len(drifted)}")
+        print(f"  repos applied: {applied}")
+        return 0
 
     if ns.mode == "project":
         repo_dir = Path(ns.path)
