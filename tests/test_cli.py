@@ -2570,6 +2570,101 @@ def test_branch_delete(tmp_path, monkeypatch, capsys) -> None:
     assert rc == 0
 
 
+def test_label_list(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.label_list",
+        lambda repo, token: subprocess.CompletedProcess(
+            args=[],
+            returncode=200,
+            stdout=json.dumps(
+                [{"name": "bug", "color": "d73a4a", "description": "Something broken"}]
+            ),
+            stderr="",
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["label", "list", "--repo", "acme/repo"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "bug" in out
+    assert "Total: 1" in out
+
+
+def test_label_create(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.label_create",
+        lambda repo, name, color, token, description="": subprocess.CompletedProcess(
+            args=[], returncode=201, stdout="{}", stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(
+        [
+            "label",
+            "create",
+            "--repo",
+            "acme/repo",
+            "--name",
+            "needs-triage",
+            "--color",
+            "e4e669",
+        ]
+    )
+    assert rc == 0
+    assert "needs-triage" in capsys.readouterr().out
+
+
+def test_label_delete(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.label_delete",
+        lambda repo, name, token: subprocess.CompletedProcess(
+            args=[], returncode=204, stdout="", stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["label", "delete", "--repo", "acme/repo", "--name", "needs-triage"])
+    assert rc == 0
+    assert "needs-triage" in capsys.readouterr().out
+
+
+def test_label_apply_preset(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.label_apply_preset",
+        lambda repo, token: subprocess.CompletedProcess(
+            args=[],
+            returncode=200,
+            stdout=json.dumps(
+                {"created": ["needs-triage", "good first issue"], "skipped": 3}
+            ),
+            stderr="",
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["label", "apply-preset", "--repo", "acme/repo"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "needs-triage" in out
+    assert "Skipped (already exist): 3" in out
+
+
 def test_issue_comment_body_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
