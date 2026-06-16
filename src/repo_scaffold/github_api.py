@@ -1504,6 +1504,21 @@ def pr_reviews(
     return _ok(json.dumps(items))
 
 
+def pr_request_reviewer(
+    repo: str,
+    pr_number: int,
+    token: str,
+    reviewers: list[str],
+) -> subprocess.CompletedProcess[str]:
+    """Request one or more reviewers on an open pull request."""
+    return rest(
+        "POST",
+        f"/repos/{repo}/pulls/{pr_number}/requested_reviewers",
+        token,
+        {"reviewers": reviewers},
+    )
+
+
 def token_from_repo(repo_dir: Path) -> str | None:
     """Try to resolve a GH token from the repo .env and environment."""
     env = dict(os.environ)
