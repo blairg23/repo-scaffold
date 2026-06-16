@@ -242,9 +242,17 @@ def workspace_create(
         )
         if cp.returncode != 0:
             return _err(f"git fetch failed: {cp.stderr.strip()}")
-        # Sync just the base branch local ref so worktree add can use it by name.
+        # Sync the base branch local ref so worktree add can use it by name.
         _run(
             ["git", "fetch", "origin", f"+refs/heads/{base}:refs/heads/{base}"],
+            cwd=bare,
+            bare=True,
+        )
+        # Also sync the requested branch's local ref, if it exists on origin, so an
+        # existing remote branch is checked out at its current commit rather than
+        # falling through to a stale local ref or a fresh branch off base below.
+        _run(
+            ["git", "fetch", "origin", f"+refs/heads/{branch}:refs/heads/{branch}"],
             cwd=bare,
             bare=True,
         )
