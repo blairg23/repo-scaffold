@@ -1,7 +1,7 @@
 ---
 name: Ticket
 about: Describe one implementation task
-title: "[Ticket] "
+title: ""
 labels: ["needs-triage"]
 assignees: []
 ---

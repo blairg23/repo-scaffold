@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import urllib.error
 import urllib.request
 from io import BytesIO
@@ -163,6 +164,26 @@ def test_graphql_surfaces_errors() -> None:
         cp = github_api.graphql("query { x }", {}, "token")
     assert cp.returncode != 0
     assert "doesn't exist" in cp.stderr
+
+
+def test_issue_add_sub_issue_surfaces_parent_error() -> None:
+    """addSubIssue null + errors (child already has a parent) surfaces the GH message."""
+    node_resp = json.dumps({"data": {"repository": {"issue": {"id": "I_x"}}}})
+    partial_resp = json.dumps(
+        {
+            "data": {"addSubIssue": None},
+            "errors": [{"message": "Sub issue may only have one parent"}],
+        }
+    )
+    responses = [
+        _mock_resp(200, node_resp),  # resolve parent node ID
+        _mock_resp(200, node_resp),  # resolve child node ID
+        _mock_resp(200, partial_resp),  # addSubIssue mutation
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses):
+        cp = github_api.issue_add_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode != 0
+    assert "only have one parent" in cp.stderr
 
 
 def test_graphql_http_error() -> None:
@@ -690,6 +711,108 @@ def test_issue_list_with_label() -> None:
         cp = github_api.issue_list("owner/repo", "tok", label="mvp")
     assert cp.returncode == 0
     assert len(json.loads(cp.stdout)) == 1
+
+
+# ---------------------------------------------------------------------------
+# issue_sync_hierarchy
+# ---------------------------------------------------------------------------
+
+
+def test_issue_sync_hierarchy_dry_run() -> None:
+    issues = [
+        {"number": 1, "labels": [{"name": "epic"}, {"name": "epic:foo"}]},
+        {"number": 2, "labels": [{"name": "epic:foo"}]},
+        {"number": 3, "labels": [{"name": "epic:foo"}]},
+        {"number": 4, "labels": []},
+    ]
+    with patch.object(
+        github_api,
+        "issue_list",
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(issues), stderr=""
+        ),
+    ):
+        with patch.object(github_api, "graphql") as mock_graphql:
+
+            def _parent_response(query: str, variables: dict, token: str) -> object:
+                number = variables["number"]
+                if number == 2:
+                    parent = {"number": 1}
+                else:
+                    parent = None
+                return subprocess.CompletedProcess(
+                    args=[],
+                    returncode=0,
+                    stdout=json.dumps({"repository": {"issue": {"parent": parent}}}),
+                    stderr="",
+                )
+
+            mock_graphql.side_effect = _parent_response
+            cp = github_api.issue_sync_hierarchy("owner/repo", "tok", apply=False)
+
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert report["already_linked"] == [{"epic": 1, "child": 2}]
+    assert report["would_link"] == [{"epic": 1, "child": 3}]
+    assert report["unaffiliated"] == [4]
+    assert report["ambiguous"] == []
+
+
+def test_issue_sync_hierarchy_ambiguous_group() -> None:
+    issues = [
+        {"number": 1, "labels": [{"name": "epic"}, {"name": "epic:foo"}]},
+        {"number": 2, "labels": [{"name": "epic"}, {"name": "epic:foo"}]},
+    ]
+    with patch.object(
+        github_api,
+        "issue_list",
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(issues), stderr=""
+        ),
+    ):
+        cp = github_api.issue_sync_hierarchy("owner/repo", "tok", apply=False)
+
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert len(report["ambiguous"]) == 1
+    assert report["ambiguous"][0]["slug"] == "foo"
+
+
+def test_issue_sync_hierarchy_apply_links_unparented_child() -> None:
+    issues = [
+        {"number": 1, "labels": [{"name": "epic"}, {"name": "epic:foo"}]},
+        {"number": 2, "labels": [{"name": "epic:foo"}]},
+    ]
+    with patch.object(
+        github_api,
+        "issue_list",
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(issues), stderr=""
+        ),
+    ):
+        with patch.object(
+            github_api,
+            "graphql",
+            return_value=subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=json.dumps({"repository": {"issue": {"parent": None}}}),
+                stderr="",
+            ),
+        ):
+            with patch.object(
+                github_api,
+                "issue_add_sub_issue",
+                return_value=subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout="{}", stderr=""
+                ),
+            ) as mock_link:
+                cp = github_api.issue_sync_hierarchy("owner/repo", "tok", apply=True)
+
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert report["linked"] == [{"epic": 1, "child": 2}]
+    mock_link.assert_called_once_with("owner", "repo", 1, 2, "tok")
 
 
 # ---------------------------------------------------------------------------
