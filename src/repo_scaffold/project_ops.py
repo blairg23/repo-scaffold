@@ -196,7 +196,7 @@ def _parse_project_item(item: dict[str, object]) -> ProjectItemInfo:
         else None
     )
 
-    content_type_value = content_dict.get("type")
+    content_type_value = content_dict.get("__typename") or content_dict.get("type")
     if not isinstance(content_type_value, str) or not content_type_value.strip():
         content_type_value = item.get("type")
     content_type = (

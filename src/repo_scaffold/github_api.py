@@ -295,6 +295,7 @@ query($projectId: ID!, $first: Int!, $after: String) {
         nodes {
           id
           content {
+            __typename
             ... on Issue {
               number title state url
               labels(first: 10) { nodes { name } }
