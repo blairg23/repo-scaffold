@@ -3234,8 +3234,10 @@ def test_issue_reparent_dispatches(monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import MagicMock
 
     ok = _sub.CompletedProcess(args=[], returncode=0, stdout="{}", stderr="")
+    mock_node_id = MagicMock(return_value="I_20")
     mock_remove = MagicMock(return_value=ok)
     mock_add = MagicMock(return_value=ok)
+    monkeypatch.setattr("repo_scaffold.cli.issue_node_id", mock_node_id)
     monkeypatch.setattr("repo_scaffold.cli.issue_remove_sub_issue", mock_remove)
     monkeypatch.setattr("repo_scaffold.cli.issue_add_sub_issue", mock_add)
     monkeypatch.setenv("GH_TOKEN", "tok")
@@ -3255,8 +3257,34 @@ def test_issue_reparent_dispatches(monkeypatch: pytest.MonkeyPatch) -> None:
         ]
     )
     assert rc == 0
+    mock_node_id.assert_called_once_with("acme", "repo", 20, "tok")
     mock_remove.assert_called_once_with("acme", "repo", 10, 5, "tok")
     mock_add.assert_called_once_with("acme", "repo", 20, 5, "tok")
+
+
+def test_issue_reparent_invalid_new_parent_returns_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr("repo_scaffold.cli.issue_node_id", MagicMock(return_value=None))
+    monkeypatch.setenv("GH_TOKEN", "tok")
+
+    rc = main(
+        [
+            "issue",
+            "re-parent",
+            "--repo",
+            "acme/repo",
+            "--issue",
+            "5",
+            "--from-parent",
+            "10",
+            "--to-parent",
+            "99",
+        ]
+    )
+    assert rc == 1
 
 
 def test_issue_reparent_remove_failure_returns_1(
@@ -3267,6 +3295,9 @@ def test_issue_reparent_remove_failure_returns_1(
 
     fail = _sub.CompletedProcess(
         args=[], returncode=1, stdout="", stderr="remove failed"
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_node_id", MagicMock(return_value="I_20")
     )
     mock_remove = MagicMock(return_value=fail)
     monkeypatch.setattr("repo_scaffold.cli.issue_remove_sub_issue", mock_remove)
@@ -3287,3 +3318,44 @@ def test_issue_reparent_remove_failure_returns_1(
         ]
     )
     assert rc == 1
+
+
+def test_issue_reparent_add_failure_rolls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess as _sub
+    from unittest.mock import MagicMock, call
+
+    ok = _sub.CompletedProcess(args=[], returncode=0, stdout="{}", stderr="")
+    fail = _sub.CompletedProcess(
+        args=[], returncode=1, stdout="", stderr="already has parent"
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_node_id", MagicMock(return_value="I_20")
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_remove_sub_issue", MagicMock(return_value=ok)
+    )
+    mock_add = MagicMock(side_effect=[fail, ok])
+    monkeypatch.setattr("repo_scaffold.cli.issue_add_sub_issue", mock_add)
+    monkeypatch.setenv("GH_TOKEN", "tok")
+
+    rc = main(
+        [
+            "issue",
+            "re-parent",
+            "--repo",
+            "acme/repo",
+            "--issue",
+            "5",
+            "--from-parent",
+            "10",
+            "--to-parent",
+            "20",
+        ]
+    )
+    assert rc == 1
+    assert mock_add.call_count == 2
+    mock_add.assert_has_calls(
+        [call("acme", "repo", 20, 5, "tok"), call("acme", "repo", 10, 5, "tok")]
+    )

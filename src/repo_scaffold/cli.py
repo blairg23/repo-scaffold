@@ -20,6 +20,7 @@ from .github_api import (
     branch_create,
     branch_delete,
     issue_add_sub_issue,
+    issue_node_id,
     issue_remove_sub_issue,
     issue_assign,
     issue_close,
@@ -2697,6 +2698,12 @@ def main(argv: list[str] | None = None) -> int:
 
         if ns.issue_command == "re-parent":
             owner, _, repo_name = target_repo.partition("/")
+            if not issue_node_id(owner, repo_name, ns.new_parent_number, token):
+                print(
+                    f"Error: could not resolve --to-parent #{ns.new_parent_number}.",
+                    file=sys.stderr,
+                )
+                return 1
             rm_cp = issue_remove_sub_issue(
                 owner, repo_name, ns.old_parent_number, ns.child_number, token
             )
@@ -2714,6 +2721,19 @@ def main(argv: list[str] | None = None) -> int:
                     add_cp.stderr.strip() or "Failed linking to new parent.",
                     file=sys.stderr,
                 )
+                rb_cp = issue_add_sub_issue(
+                    owner, repo_name, ns.old_parent_number, ns.child_number, token
+                )
+                if rb_cp.returncode != 0:
+                    print(
+                        f"Rollback failed. Issue #{ns.child_number} is now detached.",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"Rolled back: #{ns.child_number} re-linked to #{ns.old_parent_number}.",
+                        file=sys.stderr,
+                    )
                 return 1
             print(
                 f"Issue #{ns.child_number} re-parented: "

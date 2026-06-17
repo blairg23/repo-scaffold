@@ -777,7 +777,7 @@ def setup_project_views(
         owner=project.owner,
         project_number=project.number,
         project_title=project.title,
-        failures=0,
+        failures=len(needs_manual),
         changed=False,
         metadata_file=None,
     )
