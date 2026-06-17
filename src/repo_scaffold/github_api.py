@@ -1322,6 +1322,116 @@ def issue_sync_hierarchy(
     return _ok(json.dumps(report))
 
 
+_GQL_REMOVE_SUB_ISSUE = """
+mutation($issueId: ID!, $subIssueId: ID!) {
+  removeSubIssue(input: {issueId: $issueId, subIssueId: $subIssueId}) {
+    issue { id number }
+    subIssue { id number }
+  }
+}
+"""
+
+
+def issue_remove_sub_issue(
+    owner: str,
+    repo: str,
+    parent_number: int,
+    child_number: int,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Remove child_number from its current parent parent_number."""
+    parent_id = _resolve_issue_node_id(owner, repo, parent_number, token)
+    if not parent_id:
+        return _err(f"Could not resolve node ID for parent issue #{parent_number}.")
+    child_id = _resolve_issue_node_id(owner, repo, child_number, token)
+    if not child_id:
+        return _err(f"Could not resolve node ID for child issue #{child_number}.")
+    cp = graphql(
+        _GQL_REMOVE_SUB_ISSUE,
+        {"issueId": parent_id, "subIssueId": child_id},
+        token,
+    )
+    if cp.returncode != 0:
+        return cp
+    try:
+        data = json.loads(cp.stdout)
+        result = data.get("removeSubIssue")
+        if not isinstance(result, dict) or "issue" not in result:
+            return _err(
+                "removeSubIssue returned null or unexpected data; GitHub may have rejected the mutation."
+            )
+        return _ok(json.dumps(result))
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response from removeSubIssue.")
+
+
+# ---------------------------------------------------------------------------
+# GitHub Projects v2 — views
+# ---------------------------------------------------------------------------
+
+_GQL_ALL_PROJECT_FIELDS = """
+query($projectId: ID!) {
+  node(id: $projectId) {
+    ... on ProjectV2 {
+      fields(first: 50) {
+        nodes {
+          ... on ProjectV2Field { id name dataType }
+          ... on ProjectV2SingleSelectField { id name dataType options { id name } }
+          ... on ProjectV2IterationField { id name dataType }
+        }
+      }
+    }
+  }
+}
+"""
+
+_GQL_PROJECT_VIEWS = """
+query($projectId: ID!) {
+  node(id: $projectId) {
+    ... on ProjectV2 {
+      views(first: 20) {
+        nodes { id name layout }
+      }
+    }
+  }
+}
+"""
+
+
+def project_all_fields(
+    project_id: str,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Return all project fields including system fields (Labels, Parent issue, etc.)."""
+    cp = graphql(_GQL_ALL_PROJECT_FIELDS, {"projectId": project_id}, token)
+    if cp.returncode != 0:
+        return cp
+    try:
+        data = json.loads(cp.stdout)
+        nodes = data.get("node", {}).get("fields", {}).get("nodes", [])
+        fields = [n for n in nodes if isinstance(n, dict) and n.get("id")]
+        return _ok(json.dumps({"fields": fields}))
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response fetching all project fields.")
+
+
+def project_views(
+    project_id: str,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Return the list of views on a project."""
+    cp = graphql(_GQL_PROJECT_VIEWS, {"projectId": project_id}, token)
+    if cp.returncode != 0:
+        return cp
+    try:
+        data = json.loads(cp.stdout)
+        nodes = data.get("node", {}).get("views", {}).get("nodes", [])
+        views = [n for n in nodes if isinstance(n, dict) and n.get("id")]
+        return _ok(json.dumps({"views": views}))
+    except (json.JSONDecodeError, AttributeError):
+        return _err("Unexpected response fetching project views.")
+
+
 # ---------------------------------------------------------------------------
 # Repo labels
 # ---------------------------------------------------------------------------

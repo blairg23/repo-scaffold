@@ -1133,3 +1133,111 @@ def test_label_apply_preset_create_error_propagates() -> None:
     ):
         cp = github_api.label_apply_preset("acme/repo", "tok")
     assert cp.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# issue_remove_sub_issue
+# ---------------------------------------------------------------------------
+
+
+def test_issue_remove_sub_issue_success() -> None:
+    node_id_resp = {"repository": {"issue": {"id": "I_child"}}}
+    parent_id_resp = {"repository": {"issue": {"id": "I_parent"}}}
+    remove_resp = {
+        "removeSubIssue": {
+            "issue": {"id": "I_parent", "number": 1},
+            "subIssue": {"id": "I_child", "number": 2},
+        }
+    }
+    with patch.object(
+        github_api,
+        "graphql",
+        side_effect=[
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(parent_id_resp), stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(node_id_resp), stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(remove_resp), stderr=""
+            ),
+        ],
+    ):
+        cp = github_api.issue_remove_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert "issue" in result
+
+
+def test_issue_remove_sub_issue_null_response() -> None:
+    node_id_resp = {"repository": {"issue": {"id": "I_child"}}}
+    parent_id_resp = {"repository": {"issue": {"id": "I_parent"}}}
+    remove_resp = {"removeSubIssue": None}
+    with patch.object(
+        github_api,
+        "graphql",
+        side_effect=[
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(parent_id_resp), stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(node_id_resp), stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(remove_resp), stderr=""
+            ),
+        ],
+    ):
+        cp = github_api.issue_remove_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode != 0
+    assert "null" in cp.stderr.lower() or "unexpected" in cp.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# project_all_fields
+# ---------------------------------------------------------------------------
+
+
+def test_project_all_fields_returns_all_types() -> None:
+    fields = [
+        {"id": "F_title", "name": "Title", "dataType": "TITLE"},
+        {
+            "id": "F_status",
+            "name": "Status",
+            "dataType": "SINGLE_SELECT",
+            "options": [],
+        },
+        {"id": "F_labels", "name": "Labels", "dataType": "LABELS"},
+        {"id": "F_parent", "name": "Parent issue", "dataType": "PARENT_ISSUE"},
+    ]
+    payload = {"node": {"fields": {"nodes": fields}}}
+    with patch("urllib.request.urlopen", return_value=_gql_resp(payload)):
+        cp = github_api.project_all_fields("PVT_x", "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert len(result["fields"]) == 4
+    dtypes = {f["dataType"] for f in result["fields"]}
+    assert "LABELS" in dtypes
+    assert "PARENT_ISSUE" in dtypes
+
+
+# ---------------------------------------------------------------------------
+# project_views
+# ---------------------------------------------------------------------------
+
+
+def test_project_views_returns_list() -> None:
+    views = [
+        {"id": "PVV_1", "name": "Kanban Board", "layout": "BOARD_LAYOUT"},
+        {"id": "PVV_2", "name": "Progress View", "layout": "TABLE_LAYOUT"},
+    ]
+    payload = {"node": {"views": {"nodes": views}}}
+    with patch("urllib.request.urlopen", return_value=_gql_resp(payload)):
+        cp = github_api.project_views("PVT_x", "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert len(result["views"]) == 2
+    names = {v["name"] for v in result["views"]}
+    assert "Kanban Board" in names
+    assert "Progress View" in names
