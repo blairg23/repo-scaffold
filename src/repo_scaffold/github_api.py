@@ -141,7 +141,7 @@ def graphql(
         payload = json.loads(cp.stdout)
     except json.JSONDecodeError:
         return _err("GraphQL response was not valid JSON.")
-    if "errors" in payload:
+    if "errors" in payload and "data" not in payload:
         msgs = "; ".join(e.get("message", "") for e in payload["errors"])
         return _err(msgs)
     return _ok(json.dumps(payload.get("data", {})))
@@ -1161,23 +1161,35 @@ def issue_add_sub_issue(
     child_id = _resolve_issue_node_id(owner, repo, child_number, token)
     if not child_id:
         return _err(f"Could not resolve node ID for child issue #{child_number}.")
-    cp = graphql(
-        _GQL_ADD_SUB_ISSUE,
-        {"issueId": parent_id, "subIssueId": child_id},
+    # Call _http directly so we can inspect both `data` and `errors` in the raw
+    # response. GitHub returns {"data": {"addSubIssue": null}, "errors": [...]}
+    # when the child already has a parent -- graphql() would swallow the error
+    # message because `data` is present.
+    cp = _http(
+        "POST",
+        _GITHUB_GRAPHQL,
         token,
+        {
+            "query": _GQL_ADD_SUB_ISSUE,
+            "variables": {"issueId": parent_id, "subIssueId": child_id},
+        },
     )
     if cp.returncode != 0:
         return cp
     try:
-        data = json.loads(cp.stdout)
-        result = data.get("addSubIssue")
-        if not isinstance(result, dict) or "issue" not in result:
-            return _err(
-                "addSubIssue returned null or unexpected data; GitHub may have rejected the mutation."
-            )
-        return _ok(json.dumps(result))
-    except (json.JSONDecodeError, AttributeError):
-        return _err("Unexpected response from addSubIssue.")
+        raw = json.loads(cp.stdout)
+    except json.JSONDecodeError:
+        return _err("GraphQL response was not valid JSON.")
+    errors = raw.get("errors", [])
+    result = raw.get("data", {}).get("addSubIssue")
+    if not isinstance(result, dict) or "issue" not in result:
+        if errors:
+            msg = "; ".join(e.get("message", "") for e in errors)
+            return _err(msg)
+        return _err(
+            "addSubIssue returned null or unexpected data; GitHub may have rejected the mutation."
+        )
+    return _ok(json.dumps(result))
 
 
 _GQL_ISSUE_PARENT = """
@@ -1217,6 +1229,8 @@ def issue_sync_hierarchy(
     groups: dict[str, list[dict[str, Any]]] = {}
     unaffiliated: list[int] = []
     for issue in issues:
+        if issue.get("pull_request"):
+            continue
         labels = [
             lbl["name"] if isinstance(lbl, dict) else lbl
             for lbl in issue.get("labels", [])

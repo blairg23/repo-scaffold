@@ -166,15 +166,22 @@ def test_graphql_surfaces_errors() -> None:
     assert "doesn't exist" in cp.stderr
 
 
-def test_graphql_surfaces_partial_errors() -> None:
-    payload = json.dumps(
+def test_issue_add_sub_issue_surfaces_parent_error() -> None:
+    """addSubIssue null + errors (child already has a parent) surfaces the GH message."""
+    node_resp = json.dumps({"data": {"repository": {"issue": {"id": "I_x"}}}})
+    partial_resp = json.dumps(
         {
             "data": {"addSubIssue": None},
             "errors": [{"message": "Sub issue may only have one parent"}],
         }
     )
-    with patch("urllib.request.urlopen", return_value=_mock_resp(200, payload)):
-        cp = github_api.graphql("mutation { addSubIssue }", {}, "token")
+    responses = [
+        _mock_resp(200, node_resp),  # resolve parent node ID
+        _mock_resp(200, node_resp),  # resolve child node ID
+        _mock_resp(200, partial_resp),  # addSubIssue mutation
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses):
+        cp = github_api.issue_add_sub_issue("owner", "repo", 1, 2, "tok")
     assert cp.returncode != 0
     assert "only have one parent" in cp.stderr
 
