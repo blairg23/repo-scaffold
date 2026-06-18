@@ -1048,6 +1048,40 @@ def test_pr_reviews_api_error_propagates() -> None:
 
 
 # ---------------------------------------------------------------------------
+# issue_label -- auto-remove needs-triage when epic:slug is added
+# ---------------------------------------------------------------------------
+
+
+def test_issue_label_epic_slug_removes_needs_triage() -> None:
+    responses = [
+        _mock_resp(200, "[]"),  # POST add epic:foo
+        _mock_resp(204, ""),  # DELETE needs-triage
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses) as m:
+        cp = github_api.issue_label("acme/repo", 1, "tok", add=["epic:foo"])
+    assert cp.returncode == 0
+    urls = [c.args[0].full_url for c in m.call_args_list]
+    assert any("needs-triage" in u for u in urls)
+
+
+def test_issue_label_non_epic_does_not_remove_needs_triage() -> None:
+    with patch("urllib.request.urlopen", return_value=_mock_resp(200, "[]")) as m:
+        cp = github_api.issue_label("acme/repo", 1, "tok", add=["bug"])
+    assert cp.returncode == 0
+    assert all("needs-triage" not in str(c) for c in m.call_args_list)
+
+
+def test_issue_label_404_on_needs_triage_delete_is_ignored() -> None:
+    responses = [
+        _mock_resp(200, "[]"),  # POST add epic:foo
+        _mock_resp(204, ""),  # DELETE needs-triage (not present, still 204)
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses):
+        cp = github_api.issue_label("acme/repo", 1, "tok", add=["epic:foo"])
+    assert cp.returncode == 0
+
+
+# ---------------------------------------------------------------------------
 # Repo labels
 # ---------------------------------------------------------------------------
 
