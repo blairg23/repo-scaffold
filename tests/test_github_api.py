@@ -1048,6 +1048,66 @@ def test_pr_reviews_api_error_propagates() -> None:
 
 
 # ---------------------------------------------------------------------------
+# issue_label -- auto-remove needs-triage when epic:slug is added
+# ---------------------------------------------------------------------------
+
+
+def test_issue_label_epic_slug_removes_needs_triage() -> None:
+    responses = [
+        _mock_resp(200, "[]"),  # POST add epic:foo
+        _mock_resp(204, ""),  # DELETE needs-triage
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses) as m:
+        cp = github_api.issue_label("acme/repo", 1, "tok", add=["epic:foo"])
+    assert cp.returncode == 0
+    urls = [c.args[0].full_url for c in m.call_args_list]
+    assert any("needs-triage" in u for u in urls)
+
+
+def test_issue_label_non_epic_does_not_remove_needs_triage() -> None:
+    with patch("urllib.request.urlopen", return_value=_mock_resp(200, "[]")) as m:
+        cp = github_api.issue_label("acme/repo", 1, "tok", add=["bug"])
+    assert cp.returncode == 0
+    assert all("needs-triage" not in str(c) for c in m.call_args_list)
+
+
+def test_issue_label_404_on_needs_triage_delete_is_ignored() -> None:
+    responses = [
+        _mock_resp(200, "[]"),  # POST add epic:foo
+        _http_error(
+            404, "Label not found"
+        ),  # DELETE needs-triage -- label not on issue
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses):
+        cp = github_api.issue_label("acme/repo", 1, "tok", add=["epic:foo"])
+    assert cp.returncode == 0
+
+
+def test_issue_label_epic_slug_does_not_duplicate_explicit_remove() -> None:
+    responses = [
+        _mock_resp(200, "[]"),  # POST add epic:foo
+        _mock_resp(
+            204, ""
+        ),  # DELETE needs-triage (from explicit remove, not duplicated)
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses) as m:
+        cp = github_api.issue_label(
+            "acme/repo", 1, "tok", add=["epic:foo"], remove=["needs-triage"]
+        )
+    assert cp.returncode == 0
+    delete_calls = [c for c in m.call_args_list if c.args[0].method == "DELETE"]
+    assert len(delete_calls) == 1
+
+
+def test_issue_label_remove_only_makes_no_post() -> None:
+    with patch("urllib.request.urlopen", return_value=_mock_resp(204, "")) as m:
+        cp = github_api.issue_label("acme/repo", 1, "tok", remove=["stale"])
+    assert cp.returncode == 0
+    post_calls = [c for c in m.call_args_list if c.args[0].method == "POST"]
+    assert len(post_calls) == 0
+
+
+# ---------------------------------------------------------------------------
 # Repo labels
 # ---------------------------------------------------------------------------
 

@@ -1043,14 +1043,18 @@ def issue_label(
     add: list[str] | None = None,
     remove: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    effective_remove = list(remove or [])
+    if add and any(lbl.startswith("epic:") for lbl in add):
+        if "needs-triage" not in effective_remove:
+            effective_remove.append("needs-triage")
     if add:
         cp = rest("POST", f"/repos/{repo}/issues/{number}/labels", token, add)
         if cp.returncode not in (0, 200):
             return cp
-    for label in remove or []:
+    for label in effective_remove:
         encoded = urllib.parse.quote(label, safe="")
         cp = rest("DELETE", f"/repos/{repo}/issues/{number}/labels/{encoded}", token)
-        if cp.returncode not in (0, 200, 204):
+        if cp.returncode not in (0, 200, 204, 404):
             return cp
     return _ok("{}")
 
