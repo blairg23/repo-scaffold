@@ -973,3 +973,208 @@ def test_setup_project_views_no_project_id_raises(
             project_title="Roadmap",
             out=lambda _: None,
         )
+
+
+def test_setup_project_views_bad_json_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import repo_scaffold.github_api as _ga
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    project = project_ops.ProjectInfo(
+        owner="acme", number=1, title="Roadmap", id="PVT_x"
+    )
+    monkeypatch.setattr(project_ops, "_find_existing_project", lambda **_kw: project)
+    monkeypatch.setattr(_ga, "token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(_ga, "project_views", lambda *_a, **_kw: _cp_ok("not-json{"))
+
+    messages: list[str] = []
+    summary = project_ops.setup_project_views(
+        repo_dir=repo_dir,
+        owner="acme",
+        project_number=1,
+        project_title="Roadmap",
+        out=messages.append,
+    )
+
+    assert summary.failures == 2
+
+
+def test_setup_project_views_only_kanban_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import repo_scaffold.github_api as _ga
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    project = project_ops.ProjectInfo(
+        owner="acme", number=1, title="Roadmap", id="PVT_x"
+    )
+    monkeypatch.setattr(project_ops, "_find_existing_project", lambda **_kw: project)
+    monkeypatch.setattr(_ga, "token_from_repo", lambda _: "tok")
+    views_payload = json.dumps(
+        {"views": [{"id": "V2", "name": "Progress View", "layout": "TABLE_LAYOUT"}]}
+    )
+    monkeypatch.setattr(_ga, "project_views", lambda *_a, **_kw: _cp_ok(views_payload))
+
+    messages: list[str] = []
+    summary = project_ops.setup_project_views(
+        repo_dir=repo_dir,
+        owner="acme",
+        project_number=1,
+        project_title="Roadmap",
+        out=messages.append,
+    )
+
+    assert summary.failures == 1
+    assert any("Kanban Board" in m for m in messages)
+    assert not any("Progress View: click" in m for m in messages)
+
+
+def test_setup_project_views_only_progress_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import repo_scaffold.github_api as _ga
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    project = project_ops.ProjectInfo(
+        owner="acme", number=1, title="Roadmap", id="PVT_x"
+    )
+    monkeypatch.setattr(project_ops, "_find_existing_project", lambda **_kw: project)
+    monkeypatch.setattr(_ga, "token_from_repo", lambda _: "tok")
+    views_payload = json.dumps(
+        {"views": [{"id": "V1", "name": "Kanban Board", "layout": "BOARD_LAYOUT"}]}
+    )
+    monkeypatch.setattr(_ga, "project_views", lambda *_a, **_kw: _cp_ok(views_payload))
+
+    messages: list[str] = []
+    summary = project_ops.setup_project_views(
+        repo_dir=repo_dir,
+        owner="acme",
+        project_number=1,
+        project_title="Roadmap",
+        out=messages.append,
+    )
+
+    assert summary.failures == 1
+    assert any("Progress View" in m for m in messages)
+    assert not any("Kanban Board: click" in m for m in messages)
+
+
+def test_create_project_calls_setup_views_when_repo_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    monkeypatch.setattr(
+        project_ops,
+        "_resolve_project_owner",
+        lambda _owner, **_kw: "acme",
+    )
+    monkeypatch.setattr(
+        project_ops,
+        "_run_gh",
+        lambda _repo_dir, args: _cp_ok(json.dumps({"number": 9, "title": "Roadmap"})),
+    )
+    monkeypatch.setattr(
+        project_ops,
+        "edit_project",
+        lambda **_kw: project_ops.ProjectMutationSummary(
+            action="edit",
+            owner="acme",
+            project_number=9,
+            project_title="Roadmap",
+            failures=0,
+            changed=True,
+        ),
+    )
+    monkeypatch.setattr(
+        project_ops,
+        "link_project_repo",
+        lambda **_kw: None,
+    )
+    monkeypatch.setattr(
+        project_ops,
+        "setup_project_statuses",
+        lambda **_kw: None,
+    )
+    setup_calls: list[str] = []
+    monkeypatch.setattr(
+        project_ops,
+        "setup_project_views",
+        lambda **_kw: setup_calls.append("called"),
+    )
+
+    project_ops.create_project(
+        repo_dir=repo_dir,
+        owner="acme",
+        project_title="Roadmap",
+        description="desc",
+        readme=None,
+        visibility=None,
+        repo="acme/my-repo",
+        dry_run=False,
+        out=lambda _: None,
+    )
+
+    assert setup_calls == ["called"]
+
+
+def test_create_project_setup_views_error_is_warned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    monkeypatch.setattr(
+        project_ops,
+        "_resolve_project_owner",
+        lambda _owner, **_kw: "acme",
+    )
+    monkeypatch.setattr(
+        project_ops,
+        "_run_gh",
+        lambda _repo_dir, args: _cp_ok(json.dumps({"number": 9, "title": "Roadmap"})),
+    )
+    monkeypatch.setattr(
+        project_ops,
+        "edit_project",
+        lambda **_kw: project_ops.ProjectMutationSummary(
+            action="edit",
+            owner="acme",
+            project_number=9,
+            project_title="Roadmap",
+            failures=0,
+            changed=True,
+        ),
+    )
+    monkeypatch.setattr(project_ops, "link_project_repo", lambda **_kw: None)
+    monkeypatch.setattr(project_ops, "setup_project_statuses", lambda **_kw: None)
+    monkeypatch.setattr(
+        project_ops,
+        "setup_project_views",
+        lambda **_kw: (_ for _ in ()).throw(RuntimeError("API unavailable")),
+    )
+
+    messages: list[str] = []
+    project_ops.create_project(
+        repo_dir=repo_dir,
+        owner="acme",
+        project_title="Roadmap",
+        description="desc",
+        readme=None,
+        visibility=None,
+        repo="acme/my-repo",
+        dry_run=False,
+        out=messages.append,
+    )
+
+    assert any("Warning" in m and "setup project views" in m for m in messages)

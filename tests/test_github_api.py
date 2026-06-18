@@ -1250,6 +1250,28 @@ def test_issue_remove_sub_issue_parent_not_found() -> None:
     assert "parent" in cp.stderr.lower()
 
 
+def test_issue_remove_sub_issue_graphql_failure() -> None:
+    with patch.object(
+        github_api, "_resolve_issue_node_id", side_effect=["I_parent", "I_child"]
+    ):
+        with patch.object(
+            github_api, "graphql", return_value=github_api._err("GQL error")
+        ):
+            cp = github_api.issue_remove_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode != 0
+
+
+def test_issue_remove_sub_issue_bad_json() -> None:
+    with patch.object(
+        github_api, "_resolve_issue_node_id", side_effect=["I_parent", "I_child"]
+    ):
+        with patch.object(
+            github_api, "graphql", return_value=github_api._ok("not-json{")
+        ):
+            cp = github_api.issue_remove_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode != 0
+
+
 def test_issue_remove_sub_issue_child_not_found() -> None:
     with patch.object(
         github_api, "_resolve_issue_node_id", side_effect=["I_parent", None]
