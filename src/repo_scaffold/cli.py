@@ -20,6 +20,8 @@ from .github_api import (
     branch_create,
     branch_delete,
     issue_add_sub_issue,
+    issue_node_id,
+    issue_remove_sub_issue,
     issue_assign,
     issue_close,
     issue_comment,
@@ -90,6 +92,7 @@ from .project_ops import (
     list_projects,
     setup_project,
     setup_project_statuses,
+    setup_project_views,
     sync_project_metadata,
     undo_project_backup,
     update_project_item_status,
@@ -890,6 +893,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_project_target_args(project_setup_statuses_cmd)
 
+    project_setup_views_cmd = project_sub.add_parser(
+        "setup-views",
+        help=(
+            "Ensure 'Kanban Board' (board layout) and 'Progress View' "
+            "(table layout, Labels + Parent issue columns, grouped by Parent issue) "
+            "exist on the project"
+        ),
+    )
+    project_setup_views_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution (default: .)",
+    )
+    _add_project_target_args(project_setup_views_cmd)
+
     project_edit_cmd = project_sub.add_parser(
         "edit", help="Edit metadata for an existing project"
     )
@@ -1209,6 +1227,39 @@ def build_parser() -> argparse.ArgumentParser:
         "--apply",
         action="store_true",
         help="Apply the backfill (default is dry-run)",
+    )
+
+    issue_reparent_cmd = issue_sub.add_parser(
+        "re-parent",
+        help=(
+            "Move a sub-issue to a new parent: removes it from its current parent "
+            "then links it under the new one"
+        ),
+    )
+    issue_reparent_cmd.add_argument("--repo", required=True)
+    issue_reparent_cmd.add_argument(
+        "--issue",
+        type=int,
+        required=True,
+        dest="child_number",
+        metavar="N",
+        help="Issue number to re-parent",
+    )
+    issue_reparent_cmd.add_argument(
+        "--from-parent",
+        type=int,
+        required=True,
+        dest="old_parent_number",
+        metavar="N",
+        help="Current parent issue number (will be removed)",
+    )
+    issue_reparent_cmd.add_argument(
+        "--to-parent",
+        type=int,
+        required=True,
+        dest="new_parent_number",
+        metavar="N",
+        help="New parent issue number (will be linked)",
     )
 
     pr_cmd = subparsers.add_parser("pr", help="Interact with GitHub pull requests")
@@ -2235,6 +2286,14 @@ def main(argv: list[str] | None = None) -> int:
                     project_title=ns.project_title,
                     out=print,
                 )
+            elif ns.project_command == "setup-views":
+                mutation_summary = setup_project_views(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    out=print,
+                )
             elif ns.project_command == "edit":
                 mutation_summary = edit_project(
                     repo_dir=repo_dir,
@@ -2635,6 +2694,51 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {key}: {len(items)}")
                 for item in items:
                     print(f"    {item}")
+            return 0
+
+        if ns.issue_command == "re-parent":
+            owner, _, repo_name = target_repo.partition("/")
+            if not issue_node_id(owner, repo_name, ns.new_parent_number, token):
+                print(
+                    f"Error: could not resolve --to-parent #{ns.new_parent_number}.",
+                    file=sys.stderr,
+                )
+                return 1
+            rm_cp = issue_remove_sub_issue(
+                owner, repo_name, ns.old_parent_number, ns.child_number, token
+            )
+            if rm_cp.returncode != 0:
+                print(
+                    rm_cp.stderr.strip() or "Failed removing existing parent link.",
+                    file=sys.stderr,
+                )
+                return 1
+            add_cp = issue_add_sub_issue(
+                owner, repo_name, ns.new_parent_number, ns.child_number, token
+            )
+            if add_cp.returncode != 0:
+                print(
+                    add_cp.stderr.strip() or "Failed linking to new parent.",
+                    file=sys.stderr,
+                )
+                rb_cp = issue_add_sub_issue(
+                    owner, repo_name, ns.old_parent_number, ns.child_number, token
+                )
+                if rb_cp.returncode != 0:
+                    print(
+                        f"Rollback failed. Issue #{ns.child_number} is now detached.",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"Rolled back: #{ns.child_number} re-linked to #{ns.old_parent_number}.",
+                        file=sys.stderr,
+                    )
+                return 1
+            print(
+                f"Issue #{ns.child_number} re-parented: "
+                f"#{ns.old_parent_number} -> #{ns.new_parent_number}."
+            )
             return 0
 
     if ns.mode == "pr":
