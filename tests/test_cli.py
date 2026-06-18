@@ -168,6 +168,7 @@ def test_apply_templates_only_writes_template_files(tmp_path: Path) -> None:
     assert (repo_dir / ".github" / "ISSUE_TEMPLATE" / "ticket.md").exists()
     assert (repo_dir / ".github" / "ISSUE_TEMPLATE" / "epic.md").exists()
     assert (repo_dir / ".github" / "CODEOWNERS").exists()
+    assert (repo_dir / ".github" / "workflows" / "validate-issue.yml").exists()
     assert not (repo_dir / "go.mod").exists()
     assert (repo_dir / "README.md").read_text(encoding="utf-8") == "# Existing\n"
 
