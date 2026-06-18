@@ -20,6 +20,8 @@ from .github_api import (
     branch_create,
     branch_delete,
     issue_add_sub_issue,
+    issue_node_id,
+    issue_remove_sub_issue,
     issue_assign,
     issue_close,
     issue_comment,
@@ -27,7 +29,12 @@ from .github_api import (
     issue_delete,
     issue_label,
     issue_list,
+    issue_sync_hierarchy,
     issue_update,
+    label_apply_preset,
+    label_create,
+    label_delete,
+    label_list,
     pr_annotations,
     pr_checks,
     pr_comment,
@@ -38,6 +45,7 @@ from .github_api import (
     pr_rerun,
     pr_resolve_thread,
     pr_review_threads,
+    pr_request_reviewer,
     pr_reviews,
     pr_update,
     pr_view,
@@ -59,13 +67,18 @@ from .generator import (
     build_dependabot_files,
     build_scaffold_files,
     build_template_files,
-    default_output_path,
     detect_languages_from_repo,
     parse_language_csv,
 )
 from .overwrite_policy import ApplySummary, OverwritePolicy, apply_files
+from .project_config import resolve_languages
+from .registry_ops import (
+    RegistryEntry,
+    forget_repo,
+    list_registry,
+    register_repo,
+)
 from .project_ops import (
-    DEFAULT_PROJECT_BACKUP_REL_DIR,
     ProjectItemsSummary,
     ProjectListSummary,
     ProjectMutationSummary,
@@ -79,6 +92,7 @@ from .project_ops import (
     list_projects,
     setup_project,
     setup_project_statuses,
+    setup_project_views,
     sync_project_metadata,
     undo_project_backup,
     update_project_item_status,
@@ -87,10 +101,8 @@ from .project_ops import (
 
 DEFAULT_INIT_NAME_PREFIX = "repo-scaffold-e2e"
 DEFAULT_INIT_LANGUAGES = "go,python,react"
-DEFAULT_BACKLOG_REL_PATH = "artifacts/backlog/issues.json"
-DEFAULT_LOCAL_BACKLOG_SLUG_DIR = "local/backlog"
-DEFAULT_MARKDOWN_BACKLOG_REL_DIR = "artifacts/tickets"
 BACKLOG_TICKETS_DIR_ENV = "GITHUB_TICKETS_DIR"
+SCAFFOLD_OUTPUT_DIR_ENV = "SCAFFOLD_OUTPUT_DIR"
 
 
 def _repo_name_from_repo_ref(raw: str | None) -> str | None:
@@ -211,8 +223,61 @@ def _resolve_repo_from_args_or_env(
     )
 
 
-def _local_backlog_slug_path(repo: str) -> Path:
-    return Path.cwd() / DEFAULT_LOCAL_BACKLOG_SLUG_DIR / repo / "issues.json"
+def _resolve_repo_targets(
+    ns: argparse.Namespace,
+) -> tuple[list[tuple[str, Path]], str | None]:
+    """Resolve one or more (repo, repo_dir) targets from --repo/--repos/--all.
+
+    --repo uses the current working directory as repo_dir (existing single-repo
+    behavior). --repos/--all resolve repo_dir from the local registry, since
+    settings checks need a local git checkout to authenticate against.
+    """
+    selected = [
+        flag
+        for flag, value in (
+            ("--repo", getattr(ns, "repo", None)),
+            ("--repos", getattr(ns, "repos", None)),
+            ("--all", getattr(ns, "all_repos", False)),
+        )
+        if value
+    ]
+    if len(selected) > 1:
+        return [], f"Error: pass only one of {', '.join(selected)}."
+
+    if getattr(ns, "all_repos", False):
+        entries = list_registry()
+        if not entries:
+            return [], "Error: no repos registered. Run 'repo register' first."
+        return [(e.repo, Path(e.local_path)) for e in entries], None
+
+    if getattr(ns, "repos", None):
+        registry = {e.repo: e for e in list_registry()}
+        targets: list[tuple[str, Path]] = []
+        for raw in ns.repos.split(","):
+            repo = raw.strip()
+            if not repo:
+                continue
+            entry = registry.get(repo)
+            if entry is None:
+                return (
+                    [],
+                    f"Error: repo not registered: {repo}. Run 'repo register' first.",
+                )
+            targets.append((repo, Path(entry.local_path)))
+        return targets, None
+
+    target_repo, repo_error = _resolve_repo_from_args_or_env(
+        repo=getattr(ns, "repo", None), fallback_name=None
+    )
+    if repo_error:
+        return [], repo_error
+    assert target_repo is not None
+    return [(target_repo, Path.cwd())], None
+
+
+def _local_backlog_path(repo: str) -> Path:
+    # repo is owner/repo — resolves to local/{owner}/{repo}/backlog.json relative to CWD
+    return Path.cwd() / "local" / repo / "backlog.json"
 
 
 def _resolve_backlog_file_path(
@@ -223,20 +288,17 @@ def _resolve_backlog_file_path(
         return backlog_file if backlog_file.is_absolute() else (repo_dir / backlog_file)
 
     if repo:
-        slug_path = _local_backlog_slug_path(repo)
-        if slug_path.exists():
-            return slug_path
-        artifacts_path = repo_dir / DEFAULT_BACKLOG_REL_PATH
-        if artifacts_path.exists():
-            return artifacts_path
+        local_path = _local_backlog_path(repo)
+        if local_path.exists():
+            return local_path
         raise FileNotFoundError(
             f"No backlog file found for {repo!r}. "
-            f"Expected: {slug_path}. "
+            f"Expected: {local_path}. "
             f"Run 'repo-scaffold import backlog --repo {repo}' to generate it, "
             f"or pass --file to specify the path explicitly."
         )
 
-    return repo_dir / DEFAULT_BACKLOG_REL_PATH
+    return repo_dir / "local" / "backlog.json"
 
 
 def _resolve_markdown_source_dir(*, repo_dir: Path, source_arg: str | None) -> Path:
@@ -244,7 +306,10 @@ def _resolve_markdown_source_dir(*, repo_dir: Path, source_arg: str | None) -> P
     if source_value:
         source_dir = Path(source_value)
         return source_dir if source_dir.is_absolute() else (repo_dir / source_dir)
-    return repo_dir / DEFAULT_MARKDOWN_BACKLOG_REL_DIR
+    raise RuntimeError(
+        f"No markdown source directory specified. "
+        f"Pass --source <dir> or set {BACKLOG_TICKETS_DIR_ENV} in .env."
+    )
 
 
 def _find_existing_markdown_source_dir(repo_dir: Path) -> Path | None:
@@ -257,8 +322,14 @@ def _find_existing_markdown_source_dir(repo_dir: Path) -> Path | None:
         raise RuntimeError(
             f"Error: {BACKLOG_TICKETS_DIR_ENV} points to a missing markdown source directory: {resolved}"
         )
-    candidate = repo_dir / DEFAULT_MARKDOWN_BACKLOG_REL_DIR
-    return candidate if candidate.exists() else None
+    return None
+
+
+def _resolve_output_path(name: str) -> Path:
+    base = (os.environ.get(SCAFFOLD_OUTPUT_DIR_ENV) or "").strip()
+    if base:
+        return Path(base) / name
+    return Path(name)
 
 
 def _seed_env_for_parsed_mode(ns: argparse.Namespace) -> None:
@@ -310,7 +381,10 @@ def _add_scaffold_args(parser: argparse.ArgumentParser) -> None:
         choices=[SUPPORTED_LICENSE],
         help="License identifier (only apache-2.0 is currently supported)",
     )
-    parser.add_argument("--out", help="Output path (default: ./out/<name>)")
+    parser.add_argument(
+        "--out",
+        help="Output path (default: $SCAFFOLD_OUTPUT_DIR/<name> or ./<name>)",
+    )
 
 
 def _resolve_body(body: str | None, body_file: str | None) -> str | None:
@@ -375,10 +449,7 @@ def _add_danger_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--backup-dir",
-        help=(
-            "Backup directory for destructive project operations "
-            f"(default: <path>/{DEFAULT_PROJECT_BACKUP_REL_DIR})"
-        ),
+        help="Backup directory for destructive project operations (default: local/<owner>/backups/)",
     )
 
 
@@ -537,9 +608,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--file",
         help=(
             "Backlog JSON path. If omitted, auto-imports from markdown when "
-            "<repo-path>/artifacts/tickets (or fallback source dirs) exists; otherwise resolves "
-            "in this order: ./local/backlog/<owner>/<repo>/issues.json (when --repo is set), "
-            "<repo-path>/artifacts/backlog/issues.json"
+            "GITHUB_TICKETS_DIR is set; otherwise resolves to "
+            "./local/<owner>/<repo>/backlog.json (when --repo is set), "
+            "or <repo-path>/local/backlog.json"
         ),
     )
     apply_backlog_cmd.add_argument(
@@ -574,6 +645,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     apply_rules.add_argument("--repo", help="Target GitHub repo (owner/repo)")
     apply_rules.add_argument(
+        "--repos", help="Comma-separated registered repos (owner/repo,owner/repo)"
+    )
+    apply_rules.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_repos",
+        help="Target every repo in the local registry",
+    )
+    apply_rules.add_argument(
         "--apply",
         action="store_true",
         dest="do_apply",
@@ -606,6 +686,83 @@ def build_parser() -> argparse.ArgumentParser:
         help="Check merge settings, managed ruleset, and security defaults",
     )
     check_rules.add_argument("--repo", help="Target GitHub repo (owner/repo)")
+    check_rules.add_argument(
+        "--repos", help="Comma-separated registered repos (owner/repo,owner/repo)"
+    )
+    check_rules.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_repos",
+        help="Target every repo in the local registry",
+    )
+
+    check_settings_cmd = check_sub.add_parser(
+        "settings",
+        help="Check repository settings including required status checks",
+    )
+    check_settings_cmd.add_argument(
+        "--repo",
+        required=True,
+        help="Target GitHub repo (owner/repo)",
+    )
+    check_settings_cmd.add_argument(
+        "--languages",
+        default="",
+        help=(
+            "Comma-separated language list to require as status checks "
+            "(default: read from .repo-scaffold.yml, falling back to file detection)"
+        ),
+    )
+
+    repo_cmd = subparsers.add_parser(
+        "repo",
+        help="Manage the local registry of repos repo-scaffold knows about",
+    )
+    repo_sub = repo_cmd.add_subparsers(dest="repo_command", required=True)
+    repo_register_cmd = repo_sub.add_parser(
+        "register", help="Register a repo in the local registry"
+    )
+    repo_register_cmd.add_argument(
+        "--repo", required=True, help="GitHub repo (owner/repo)"
+    )
+    repo_register_cmd.add_argument(
+        "--path", required=True, help="Local path to the repo's checkout"
+    )
+    repo_register_cmd.add_argument(
+        "--notes", default="", help="Free-text notes about this repo"
+    )
+    repo_sub.add_parser("list", help="List registered repos")
+    repo_forget_cmd = repo_sub.add_parser(
+        "forget", help="Remove a repo from the local registry"
+    )
+    repo_forget_cmd.add_argument(
+        "--repo", required=True, help="GitHub repo (owner/repo)"
+    )
+
+    sync_cmd = subparsers.add_parser(
+        "sync",
+        help="Check then apply settings/rules across one or more repos",
+    )
+    sync_sub = sync_cmd.add_subparsers(dest="sync_command", required=True)
+    sync_rules_cmd = sync_sub.add_parser(
+        "rules",
+        help="Check merge settings/ruleset/security defaults, then apply per-repo on confirm",
+    )
+    sync_rules_cmd.add_argument("--repo", help="Target GitHub repo (owner/repo)")
+    sync_rules_cmd.add_argument(
+        "--repos", help="Comma-separated registered repos (owner/repo,owner/repo)"
+    )
+    sync_rules_cmd.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_repos",
+        help="Target every repo in the local registry",
+    )
+    sync_rules_cmd.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the per-repo confirmation prompt and apply all drifted repos",
+    )
 
     project_cmd = subparsers.add_parser(
         "project",
@@ -735,6 +892,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Workspace path used for .env resolution (default: .)",
     )
     _add_project_target_args(project_setup_statuses_cmd)
+
+    project_setup_views_cmd = project_sub.add_parser(
+        "setup-views",
+        help=(
+            "Ensure 'Kanban Board' (board layout) and 'Progress View' "
+            "(table layout, Labels + Parent issue columns, grouped by Parent issue) "
+            "exist on the project"
+        ),
+    )
+    project_setup_views_cmd.add_argument(
+        "--path",
+        default=".",
+        help="Workspace path used for .env resolution (default: .)",
+    )
+    _add_project_target_args(project_setup_views_cmd)
 
     project_edit_cmd = project_sub.add_parser(
         "edit", help="Edit metadata for an existing project"
@@ -894,7 +1066,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_backlog = import_sub.add_parser(
         "backlog",
         parents=[apply_parent],
-        help="Import markdown backlog files into artifacts/backlog/issues.json",
+        help="Import markdown backlog files into local/<owner>/<repo>/backlog.json",
     )
     import_backlog.add_argument(
         "--path",
@@ -904,22 +1076,21 @@ def build_parser() -> argparse.ArgumentParser:
     import_backlog.add_argument(
         "--source",
         help=(
-            "Markdown source directory "
-            "(default: <path>/artifacts/tickets; env override: GITHUB_TICKETS_DIR)"
+            "Markdown source directory (required unless GITHUB_TICKETS_DIR is set in .env)"
         ),
     )
     import_backlog.add_argument(
         "--repo",
         help=(
             "Target GitHub repo (owner/repo). When provided and --out is omitted, "
-            "output defaults to local/backlog/<owner>/<repo>/issues.json"
+            "output defaults to local/<owner>/<repo>/backlog.json"
         ),
     )
     import_backlog.add_argument(
         "--out",
         help=(
-            "Backlog JSON output path. Defaults to local/backlog/<owner>/<repo>/issues.json "
-            "when --repo is provided, otherwise <path>/artifacts/backlog/issues.json"
+            "Backlog JSON output path. Defaults to local/<owner>/<repo>/backlog.json "
+            "when --repo is provided, otherwise <path>/local/backlog.json"
         ),
     )
 
@@ -1045,6 +1216,50 @@ def build_parser() -> argparse.ArgumentParser:
     )
     issue_sub_issue_cmd.add_argument(
         "--child", type=int, required=True, dest="child_number", metavar="N"
+    )
+
+    issue_sync_hierarchy_cmd = issue_sub.add_parser(
+        "sync-hierarchy",
+        help="Backfill parent/child sub-issue links from the epic label convention",
+    )
+    issue_sync_hierarchy_cmd.add_argument("--repo", required=True)
+    issue_sync_hierarchy_cmd.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the backfill (default is dry-run)",
+    )
+
+    issue_reparent_cmd = issue_sub.add_parser(
+        "re-parent",
+        help=(
+            "Move a sub-issue to a new parent: removes it from its current parent "
+            "then links it under the new one"
+        ),
+    )
+    issue_reparent_cmd.add_argument("--repo", required=True)
+    issue_reparent_cmd.add_argument(
+        "--issue",
+        type=int,
+        required=True,
+        dest="child_number",
+        metavar="N",
+        help="Issue number to re-parent",
+    )
+    issue_reparent_cmd.add_argument(
+        "--from-parent",
+        type=int,
+        required=True,
+        dest="old_parent_number",
+        metavar="N",
+        help="Current parent issue number (will be removed)",
+    )
+    issue_reparent_cmd.add_argument(
+        "--to-parent",
+        type=int,
+        required=True,
+        dest="new_parent_number",
+        metavar="N",
+        help="New parent issue number (will be linked)",
     )
 
     pr_cmd = subparsers.add_parser("pr", help="Interact with GitHub pull requests")
@@ -1184,6 +1399,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pr_list_comments_cmd.add_argument("--json", action="store_true", dest="json_output")
 
+    pr_request_reviewer_cmd = pr_sub.add_parser(
+        "request-reviewer", help="Request one or more reviewers on a PR"
+    )
+    pr_request_reviewer_cmd.add_argument("--repo", required=True)
+    pr_request_reviewer_cmd.add_argument(
+        "--pr-number", required=True, type=int, dest="pr_number"
+    )
+    pr_request_reviewer_cmd.add_argument(
+        "--reviewer",
+        action="append",
+        dest="reviewers",
+        required=True,
+        metavar="USER",
+        help="GitHub username to request (repeatable)",
+    )
+
     branch_cmd = subparsers.add_parser("branch", help="Manage GitHub branches")
     branch_sub = branch_cmd.add_subparsers(dest="branch_command", required=True)
 
@@ -1197,6 +1428,31 @@ def build_parser() -> argparse.ArgumentParser:
     branch_delete_cmd = branch_sub.add_parser("delete", help="Delete a branch")
     branch_delete_cmd.add_argument("--repo", required=True)
     branch_delete_cmd.add_argument("--name", required=True, help="Branch to delete")
+
+    label_cmd = subparsers.add_parser("label", help="Manage repository labels")
+    label_sub = label_cmd.add_subparsers(dest="label_command", required=True)
+
+    label_list_cmd = label_sub.add_parser("list", help="List all labels in a repo")
+    label_list_cmd.add_argument("--repo", required=True)
+    label_list_cmd.add_argument("--json", action="store_true")
+
+    label_create_cmd = label_sub.add_parser("create", help="Create a label in a repo")
+    label_create_cmd.add_argument("--repo", required=True)
+    label_create_cmd.add_argument("--name", required=True, help="Label name")
+    label_create_cmd.add_argument(
+        "--color", required=True, help="6-char hex color (without #)"
+    )
+    label_create_cmd.add_argument("--description", default="", help="Label description")
+
+    label_delete_cmd = label_sub.add_parser("delete", help="Delete a label from a repo")
+    label_delete_cmd.add_argument("--repo", required=True)
+    label_delete_cmd.add_argument("--name", required=True, help="Label name to delete")
+
+    label_preset_cmd = label_sub.add_parser(
+        "apply-preset",
+        help="Idempotently create the standard label set on a repo",
+    )
+    label_preset_cmd.add_argument("--repo", required=True)
 
     workspace_cmd = subparsers.add_parser(
         "workspace", help="Manage per-branch git worktrees under repos/"
@@ -1250,11 +1506,14 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
         "check",
         "delete",
         "import",
+        "label",
         "project",
         "issue",
         "pr",
         "branch",
         "workspace",
+        "repo",
+        "sync",
     }:
         return raw
     # Backward-compatible behavior: previous root command maps to init.
@@ -1315,7 +1574,7 @@ def main(argv: list[str] | None = None) -> int:
             or (ns.name or "").strip()
             or _default_init_name()
         )
-        repo_dir = Path(ns.path) if ns.path else default_output_path(repo_name_hint)
+        repo_dir = Path(ns.path) if ns.path else _resolve_output_path(repo_name_hint)
         if repo_dir.exists() and not repo_dir.is_dir():
             print(
                 f"Error: local repo path exists and is not a directory: {repo_dir}",
@@ -1451,7 +1710,7 @@ def main(argv: list[str] | None = None) -> int:
     if ns.mode == "init":
         init_name = (ns.name or "").strip() or _default_init_name()
         languages = _parse_languages_or_die(parser, ns.languages)
-        out_dir = Path(ns.out) if ns.out else default_output_path(init_name)
+        out_dir = Path(ns.out) if ns.out else _resolve_output_path(init_name)
         if out_dir.exists() and not out_dir.is_dir():
             print(
                 f"Error: output path '{out_dir}' exists and is not a directory.",
@@ -1605,9 +1864,14 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             if markdown_source_dir is not None:
                 try:
+                    auto_output = (
+                        _local_backlog_path(target_repo)
+                        if target_repo
+                        else repo_dir / "local" / "backlog.json"
+                    )
                     imported_backlog_file, import_summary = build_backlog_import_file(
                         source_dir=markdown_source_dir,
-                        output_file=repo_dir / DEFAULT_BACKLOG_REL_PATH,
+                        output_file=auto_output,
                     )
                 except RuntimeError as exc:
                     print(str(exc), file=sys.stderr)
@@ -1716,48 +1980,77 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if ns.mode == "apply" and ns.apply_command == "rules":
-        target_repo, repo_error = _resolve_repo_from_args_or_env(
-            repo=ns.repo, fallback_name=None
-        )
-        if repo_error:
-            print(repo_error, file=sys.stderr)
+        targets, targets_error = _resolve_repo_targets(ns)
+        if targets_error:
+            print(targets_error, file=sys.stderr)
             return 2
-        assert target_repo is not None
         preview_only = not ns.do_apply or getattr(ns, "dry_run", False)
-        try:
-            apply_repository_settings(
-                repo_dir=Path.cwd(),
-                repo=target_repo,
-                dry_run=preview_only,
-                out=print,
-                warn=lambda line: print(line, file=sys.stderr),
-            )
-        except RuntimeError as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
+        failures = 0
+        for target_repo, repo_dir in targets:
+            try:
+                apply_repository_settings(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    dry_run=preview_only,
+                    out=print,
+                    warn=lambda line: print(line, file=sys.stderr),
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                failures += 1
 
         print("")
         print("Summary:")
+        if len(targets) > 1:
+            print(f"  repos: {len(targets)}")
+            print(f"  failures: {failures}")
         if preview_only:
             print("  mode: dry-run")
             print("  settings planned: True")
         else:
             print("  settings applied: True")
-        return 0
+        return 1 if failures else 0
 
     if ns.mode == "check" and ns.check_command == "rules":
-        target_repo, repo_error = _resolve_repo_from_args_or_env(
-            repo=ns.repo, fallback_name=None
-        )
-        if repo_error:
-            print(repo_error, file=sys.stderr)
+        targets, targets_error = _resolve_repo_targets(ns)
+        if targets_error:
+            print(targets_error, file=sys.stderr)
             return 2
-        assert target_repo is not None
+        total_failed = 0
+        for target_repo, repo_dir in targets:
+            try:
+                check_summary: SettingsCheckSummary = check_repository_settings(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    out=print,
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                total_failed += 1
+                continue
+
+            print("")
+            print("Summary:")
+            print(f"  repo: {check_summary.repo}")
+            print(f"  checks passed: {check_summary.passed}")
+            print(f"  checks failed: {check_summary.failed}")
+            print(f"  checks skipped: {check_summary.skipped}")
+            print(f"  drift items: {len(check_summary.drifts)}")
+            total_failed += check_summary.failed
+        return 1 if total_failed > 0 else 0
+
+    if ns.mode == "check" and ns.check_command == "settings":
+        langs = (
+            _parse_languages_or_die(parser, ns.languages)
+            if ns.languages
+            else tuple(resolve_languages(Path.cwd()))
+        )
         try:
-            check_summary: SettingsCheckSummary = check_repository_settings(
+            settings_summary: SettingsCheckSummary = check_repository_settings(
                 repo_dir=Path.cwd(),
-                repo=target_repo,
+                repo=ns.repo,
                 out=print,
+                languages=list(langs) if langs else None,
             )
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
@@ -1765,12 +2058,95 @@ def main(argv: list[str] | None = None) -> int:
 
         print("")
         print("Summary:")
-        print(f"  repo: {check_summary.repo}")
-        print(f"  checks passed: {check_summary.passed}")
-        print(f"  checks failed: {check_summary.failed}")
-        print(f"  checks skipped: {check_summary.skipped}")
-        print(f"  drift items: {len(check_summary.drifts)}")
-        return 1 if check_summary.failed > 0 else 0
+        print(f"  repo: {settings_summary.repo}")
+        if langs:
+            print(f"  languages: {', '.join(langs)}")
+        print(f"  checks passed: {settings_summary.passed}")
+        print(f"  checks failed: {settings_summary.failed}")
+        print(f"  checks skipped: {settings_summary.skipped}")
+        print(f"  drift items: {len(settings_summary.drifts)}")
+        return 1 if settings_summary.failed > 0 else 0
+
+    if ns.mode == "repo" and ns.repo_command == "register":
+        entry: RegistryEntry = register_repo(ns.repo, ns.path, ns.notes)
+        print(f"Registered {entry.repo} -> {entry.local_path}")
+        return 0
+
+    if ns.mode == "repo" and ns.repo_command == "list":
+        entries = list_registry()
+        if not entries:
+            print("No repos registered.")
+            return 0
+        for entry in entries:
+            suffix = f"  ({entry.notes})" if entry.notes else ""
+            print(f"{entry.repo} -> {entry.local_path}{suffix}")
+        return 0
+
+    if ns.mode == "repo" and ns.repo_command == "forget":
+        removed = forget_repo(ns.repo)
+        if not removed:
+            print(f"Error: repo not registered: {ns.repo}", file=sys.stderr)
+            return 2
+        print(f"Removed {ns.repo} from the registry.")
+        return 0
+
+    if ns.mode == "sync" and ns.sync_command == "rules":
+        targets, targets_error = _resolve_repo_targets(ns)
+        if targets_error:
+            print(targets_error, file=sys.stderr)
+            return 2
+
+        drifted: list[tuple[str, Path]] = []
+        errors = 0
+        for target_repo, repo_dir in targets:
+            try:
+                drift_summary: SettingsCheckSummary = check_repository_settings(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    out=print,
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                errors += 1
+                continue
+            print(
+                f"  {target_repo}: {drift_summary.failed} drifted, {len(drift_summary.drifts)} drift items"
+            )
+            if drift_summary.failed > 0:
+                drifted.append((target_repo, repo_dir))
+
+        if not drifted:
+            print("")
+            print("No drift found. Nothing to apply.")
+            return 1 if errors else 0
+
+        print("")
+        applied = 0
+        for target_repo, repo_dir in drifted:
+            if not ns.yes:
+                answer = input(f"Apply fixes for {target_repo}? [y/N] ").strip().lower()
+                if answer != "y":
+                    print(f"Skipped {target_repo}.")
+                    continue
+            try:
+                apply_repository_settings(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    dry_run=False,
+                    out=print,
+                    warn=lambda line: print(line, file=sys.stderr),
+                )
+                applied += 1
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                errors += 1
+
+        print("")
+        print("Summary:")
+        print(f"  repos checked: {len(targets)}")
+        print(f"  repos drifted: {len(drifted)}")
+        print(f"  repos applied: {applied}")
+        return 1 if errors else 0
 
     if ns.mode == "project":
         repo_dir = Path(ns.path)
@@ -1910,6 +2286,14 @@ def main(argv: list[str] | None = None) -> int:
                     project_title=ns.project_title,
                     out=print,
                 )
+            elif ns.project_command == "setup-views":
+                mutation_summary = setup_project_views(
+                    repo_dir=repo_dir,
+                    owner=ns.project_owner,
+                    project_number=ns.project_number,
+                    project_title=ns.project_title,
+                    out=print,
+                )
             elif ns.project_command == "edit":
                 mutation_summary = edit_project(
                     repo_dir=repo_dir,
@@ -2037,9 +2421,6 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
-        source_dir = _resolve_markdown_source_dir(
-            repo_dir=repo_dir, source_arg=ns.source
-        )
         if ns.out:
             p = Path(ns.out)
             output_file = p if p.is_absolute() else repo_dir / p
@@ -2051,9 +2432,17 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 2
-            output_file = _local_backlog_slug_path(normalized_repo)
+            output_file = _local_backlog_path(normalized_repo)
         else:
-            output_file = repo_dir / DEFAULT_BACKLOG_REL_PATH
+            output_file = repo_dir / "local" / "backlog.json"
+
+        try:
+            source_dir = _resolve_markdown_source_dir(
+                repo_dir=repo_dir, source_arg=ns.source
+            )
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
 
         try:
             imported_backlog_file, import_summary = build_backlog_import_file(
@@ -2278,6 +2667,77 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             print(
                 f"Issue #{ns.child_number} linked as sub-issue of #{ns.parent_number}."
+            )
+            return 0
+
+        if ns.issue_command == "sync-hierarchy":
+            cp = issue_sync_hierarchy(target_repo, token, apply=ns.apply)
+            if cp.returncode != 0:
+                print(
+                    cp.stderr.strip() or "Failed syncing issue hierarchy.",
+                    file=sys.stderr,
+                )
+                return 1
+            report = _json.loads(cp.stdout)
+            mode = "APPLY" if ns.apply else "DRY RUN"
+            print(f"Hierarchy sync for {target_repo} ({mode})")
+            for key in (
+                "linked",
+                "already_linked",
+                "would_link",
+                "conflict",
+                "ambiguous",
+                "unaffiliated",
+                "errors",
+            ):
+                items = report.get(key, [])
+                print(f"  {key}: {len(items)}")
+                for item in items:
+                    print(f"    {item}")
+            return 0
+
+        if ns.issue_command == "re-parent":
+            owner, _, repo_name = target_repo.partition("/")
+            if not issue_node_id(owner, repo_name, ns.new_parent_number, token):
+                print(
+                    f"Error: could not resolve --to-parent #{ns.new_parent_number}.",
+                    file=sys.stderr,
+                )
+                return 1
+            rm_cp = issue_remove_sub_issue(
+                owner, repo_name, ns.old_parent_number, ns.child_number, token
+            )
+            if rm_cp.returncode != 0:
+                print(
+                    rm_cp.stderr.strip() or "Failed removing existing parent link.",
+                    file=sys.stderr,
+                )
+                return 1
+            add_cp = issue_add_sub_issue(
+                owner, repo_name, ns.new_parent_number, ns.child_number, token
+            )
+            if add_cp.returncode != 0:
+                print(
+                    add_cp.stderr.strip() or "Failed linking to new parent.",
+                    file=sys.stderr,
+                )
+                rb_cp = issue_add_sub_issue(
+                    owner, repo_name, ns.old_parent_number, ns.child_number, token
+                )
+                if rb_cp.returncode != 0:
+                    print(
+                        f"Rollback failed. Issue #{ns.child_number} is now detached.",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"Rolled back: #{ns.child_number} re-linked to #{ns.old_parent_number}.",
+                        file=sys.stderr,
+                    )
+                return 1
+            print(
+                f"Issue #{ns.child_number} re-parented: "
+                f"#{ns.old_parent_number} -> #{ns.new_parent_number}."
             )
             return 0
 
@@ -2548,6 +3008,21 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"  {body[:200]}")
             return 0
 
+        if ns.pr_command == "request-reviewer":
+            cp = pr_request_reviewer(target_repo, ns.pr_number, token, ns.reviewers)
+            if cp.returncode not in (0, 201):
+                print(
+                    cp.stderr.strip() or "Failed requesting reviewer.",
+                    file=sys.stderr,
+                )
+                return 1
+            data = _json.loads(cp.stdout)
+            requested = [
+                r.get("login", "") for r in data.get("requested_reviewers", [])
+            ]
+            print(f"Reviewers requested on PR #{ns.pr_number}: {', '.join(requested)}")
+            return 0
+
     if ns.mode == "branch":
         import json as _json
 
@@ -2575,6 +3050,62 @@ def main(argv: list[str] | None = None) -> int:
                 print(cp.stderr.strip() or "Failed deleting branch.", file=sys.stderr)
                 return 1
             print(f"Branch deleted: {ns.name}")
+            return 0
+
+    if ns.mode == "label":
+        import json as _json
+
+        target_repo, repo_error = _resolve_repo_from_args_or_env(
+            repo=ns.repo, fallback_name=None
+        )
+        if repo_error:
+            print(repo_error, file=sys.stderr)
+            return 2
+        assert target_repo is not None
+        token = token_from_repo(Path.cwd()) or ""
+
+        if ns.label_command == "list":
+            cp = label_list(target_repo, token)
+            if cp.returncode not in (0, 200):
+                print(cp.stderr.strip() or "Failed listing labels.", file=sys.stderr)
+                return 1
+            labels = _json.loads(cp.stdout)
+            if getattr(ns, "json", False):
+                print(cp.stdout)
+                return 0
+            for lbl in labels:
+                desc = f" -- {lbl['description']}" if lbl.get("description") else ""
+                print(f"  #{lbl['color']}  {lbl['name']}{desc}")
+            print(f"\nTotal: {len(labels)}")
+            return 0
+
+        if ns.label_command == "create":
+            cp = label_create(target_repo, ns.name, ns.color, token, ns.description)
+            if cp.returncode not in (0, 200, 201):
+                print(cp.stderr.strip() or "Failed creating label.", file=sys.stderr)
+                return 1
+            print(f"Label created: {ns.name}")
+            return 0
+
+        if ns.label_command == "delete":
+            cp = label_delete(target_repo, ns.name, token)
+            if cp.returncode not in (0, 200, 204):
+                print(cp.stderr.strip() or "Failed deleting label.", file=sys.stderr)
+                return 1
+            print(f"Label deleted: {ns.name}")
+            return 0
+
+        if ns.label_command == "apply-preset":
+            cp = label_apply_preset(target_repo, token)
+            if cp.returncode not in (0, 200):
+                print(cp.stderr.strip() or "Failed applying preset.", file=sys.stderr)
+                return 1
+            result = _json.loads(cp.stdout)
+            created = result.get("created", [])
+            skipped = result.get("skipped", 0)
+            if created:
+                print(f"Created: {', '.join(created)}")
+            print(f"Skipped (already exist): {skipped}")
             return 0
 
     if ns.mode == "workspace":

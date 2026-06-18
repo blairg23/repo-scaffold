@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -48,12 +48,14 @@ class StatusOption:
 class ProjectConfig:
     statuses: list[StatusOption]
     workflows: dict[str, str]
+    languages: list[str] = field(default_factory=list)
 
 
 def default_config() -> ProjectConfig:
     return ProjectConfig(
         statuses=[StatusOption(s["name"], s["color"]) for s in DEFAULT_STATUS_OPTIONS],
         workflows=dict(DEFAULT_WORKFLOW_MAPPINGS),
+        languages=[],
     )
 
 
@@ -93,6 +95,10 @@ def save_config(config: ProjectConfig, path: Path) -> None:
     for key, value in config.workflows.items():
         v = value.replace('"', '\\"')
         lines.append(f'    {key}: "{v}"')
+    if config.languages:
+        lines.append("  languages:")
+        for lang in config.languages:
+            lines.append(f"    - {lang}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -107,6 +113,7 @@ def _parse_yaml_config(text: str) -> ProjectConfig:
     """Parse the specific subset of YAML that save_config writes."""
     statuses: list[StatusOption] = []
     workflows: dict[str, str] = {}
+    languages: list[str] = []
     section: str | None = None
     current: dict[str, str] = {}
 
@@ -123,13 +130,18 @@ def _parse_yaml_config(text: str) -> ProjectConfig:
 
         if indent == 2:
             key = stripped.rstrip(":")
-            if key in ("statuses", "workflows"):
+            if key in ("statuses", "workflows", "languages"):
                 if current.get("name"):
                     statuses.append(
                         StatusOption(current["name"], current.get("color", "GRAY"))
                     )
                     current = {}
                 section = key
+            continue
+
+        if section == "languages":
+            if indent == 4 and stripped.startswith("- "):
+                languages.append(stripped[2:].strip())
             continue
 
         if section == "statuses":
@@ -163,7 +175,20 @@ def _parse_yaml_config(text: str) -> ProjectConfig:
         workflows=(
             {**defaults.workflows, **workflows} if workflows else defaults.workflows
         ),
+        languages=languages if languages else defaults.languages,
     )
+
+
+def resolve_languages(repo_dir: Path) -> list[str]:
+    """Return the repo's declared languages from .repo-scaffold.yml, falling back
+    to file-based detection when the field is absent or the repo has no config."""
+    config = load_config(repo_dir)
+    if config.languages:
+        return config.languages
+
+    from .generator import detect_languages_from_repo
+
+    return list(detect_languages_from_repo(repo_dir))
 
 
 def prompt_config(

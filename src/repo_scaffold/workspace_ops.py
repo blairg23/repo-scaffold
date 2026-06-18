@@ -227,6 +227,8 @@ def workspace_create(
     else:
         if not _clone_url_override:
             _setup_bare_auth(bare, token)
+        # Fetch to remote-tracking refs so we never touch branches checked out
+        # in existing worktrees (git refuses to update those via local ref mapping).
         cp = _run(
             [
                 "git",
@@ -240,13 +242,15 @@ def workspace_create(
         )
         if cp.returncode != 0:
             return _err(f"git fetch failed: {cp.stderr.strip()}")
+        # Sync the base branch local ref so worktree add can use it by name.
         _run(
             ["git", "fetch", "origin", f"+refs/heads/{base}:refs/heads/{base}"],
             cwd=bare,
             bare=True,
         )
-        # Populate local ref for the requested branch if it exists on origin so
-        # the show-ref check below finds it (remote-tracking refs alone are not enough).
+        # Also sync the requested branch's local ref, if it exists on origin, so an
+        # existing remote branch is checked out at its current commit rather than
+        # falling through to a stale local ref or a fresh branch off base below.
         _run(
             ["git", "fetch", "origin", f"+refs/heads/{branch}:refs/heads/{branch}"],
             cwd=bare,

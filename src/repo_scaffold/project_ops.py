@@ -19,8 +19,6 @@ from .backlog_ops import (
 )
 from .project_metadata import write_project_metadata
 
-DEFAULT_PROJECT_BACKUP_REL_DIR = "artifacts/project-backups"
-
 
 @dataclass(frozen=True)
 class ProjectInfo:
@@ -198,7 +196,7 @@ def _parse_project_item(item: dict[str, object]) -> ProjectItemInfo:
         else None
     )
 
-    content_type_value = content_dict.get("type")
+    content_type_value = content_dict.get("__typename") or content_dict.get("type")
     if not isinstance(content_type_value, str) or not content_type_value.strip():
         content_type_value = item.get("type")
     content_type = (
@@ -674,6 +672,117 @@ def setup_project_statuses(
     )
 
 
+# Layout constants for readability
+_BOARD_LAYOUT = "BOARD_LAYOUT"
+_TABLE_LAYOUT = "TABLE_LAYOUT"
+
+
+def setup_project_views(
+    *,
+    repo_dir: Path,
+    owner: str | None,
+    project_number: int | None,
+    project_title: str | None,
+    out: Callable[[str], None] = print,
+) -> ProjectMutationSummary:
+    """Verify standard project views exist and print guidance for any manual steps.
+
+    GitHub's public GraphQL API does not expose mutations to create or configure
+    project views, so this function reports the current view state and prints
+    step-by-step UI instructions for anything that still needs manual setup.
+
+    Expected views:
+    - "Kanban Board": BOARD_LAYOUT
+    - "Progress View": TABLE_LAYOUT, Labels + Parent issue columns, grouped by Parent issue
+    """
+    from .github_api import (
+        project_views,
+        token_from_repo,
+    )
+
+    token = token_from_repo(repo_dir) or ""
+    project = _find_existing_project(
+        repo_dir=repo_dir,
+        owner=owner,
+        project_number=project_number,
+        project_title=project_title,
+    )
+    if not project.id:
+        raise RuntimeError(f"Could not resolve project ID for '{project.title}'.")
+
+    project_id = project.id
+
+    cp = project_views(project_id, token)
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr.strip() or "Failed fetching project views.")
+    try:
+        existing_views: list[dict[str, object]] = json.loads(cp.stdout).get("views", [])
+    except (json.JSONDecodeError, AttributeError):
+        existing_views = []
+
+    def _find_view(name: str, layout: str) -> dict[str, object] | None:
+        return next(
+            (
+                v
+                for v in existing_views
+                if isinstance(v, dict)
+                and v.get("name") == name
+                and v.get("layout") == layout
+            ),
+            None,
+        )
+
+    needs_manual: list[str] = []
+
+    if _find_view("Kanban Board", _BOARD_LAYOUT):
+        out("'Kanban Board' view exists (BOARD_LAYOUT). OK.")
+    else:
+        out("'Kanban Board' view is missing or has the wrong layout.")
+        needs_manual.append("kanban")
+
+    if _find_view("Progress View", _TABLE_LAYOUT):
+        out("'Progress View' view exists (TABLE_LAYOUT). OK.")
+    else:
+        out("'Progress View' view is missing or has the wrong layout.")
+        needs_manual.append("progress")
+
+    if needs_manual:
+        out("")
+        out(
+            "GitHub's API does not support creating or configuring project views. "
+            "Complete the following steps in the GitHub UI:"
+        )
+        if "kanban" in needs_manual:
+            out(
+                "  Kanban Board: click '+ New view', choose 'Board',"
+                " name it 'Kanban Board'."
+            )
+        if "progress" in needs_manual:
+            out(
+                "  Progress View: click '+ New view', choose 'Table',"
+                " name it 'Progress View'."
+            )
+        out("  In 'Progress View': click Fields, add 'Labels' and 'Parent issue'.")
+        out("  In 'Progress View': click Group by, select 'Parent issue'.")
+    else:
+        out("")
+        out(
+            "Both views present. Verify in GitHub UI that 'Progress View' shows"
+            " 'Labels' and 'Parent issue' columns with Group by = 'Parent issue'."
+        )
+        out("  GitHub's API cannot check or set column visibility or group-by.")
+
+    return ProjectMutationSummary(
+        action="setup-views",
+        owner=project.owner,
+        project_number=project.number,
+        project_title=project.title,
+        failures=len(needs_manual),
+        changed=False,
+        metadata_file=None,
+    )
+
+
 def create_project(
     *,
     repo_dir: Path,
@@ -806,6 +915,17 @@ def create_project(
         except RuntimeError as exc:
             out(f"Warning: could not setup status field: {exc}")
 
+        try:
+            setup_project_views(
+                repo_dir=repo_dir,
+                owner=project_owner,
+                project_number=number,
+                project_title=None,
+                out=out,
+            )
+        except RuntimeError as exc:
+            out(f"Warning: could not setup project views: {exc}")
+
     return ProjectMutationSummary(
         action="create",
         owner=project_owner,
@@ -904,14 +1024,14 @@ def edit_project(
     )
 
 
-def _default_backup_dir(repo_dir: Path) -> Path:
-    return repo_dir / DEFAULT_PROJECT_BACKUP_REL_DIR
+def _default_backup_dir(owner: str) -> Path:
+    return Path.cwd() / "local" / owner / "backups"
 
 
 def _backup_paths(
-    *, repo_dir: Path, backup_dir: str | None, prefix: str
+    *, repo_dir: Path, backup_dir: str | None, owner: str, prefix: str
 ) -> tuple[Path, str]:
-    root = Path(backup_dir) if backup_dir else _default_backup_dir(repo_dir)
+    root = Path(backup_dir) if backup_dir else _default_backup_dir(owner)
     backup_root = root if root.is_absolute() else (repo_dir / root)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     suffix = uuid.uuid4().hex[:8]
@@ -1064,6 +1184,7 @@ def delete_project(
     backup_file, _ = _backup_paths(
         repo_dir=repo_dir,
         backup_dir=backup_dir,
+        owner=project.owner,
         prefix=f"project-delete-{project.owner}-{project.number}",
     )
     _write_backup_file(
@@ -1206,6 +1327,7 @@ def delete_project_item(
     backup_file, _ = _backup_paths(
         repo_dir=repo_dir,
         backup_dir=backup_dir,
+        owner=project.owner,
         prefix=f"project-item-delete-{project.owner}-{project.number}",
     )
     _write_backup_file(

@@ -216,8 +216,9 @@ def test_apply_dependabot_infers_languages_from_repo(tmp_path: Path) -> None:
 
 def test_import_backlog_writes_json_from_markdown(tmp_path: Path) -> None:
     repo_dir = tmp_path / "repo"
-    source_dir = repo_dir / "artifacts" / "tickets"
+    source_dir = tmp_path / "tickets"
     source_dir.mkdir(parents=True)
+    repo_dir.mkdir(parents=True)
     (source_dir / "ticket.md").write_text(
         """## 🧾 Title
 
@@ -236,12 +237,14 @@ Turn markdown backlog notes into JSON.
             "backlog",
             "--path",
             str(repo_dir),
+            "--source",
+            str(source_dir),
             "--yes",
         ]
     )
 
     assert rc == 0
-    output_file = repo_dir / "artifacts" / "backlog" / "issues.json"
+    output_file = repo_dir / "local" / "backlog.json"
     assert output_file.exists()
     payload = output_file.read_text(encoding="utf-8")
     assert "Document import flow" in payload
@@ -249,8 +252,9 @@ Turn markdown backlog notes into JSON.
 
 def test_import_backlog_dry_run_does_not_write(tmp_path: Path) -> None:
     repo_dir = tmp_path / "repo"
-    source_dir = repo_dir / "artifacts" / "tickets"
+    source_dir = tmp_path / "tickets"
     source_dir.mkdir(parents=True)
+    repo_dir.mkdir(parents=True)
     (source_dir / "ticket.md").write_text(
         "# Dry Run Ticket\n\n## Summary\n\nPreview only.\n",
         encoding="utf-8",
@@ -262,12 +266,14 @@ def test_import_backlog_dry_run_does_not_write(tmp_path: Path) -> None:
             "backlog",
             "--path",
             str(repo_dir),
+            "--source",
+            str(source_dir),
             "--dry-run",
         ]
     )
 
     assert rc == 0
-    assert not (repo_dir / "artifacts" / "backlog" / "issues.json").exists()
+    assert not (repo_dir / "local" / "backlog.json").exists()
 
 
 def test_import_backlog_uses_env_ticket_dir_override(
@@ -294,9 +300,7 @@ def test_import_backlog_uses_env_ticket_dir_override(
     )
 
     assert rc == 0
-    payload = (repo_dir / "artifacts" / "backlog" / "issues.json").read_text(
-        encoding="utf-8"
-    )
+    payload = (repo_dir / "local" / "backlog.json").read_text(encoding="utf-8")
     assert "Env Ticket" in payload
 
 
@@ -330,22 +334,21 @@ def test_import_backlog_uses_repo_local_dotenv_ticket_dir_override(
     )
 
     assert rc == 0
-    payload = (repo_dir / "artifacts" / "backlog" / "issues.json").read_text(
-        encoding="utf-8"
-    )
+    payload = (repo_dir / "local" / "backlog.json").read_text(encoding="utf-8")
     assert "Repo Local Env Ticket" in payload
 
 
-def test_import_backlog_uses_slug_path_when_repo_provided(
+def test_import_backlog_uses_local_path_when_repo_provided(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True)
     repo_dir = workspace / "target-repo"
-    source_dir = repo_dir / "artifacts" / "tickets"
+    source_dir = tmp_path / "tickets"
     source_dir.mkdir(parents=True)
+    repo_dir.mkdir(parents=True)
     (source_dir / "ticket.md").write_text(
-        "# Slug Ticket\n\n## Summary\n\nShould go to slug path.\n",
+        "# Local Path Ticket\n\n## Summary\n\nShould go to local path.\n",
         encoding="utf-8",
     )
 
@@ -357,6 +360,8 @@ def test_import_backlog_uses_slug_path_when_repo_provided(
             "backlog",
             "--path",
             str(repo_dir),
+            "--source",
+            str(source_dir),
             "--repo",
             "acme/my-repo",
             "--yes",
@@ -364,10 +369,10 @@ def test_import_backlog_uses_slug_path_when_repo_provided(
     )
 
     assert rc == 0
-    slug_file = workspace / "local" / "backlog" / "acme" / "my-repo" / "issues.json"
-    assert slug_file.exists()
-    payload = slug_file.read_text(encoding="utf-8")
-    assert "Slug Ticket" in payload
+    local_file = workspace / "local" / "acme" / "my-repo" / "backlog.json"
+    assert local_file.exists()
+    payload = local_file.read_text(encoding="utf-8")
+    assert "Local Path Ticket" in payload
 
 
 def test_import_backlog_rejects_invalid_repo_format(tmp_path: Path) -> None:
@@ -389,10 +394,11 @@ def test_import_backlog_rejects_invalid_repo_format(tmp_path: Path) -> None:
     assert rc == 2
 
 
-def test_import_backlog_defaults_to_artifacts_when_no_repo(tmp_path: Path) -> None:
+def test_import_backlog_defaults_to_local_when_no_repo(tmp_path: Path) -> None:
     repo_dir = tmp_path / "repo"
-    source_dir = repo_dir / "artifacts" / "tickets"
+    source_dir = tmp_path / "tickets"
     source_dir.mkdir(parents=True)
+    repo_dir.mkdir(parents=True)
     (source_dir / "ticket.md").write_text(
         "# No Repo Ticket\n\n## Summary\n\nNo repo flag provided.\n",
         encoding="utf-8",
@@ -404,14 +410,16 @@ def test_import_backlog_defaults_to_artifacts_when_no_repo(tmp_path: Path) -> No
             "backlog",
             "--path",
             str(repo_dir),
+            "--source",
+            str(source_dir),
             "--yes",
         ]
     )
 
     assert rc == 0
-    artifacts_file = repo_dir / "artifacts" / "backlog" / "issues.json"
-    assert artifacts_file.exists()
-    payload = artifacts_file.read_text(encoding="utf-8")
+    local_file = repo_dir / "local" / "backlog.json"
+    assert local_file.exists()
+    payload = local_file.read_text(encoding="utf-8")
     assert "No Repo Ticket" in payload
 
 
@@ -497,12 +505,14 @@ def test_apply_backlog_auto_imports_markdown_when_no_file_is_provided(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     repo_dir = tmp_path / "repo"
-    source_dir = repo_dir / "artifacts" / "tickets"
+    repo_dir.mkdir(parents=True)
+    source_dir = tmp_path / "tickets"
     source_dir.mkdir(parents=True)
     (source_dir / "ticket.md").write_text(
         "# Imported Ticket\n\n## Summary\n\nImported automatically before apply.\n",
         encoding="utf-8",
     )
+    monkeypatch.setenv("GITHUB_TICKETS_DIR", str(source_dir))
 
     called: dict[str, object] = {}
 
@@ -625,10 +635,10 @@ def test_apply_backlog_accepts_positional_repo_ref(
     workspace.mkdir(parents=True)
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
-    # Create slug path so --repo resolution succeeds without --file
-    slug_dir = workspace / "local" / "backlog" / "acme" / "repo"
+    # Create local path so --repo resolution succeeds without --file
+    slug_dir = workspace / "local" / "acme" / "repo"
     slug_dir.mkdir(parents=True)
-    (slug_dir / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    (slug_dir / "backlog.json").write_text('{"epics":[]}', encoding="utf-8")
     backlog = slug_dir
     monkeypatch.chdir(workspace)
 
@@ -671,7 +681,7 @@ def test_apply_backlog_accepts_positional_repo_ref(
 
     assert rc == 0
     assert called["repo"] == "acme/repo"
-    assert called["backlog_file"] == backlog / "issues.json"
+    assert called["backlog_file"] == backlog / "backlog.json"
 
 
 def test_apply_backlog_errors_when_repo_set_but_slug_missing(
@@ -697,21 +707,18 @@ def test_apply_backlog_errors_when_repo_set_but_slug_missing(
     assert rc != 0
 
 
-def test_apply_backlog_prefers_slug_path_over_artifacts(
+def test_apply_backlog_uses_local_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True)
 
-    slug_backlog = workspace / "local" / "backlog" / "acme" / "repo"
-    slug_backlog.mkdir(parents=True)
-    (slug_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    local_backlog = workspace / "local" / "acme" / "repo"
+    local_backlog.mkdir(parents=True)
+    (local_backlog / "backlog.json").write_text('{"epics":[]}', encoding="utf-8")
 
     repo_dir = workspace / "repo"
     repo_dir.mkdir(parents=True)
-    artifacts_backlog = repo_dir / "artifacts" / "backlog"
-    artifacts_backlog.mkdir(parents=True)
-    (artifacts_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
 
     monkeypatch.chdir(workspace)
 
@@ -752,10 +759,10 @@ def test_apply_backlog_prefers_slug_path_over_artifacts(
         ]
     )
     assert rc == 0
-    assert called["backlog_file"] == slug_backlog / "issues.json"
+    assert called["backlog_file"] == local_backlog / "backlog.json"
 
 
-def test_apply_backlog_falls_back_to_artifacts_when_slug_missing(
+def test_apply_backlog_raises_when_local_path_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -763,36 +770,9 @@ def test_apply_backlog_falls_back_to_artifacts_when_slug_missing(
 
     repo_dir = workspace / "repo"
     repo_dir.mkdir(parents=True)
-    artifacts_backlog = repo_dir / "artifacts" / "backlog"
-    artifacts_backlog.mkdir(parents=True)
-    (artifacts_backlog / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
 
     monkeypatch.chdir(workspace)
-
-    called: dict[str, object] = {}
-
-    def _fake_apply_backlog(
-        *,
-        repo_dir: Path,
-        repo: str,
-        backlog_file: Path,
-        dry_run: bool,
-        project_number,
-        project_title,
-        project_owner,
-        out,
-        err,
-    ):
-        called["backlog_file"] = backlog_file
-        return BacklogApplySummary(
-            milestones_created=0,
-            milestones_skipped=0,
-            issues_created=0,
-            issues_skipped=0,
-            failures=0,
-        )
-
-    monkeypatch.setattr("repo_scaffold.cli.apply_backlog", _fake_apply_backlog)
+    monkeypatch.setattr("repo_scaffold.cli.apply_backlog", lambda **_: None)
 
     rc = main(
         [
@@ -805,8 +785,7 @@ def test_apply_backlog_falls_back_to_artifacts_when_slug_missing(
             "--dry-run",
         ]
     )
-    assert rc == 0
-    assert called["backlog_file"] == artifacts_backlog / "issues.json"
+    assert rc != 0
 
 
 def test_apply_backlog_auth_check(
@@ -876,9 +855,9 @@ def test_apply_backlog_project_title_delegates_to_backlog_ops(
 ) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
-    slug_dir = tmp_path / "local" / "backlog" / "acme" / "repo"
+    slug_dir = tmp_path / "local" / "acme" / "repo"
     slug_dir.mkdir(parents=True)
-    (slug_dir / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    (slug_dir / "backlog.json").write_text('{"epics":[]}', encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     called: dict[str, object] = {}
@@ -994,9 +973,9 @@ def test_apply_backlog_with_project_defaults_title_from_repo_name(
 ) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
-    slug_dir = tmp_path / "local" / "backlog" / "acme" / "repo-name"
+    slug_dir = tmp_path / "local" / "acme" / "repo-name"
     slug_dir.mkdir(parents=True)
-    (slug_dir / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    (slug_dir / "backlog.json").write_text('{"epics":[]}', encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     monkeypatch.delenv("GITHUB_PROJECT_TITLE", raising=False)
@@ -1053,9 +1032,9 @@ def test_apply_backlog_with_project_uses_env_template(
 ) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
-    slug_dir = tmp_path / "local" / "backlog" / "acme" / "repo-name"
+    slug_dir = tmp_path / "local" / "acme" / "repo-name"
     slug_dir.mkdir(parents=True)
-    (slug_dir / "issues.json").write_text('{"epics":[]}', encoding="utf-8")
+    (slug_dir / "backlog.json").write_text('{"epics":[]}', encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     monkeypatch.setenv("GITHUB_PROJECT_TITLE_TEMPLATE", "{repo} Delivery")
@@ -1431,7 +1410,7 @@ def test_create_auto_inits_default_path_from_github_repo_env(
 
     rc = main(["create"])
     assert rc == 0
-    expected_repo_dir = Path("out") / "repo-from-env"
+    expected_repo_dir = Path("repo-from-env")
     assert called["repo_dir"] == expected_repo_dir
     assert (workspace / expected_repo_dir).exists()
     assert (workspace / expected_repo_dir / "README.md").exists()
@@ -1478,7 +1457,7 @@ def test_create_repo_flag_name_takes_precedence_for_auto_init_path(
 
     rc = main(["create", "--repo", "acme/repo-from-flag"])
     assert rc == 0
-    expected_repo_dir = Path("out") / "repo-from-flag"
+    expected_repo_dir = Path("repo-from-flag")
     assert called["repo"] == "acme/repo-from-flag"
     assert called["repo_dir"] == expected_repo_dir
     assert (workspace / expected_repo_dir).exists()
@@ -1708,7 +1687,7 @@ def test_project_delete_subcommand_delegates_to_project_ops(
             project_title="Roadmap",
             failures=0,
             changed=True,
-            backup_file=repo_dir / "artifacts" / "project-backups" / "backup.json",
+            backup_file=repo_dir / "local" / "acme" / "backups" / "backup.json",
             undo_command="undo-cmd",
         )
 
@@ -2193,6 +2172,57 @@ def test_issue_add_sub_issue_failure_returns_1(
     assert rc == 1
 
 
+def test_issue_sync_hierarchy_dry_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_sync_hierarchy",
+        lambda repo, token, apply=False: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "linked": [],
+                    "already_linked": [{"epic": 1, "child": 2}],
+                    "would_link": [{"epic": 1, "child": 3}],
+                    "conflict": [],
+                    "ambiguous": [],
+                    "unaffiliated": [4],
+                    "errors": [],
+                }
+            ),
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(["issue", "sync-hierarchy", "--repo", "acme/repo"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "DRY RUN" in out
+    assert "would_link: 1" in out
+
+
+def test_issue_sync_hierarchy_apply_failure_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_sync_hierarchy",
+        lambda repo, token, apply=False: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="boom"
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    rc = main(["issue", "sync-hierarchy", "--repo", "acme/repo", "--apply"])
+    assert rc == 1
+
+
 # ---------------------------------------------------------------------------
 # pr command tests
 # ---------------------------------------------------------------------------
@@ -2591,6 +2621,101 @@ def test_branch_delete(tmp_path, monkeypatch, capsys) -> None:
     assert rc == 0
 
 
+def test_label_list(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.label_list",
+        lambda repo, token: subprocess.CompletedProcess(
+            args=[],
+            returncode=200,
+            stdout=json.dumps(
+                [{"name": "bug", "color": "d73a4a", "description": "Something broken"}]
+            ),
+            stderr="",
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["label", "list", "--repo", "acme/repo"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "bug" in out
+    assert "Total: 1" in out
+
+
+def test_label_create(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.label_create",
+        lambda repo, name, color, token, description="": subprocess.CompletedProcess(
+            args=[], returncode=201, stdout="{}", stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(
+        [
+            "label",
+            "create",
+            "--repo",
+            "acme/repo",
+            "--name",
+            "needs-triage",
+            "--color",
+            "e4e669",
+        ]
+    )
+    assert rc == 0
+    assert "needs-triage" in capsys.readouterr().out
+
+
+def test_label_delete(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.label_delete",
+        lambda repo, name, token: subprocess.CompletedProcess(
+            args=[], returncode=204, stdout="", stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["label", "delete", "--repo", "acme/repo", "--name", "needs-triage"])
+    assert rc == 0
+    assert "needs-triage" in capsys.readouterr().out
+
+
+def test_label_apply_preset(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.label_apply_preset",
+        lambda repo, token: subprocess.CompletedProcess(
+            args=[],
+            returncode=200,
+            stdout=json.dumps(
+                {"created": ["needs-triage", "good first issue"], "skipped": 3}
+            ),
+            stderr="",
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["label", "apply-preset", "--repo", "acme/repo"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "needs-triage" in out
+    assert "Skipped (already exist): 3" in out
+
+
 def test_issue_comment_body_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2753,3 +2878,520 @@ def test_body_file_non_utf8_exits_cleanly(
             ]
         )
     assert "UTF-8" in str(exc.value)
+
+
+def test_pr_request_reviewer(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    payload = {
+        "number": 42,
+        "requested_reviewers": [{"login": "blairg23"}],
+    }
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_request_reviewer",
+        lambda repo, pr_number, token, reviewers: subprocess.CompletedProcess(
+            args=[], returncode=201, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(
+        [
+            "pr",
+            "request-reviewer",
+            "--repo",
+            "acme/repo",
+            "--pr-number",
+            "42",
+            "--reviewer",
+            "blairg23",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "blairg23" in out
+    assert "42" in out
+
+
+def test_repo_register_list_forget_roundtrip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry_path = tmp_path / "registry.json"
+    monkeypatch.setenv("REPO_SCAFFOLD_REGISTRY_PATH", str(registry_path))
+    local_dir = tmp_path / "acme-repo"
+    expected_path = str(local_dir.resolve())
+
+    rc = main(
+        [
+            "repo",
+            "register",
+            "--repo",
+            "acme/repo",
+            "--path",
+            str(local_dir),
+            "--notes",
+            "primary checkout",
+        ]
+    )
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert f"Registered acme/repo -> {expected_path}" in stdout
+
+    rc = main(["repo", "list"])
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert f"acme/repo -> {expected_path}" in stdout
+    assert "primary checkout" in stdout
+
+    rc = main(["repo", "forget", "--repo", "acme/repo"])
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "Removed acme/repo from the registry." in stdout
+
+    rc = main(["repo", "list"])
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "No repos registered." in stdout
+
+
+def test_repo_forget_missing_repo_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("REPO_SCAFFOLD_REGISTRY_PATH", str(tmp_path / "registry.json"))
+    rc = main(["repo", "forget", "--repo", "acme/missing"])
+    assert rc == 2
+    stderr = capsys.readouterr().err
+    assert "not registered" in stderr
+
+
+def test_apply_rules_with_repos_flag_uses_registry_paths(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [
+            RegistryEntry(repo="acme/a", local_path="/local/a"),
+            RegistryEntry(repo="acme/b", local_path="/local/b"),
+        ],
+    )
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn):
+        calls.append({"repo_dir": repo_dir, "repo": repo})
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
+
+    rc = main(["apply", "rules", "--repos", "acme/a,acme/b", "--apply"])
+    assert rc == 0
+    assert [c["repo"] for c in calls] == ["acme/a", "acme/b"]
+    assert calls[0]["repo_dir"] == Path("/local/a")
+    assert calls[1]["repo_dir"] == Path("/local/b")
+    stdout = capsys.readouterr().out
+    assert "repos: 2" in stdout
+
+
+def test_apply_rules_with_repos_flag_rejects_unregistered_repo(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("repo_scaffold.cli.list_registry", lambda: [])
+
+    rc = main(["apply", "rules", "--repos", "acme/unknown", "--apply"])
+    assert rc == 2
+    stderr = capsys.readouterr().err
+    assert "not registered" in stderr
+
+
+def test_check_rules_with_all_flag_iterates_registry(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/a", local_path="/local/a")],
+    )
+
+    def _fake_check(*, repo_dir, repo, out):
+        out(f"check repository settings: {repo}")
+        return SettingsCheckSummary(repo=repo, passed=8, failed=0, skipped=0, drifts=())
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+
+    rc = main(["check", "rules", "--all"])
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert "check repository settings: acme/a" in stdout
+
+
+def test_check_rules_rejects_multiple_selectors(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc = main(["check", "rules", "--repo", "acme/a", "--all"])
+    assert rc == 2
+    stderr = capsys.readouterr().err
+    assert "only one of" in stderr
+
+
+def test_sync_rules_applies_only_confirmed_repos(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [
+            RegistryEntry(repo="acme/drifted", local_path="/local/drifted"),
+            RegistryEntry(repo="acme/clean", local_path="/local/clean"),
+        ],
+    )
+
+    def _fake_check(*, repo_dir, repo, out):
+        failed = 1 if repo == "acme/drifted" else 0
+        return SettingsCheckSummary(
+            repo=repo, passed=7, failed=failed, skipped=0, drifts=()
+        )
+
+    applied: list[str] = []
+
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn):
+        applied.append(repo)
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    rc = main(["sync", "rules", "--all"])
+    assert rc == 0
+    assert applied == ["acme/drifted"]
+    stdout = capsys.readouterr().out
+    assert "repos applied: 1" in stdout
+
+
+def test_sync_rules_no_drift_skips_apply(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/clean", local_path="/local/clean")],
+    )
+
+    def _fake_check(*, repo_dir, repo, out):
+        return SettingsCheckSummary(repo=repo, passed=8, failed=0, skipped=0, drifts=())
+
+    apply_called = False
+
+    def _fake_apply(**_kwargs):
+        nonlocal apply_called
+        apply_called = True
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
+
+    rc = main(["sync", "rules", "--all"])
+    assert rc == 0
+    assert apply_called is False
+    stdout = capsys.readouterr().out
+    assert "No drift found" in stdout
+
+
+def test_sync_rules_returns_nonzero_when_apply_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/drifted", local_path="/local/drifted")],
+    )
+
+    def _fake_check(*, repo_dir, repo, out):
+        return SettingsCheckSummary(repo=repo, passed=6, failed=1, skipped=0, drifts=())
+
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn):
+        raise RuntimeError("apply failed")
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    rc = main(["sync", "rules", "--all"])
+    assert rc == 1
+
+
+def test_sync_rules_returns_nonzero_when_check_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/broken", local_path="/local/broken")],
+    )
+
+    def _fake_check(*, repo_dir, repo, out):
+        raise RuntimeError("check failed")
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+
+    rc = main(["sync", "rules", "--all"])
+    assert rc == 1
+
+
+def test_check_settings_uses_resolved_languages(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        "repo_scaffold.cli.resolve_languages", lambda _repo_dir: ["python", "react"]
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_check(*, repo_dir, repo, out, languages):
+        captured["languages"] = languages
+        return SettingsCheckSummary(repo=repo, passed=8, failed=0, skipped=0, drifts=())
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+
+    rc = main(["check", "settings", "--repo", "acme/repo"])
+    assert rc == 0
+    assert captured["languages"] == ["python", "react"]
+    stdout = capsys.readouterr().out
+    assert "languages: python, react" in stdout
+
+
+def test_check_settings_languages_flag_overrides_config(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("repo_scaffold.cli.resolve_languages", lambda _repo_dir: ["go"])
+
+    captured: dict[str, object] = {}
+
+    def _fake_check(*, repo_dir, repo, out, languages):
+        captured["languages"] = languages
+        return SettingsCheckSummary(repo=repo, passed=8, failed=0, skipped=0, drifts=())
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+
+    rc = main(["check", "settings", "--repo", "acme/repo", "--languages", "python"])
+    assert rc == 0
+    assert captured["languages"] == ["python"]
+
+
+# ---------------------------------------------------------------------------
+# project setup-views CLI dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_project_setup_views_dispatches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CLI routes 'project setup-views' to setup_project_views and prints summary."""
+    from unittest.mock import MagicMock
+
+    from repo_scaffold.project_ops import ProjectMutationSummary
+
+    summary = ProjectMutationSummary(
+        action="setup-views",
+        owner="acme",
+        project_number=1,
+        project_title="Test Project",
+        failures=0,
+        changed=True,
+        metadata_file=None,
+    )
+    mock_fn = MagicMock(return_value=summary)
+    monkeypatch.setattr("repo_scaffold.cli.setup_project_views", mock_fn)
+    monkeypatch.setenv("GH_TOKEN", "tok")
+
+    rc = main(["project", "setup-views", "--project-title", "Test Project"])
+    assert rc == 0
+    mock_fn.assert_called_once()
+
+
+def test_project_setup_views_propagates_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock
+
+    mock_fn = MagicMock(side_effect=RuntimeError("API call failed"))
+    monkeypatch.setattr("repo_scaffold.cli.setup_project_views", mock_fn)
+    monkeypatch.setenv("GH_TOKEN", "tok")
+
+    rc = main(["project", "setup-views", "--project-title", "Test Project"])
+    assert rc != 0
+
+
+# ---------------------------------------------------------------------------
+# issue re-parent CLI dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_issue_reparent_dispatches(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess as _sub
+    from unittest.mock import MagicMock
+
+    ok = _sub.CompletedProcess(args=[], returncode=0, stdout="{}", stderr="")
+    mock_node_id = MagicMock(return_value="I_20")
+    mock_remove = MagicMock(return_value=ok)
+    mock_add = MagicMock(return_value=ok)
+    monkeypatch.setattr("repo_scaffold.cli.issue_node_id", mock_node_id)
+    monkeypatch.setattr("repo_scaffold.cli.issue_remove_sub_issue", mock_remove)
+    monkeypatch.setattr("repo_scaffold.cli.issue_add_sub_issue", mock_add)
+    monkeypatch.setenv("GH_TOKEN", "tok")
+
+    rc = main(
+        [
+            "issue",
+            "re-parent",
+            "--repo",
+            "acme/repo",
+            "--issue",
+            "5",
+            "--from-parent",
+            "10",
+            "--to-parent",
+            "20",
+        ]
+    )
+    assert rc == 0
+    mock_node_id.assert_called_once_with("acme", "repo", 20, "tok")
+    mock_remove.assert_called_once_with("acme", "repo", 10, 5, "tok")
+    mock_add.assert_called_once_with("acme", "repo", 20, 5, "tok")
+
+
+def test_issue_reparent_invalid_new_parent_returns_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr("repo_scaffold.cli.issue_node_id", MagicMock(return_value=None))
+    monkeypatch.setenv("GH_TOKEN", "tok")
+
+    rc = main(
+        [
+            "issue",
+            "re-parent",
+            "--repo",
+            "acme/repo",
+            "--issue",
+            "5",
+            "--from-parent",
+            "10",
+            "--to-parent",
+            "99",
+        ]
+    )
+    assert rc == 1
+
+
+def test_issue_reparent_remove_failure_returns_1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess as _sub
+    from unittest.mock import MagicMock
+
+    fail = _sub.CompletedProcess(
+        args=[], returncode=1, stdout="", stderr="remove failed"
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_node_id", MagicMock(return_value="I_20")
+    )
+    mock_remove = MagicMock(return_value=fail)
+    monkeypatch.setattr("repo_scaffold.cli.issue_remove_sub_issue", mock_remove)
+    monkeypatch.setenv("GH_TOKEN", "tok")
+
+    rc = main(
+        [
+            "issue",
+            "re-parent",
+            "--repo",
+            "acme/repo",
+            "--issue",
+            "5",
+            "--from-parent",
+            "10",
+            "--to-parent",
+            "20",
+        ]
+    )
+    assert rc == 1
+
+
+def test_issue_reparent_add_failure_rolls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess as _sub
+    from unittest.mock import MagicMock, call
+
+    ok = _sub.CompletedProcess(args=[], returncode=0, stdout="{}", stderr="")
+    fail = _sub.CompletedProcess(
+        args=[], returncode=1, stdout="", stderr="already has parent"
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_node_id", MagicMock(return_value="I_20")
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_remove_sub_issue", MagicMock(return_value=ok)
+    )
+    mock_add = MagicMock(side_effect=[fail, ok])
+    monkeypatch.setattr("repo_scaffold.cli.issue_add_sub_issue", mock_add)
+    monkeypatch.setenv("GH_TOKEN", "tok")
+
+    rc = main(
+        [
+            "issue",
+            "re-parent",
+            "--repo",
+            "acme/repo",
+            "--issue",
+            "5",
+            "--from-parent",
+            "10",
+            "--to-parent",
+            "20",
+        ]
+    )
+    assert rc == 1
+    assert mock_add.call_count == 2
+    mock_add.assert_has_calls(
+        [call("acme", "repo", 20, 5, "tok"), call("acme", "repo", 10, 5, "tok")]
+    )
+
+
+def test_issue_reparent_rollback_also_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess as _sub
+    from unittest.mock import MagicMock
+
+    ok = _sub.CompletedProcess(args=[], returncode=0, stdout="{}", stderr="")
+    fail = _sub.CompletedProcess(args=[], returncode=1, stdout="", stderr="add failed")
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_node_id", MagicMock(return_value="I_20")
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.issue_remove_sub_issue", MagicMock(return_value=ok)
+    )
+    mock_add = MagicMock(side_effect=[fail, fail])
+    monkeypatch.setattr("repo_scaffold.cli.issue_add_sub_issue", mock_add)
+    monkeypatch.setenv("GH_TOKEN", "tok")
+
+    rc = main(
+        [
+            "issue",
+            "re-parent",
+            "--repo",
+            "acme/repo",
+            "--issue",
+            "5",
+            "--from-parent",
+            "10",
+            "--to-parent",
+            "20",
+        ]
+    )
+    assert rc == 1
+    assert mock_add.call_count == 2

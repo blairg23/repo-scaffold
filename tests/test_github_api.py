@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import urllib.error
 import urllib.request
 from io import BytesIO
@@ -163,6 +164,26 @@ def test_graphql_surfaces_errors() -> None:
         cp = github_api.graphql("query { x }", {}, "token")
     assert cp.returncode != 0
     assert "doesn't exist" in cp.stderr
+
+
+def test_issue_add_sub_issue_surfaces_parent_error() -> None:
+    """addSubIssue null + errors (child already has a parent) surfaces the GH message."""
+    node_resp = json.dumps({"data": {"repository": {"issue": {"id": "I_x"}}}})
+    partial_resp = json.dumps(
+        {
+            "data": {"addSubIssue": None},
+            "errors": [{"message": "Sub issue may only have one parent"}],
+        }
+    )
+    responses = [
+        _mock_resp(200, node_resp),  # resolve parent node ID
+        _mock_resp(200, node_resp),  # resolve child node ID
+        _mock_resp(200, partial_resp),  # addSubIssue mutation
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses):
+        cp = github_api.issue_add_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode != 0
+    assert "only have one parent" in cp.stderr
 
 
 def test_graphql_http_error() -> None:
@@ -693,6 +714,108 @@ def test_issue_list_with_label() -> None:
 
 
 # ---------------------------------------------------------------------------
+# issue_sync_hierarchy
+# ---------------------------------------------------------------------------
+
+
+def test_issue_sync_hierarchy_dry_run() -> None:
+    issues = [
+        {"number": 1, "labels": [{"name": "epic"}, {"name": "epic:foo"}]},
+        {"number": 2, "labels": [{"name": "epic:foo"}]},
+        {"number": 3, "labels": [{"name": "epic:foo"}]},
+        {"number": 4, "labels": []},
+    ]
+    with patch.object(
+        github_api,
+        "issue_list",
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(issues), stderr=""
+        ),
+    ):
+        with patch.object(github_api, "graphql") as mock_graphql:
+
+            def _parent_response(query: str, variables: dict, token: str) -> object:
+                number = variables["number"]
+                if number == 2:
+                    parent = {"number": 1}
+                else:
+                    parent = None
+                return subprocess.CompletedProcess(
+                    args=[],
+                    returncode=0,
+                    stdout=json.dumps({"repository": {"issue": {"parent": parent}}}),
+                    stderr="",
+                )
+
+            mock_graphql.side_effect = _parent_response
+            cp = github_api.issue_sync_hierarchy("owner/repo", "tok", apply=False)
+
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert report["already_linked"] == [{"epic": 1, "child": 2}]
+    assert report["would_link"] == [{"epic": 1, "child": 3}]
+    assert report["unaffiliated"] == [4]
+    assert report["ambiguous"] == []
+
+
+def test_issue_sync_hierarchy_ambiguous_group() -> None:
+    issues = [
+        {"number": 1, "labels": [{"name": "epic"}, {"name": "epic:foo"}]},
+        {"number": 2, "labels": [{"name": "epic"}, {"name": "epic:foo"}]},
+    ]
+    with patch.object(
+        github_api,
+        "issue_list",
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(issues), stderr=""
+        ),
+    ):
+        cp = github_api.issue_sync_hierarchy("owner/repo", "tok", apply=False)
+
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert len(report["ambiguous"]) == 1
+    assert report["ambiguous"][0]["slug"] == "foo"
+
+
+def test_issue_sync_hierarchy_apply_links_unparented_child() -> None:
+    issues = [
+        {"number": 1, "labels": [{"name": "epic"}, {"name": "epic:foo"}]},
+        {"number": 2, "labels": [{"name": "epic:foo"}]},
+    ]
+    with patch.object(
+        github_api,
+        "issue_list",
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(issues), stderr=""
+        ),
+    ):
+        with patch.object(
+            github_api,
+            "graphql",
+            return_value=subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=json.dumps({"repository": {"issue": {"parent": None}}}),
+                stderr="",
+            ),
+        ):
+            with patch.object(
+                github_api,
+                "issue_add_sub_issue",
+                return_value=subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout="{}", stderr=""
+                ),
+            ) as mock_link:
+                cp = github_api.issue_sync_hierarchy("owner/repo", "tok", apply=True)
+
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert report["linked"] == [{"epic": 1, "child": 2}]
+    mock_link.assert_called_once_with("owner", "repo", 1, 2, "tok")
+
+
+# ---------------------------------------------------------------------------
 # project_workflows / enable_project_workflow
 # ---------------------------------------------------------------------------
 
@@ -921,4 +1044,262 @@ def test_pr_reviews_empty_returns_empty_list() -> None:
 def test_pr_reviews_api_error_propagates() -> None:
     with patch("urllib.request.urlopen", side_effect=_http_error(404, "Not Found")):
         cp = github_api.pr_reviews("acme/repo", 0, "tok")
+    assert cp.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# Repo labels
+# ---------------------------------------------------------------------------
+
+
+def test_label_list_success() -> None:
+    payload = json.dumps([{"name": "bug", "color": "ee0701"}])
+    with patch("urllib.request.urlopen", return_value=_mock_resp(200, payload)):
+        cp = github_api.label_list("acme/repo", "tok")
+    assert cp.returncode == 0
+    assert json.loads(cp.stdout)[0]["name"] == "bug"
+
+
+def test_label_list_api_error_propagates() -> None:
+    with patch("urllib.request.urlopen", side_effect=_http_error(404, "Not Found")):
+        cp = github_api.label_list("acme/repo", "tok")
+    assert cp.returncode != 0
+
+
+def test_label_create_success() -> None:
+    payload = json.dumps({"name": "bug", "color": "ee0701"})
+    with patch("urllib.request.urlopen", return_value=_mock_resp(201, payload)) as m:
+        cp = github_api.label_create(
+            "acme/repo", "bug", "#ee0701", "tok", "Bug reports"
+        )
+    assert cp.returncode == 0
+    sent_body = json.loads(m.call_args[0][0].data)
+    assert sent_body == {"name": "bug", "color": "ee0701", "description": "Bug reports"}
+
+
+def test_label_create_api_error_propagates() -> None:
+    with patch(
+        "urllib.request.urlopen", side_effect=_http_error(422, "already_exists")
+    ):
+        cp = github_api.label_create("acme/repo", "bug", "ee0701", "tok")
+    assert cp.returncode != 0
+
+
+def test_label_delete_success() -> None:
+    with patch("urllib.request.urlopen", return_value=_mock_resp(204, "")):
+        cp = github_api.label_delete("acme/repo", "good first issue", "tok")
+    assert cp.returncode == 0
+
+
+def test_label_delete_api_error_propagates() -> None:
+    with patch("urllib.request.urlopen", side_effect=_http_error(404, "Not Found")):
+        cp = github_api.label_delete("acme/repo", "bug", "tok")
+    assert cp.returncode != 0
+
+
+def test_label_apply_preset_creates_missing_labels() -> None:
+    existing = json.dumps([{"name": "needs-triage"}])
+    created_payload = json.dumps({"name": "x"})
+    responses = [_mock_resp(200, existing)] + [
+        _mock_resp(201, created_payload) for _ in github_api.STANDARD_LABELS[1:]
+    ]
+    with patch("urllib.request.urlopen", side_effect=responses):
+        cp = github_api.label_apply_preset("acme/repo", "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert "needs-triage" not in result["created"]
+    assert len(result["created"]) == len(github_api.STANDARD_LABELS) - 1
+    assert result["skipped"] == 1
+
+
+def test_label_apply_preset_list_error_propagates() -> None:
+    with patch("urllib.request.urlopen", side_effect=_http_error(500, "boom")):
+        cp = github_api.label_apply_preset("acme/repo", "tok")
+    assert cp.returncode != 0
+
+
+def test_label_apply_preset_unparseable_labels_returns_err() -> None:
+    with patch("urllib.request.urlopen", return_value=_mock_resp(200, "not json")):
+        cp = github_api.label_apply_preset("acme/repo", "tok")
+    assert cp.returncode != 0
+    assert "Failed to parse" in cp.stderr
+
+
+def test_label_apply_preset_create_error_propagates() -> None:
+    existing = json.dumps([])
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[_mock_resp(200, existing), _http_error(422, "boom")],
+    ):
+        cp = github_api.label_apply_preset("acme/repo", "tok")
+    assert cp.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# issue_remove_sub_issue
+# ---------------------------------------------------------------------------
+
+
+def test_issue_remove_sub_issue_success() -> None:
+    node_id_resp = {"repository": {"issue": {"id": "I_child"}}}
+    parent_id_resp = {"repository": {"issue": {"id": "I_parent"}}}
+    remove_resp = {
+        "removeSubIssue": {
+            "issue": {"id": "I_parent", "number": 1},
+            "subIssue": {"id": "I_child", "number": 2},
+        }
+    }
+    with patch.object(
+        github_api,
+        "graphql",
+        side_effect=[
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(parent_id_resp), stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(node_id_resp), stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(remove_resp), stderr=""
+            ),
+        ],
+    ):
+        cp = github_api.issue_remove_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert "issue" in result
+
+
+def test_issue_remove_sub_issue_null_response() -> None:
+    node_id_resp = {"repository": {"issue": {"id": "I_child"}}}
+    parent_id_resp = {"repository": {"issue": {"id": "I_parent"}}}
+    remove_resp = {"removeSubIssue": None}
+    with patch.object(
+        github_api,
+        "graphql",
+        side_effect=[
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(parent_id_resp), stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(node_id_resp), stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(remove_resp), stderr=""
+            ),
+        ],
+    ):
+        cp = github_api.issue_remove_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode != 0
+    assert "null" in cp.stderr.lower() or "unexpected" in cp.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# project_all_fields
+# ---------------------------------------------------------------------------
+
+
+def test_project_all_fields_returns_all_types() -> None:
+    fields = [
+        {"id": "F_title", "name": "Title", "dataType": "TITLE"},
+        {
+            "id": "F_status",
+            "name": "Status",
+            "dataType": "SINGLE_SELECT",
+            "options": [],
+        },
+        {"id": "F_labels", "name": "Labels", "dataType": "LABELS"},
+        {"id": "F_parent", "name": "Parent issue", "dataType": "PARENT_ISSUE"},
+    ]
+    payload = {"node": {"fields": {"nodes": fields}}}
+    with patch("urllib.request.urlopen", return_value=_gql_resp(payload)):
+        cp = github_api.project_all_fields("PVT_x", "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert len(result["fields"]) == 4
+    dtypes = {f["dataType"] for f in result["fields"]}
+    assert "LABELS" in dtypes
+    assert "PARENT_ISSUE" in dtypes
+
+
+# ---------------------------------------------------------------------------
+# project_views
+# ---------------------------------------------------------------------------
+
+
+def test_project_views_returns_list() -> None:
+    views = [
+        {"id": "PVV_1", "name": "Kanban Board", "layout": "BOARD_LAYOUT"},
+        {"id": "PVV_2", "name": "Progress View", "layout": "TABLE_LAYOUT"},
+    ]
+    payload = {"node": {"views": {"nodes": views}}}
+    with patch("urllib.request.urlopen", return_value=_gql_resp(payload)):
+        cp = github_api.project_views("PVT_x", "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert len(result["views"]) == 2
+    names = {v["name"] for v in result["views"]}
+    assert "Kanban Board" in names
+    assert "Progress View" in names
+
+
+def test_issue_remove_sub_issue_parent_not_found() -> None:
+    with patch.object(github_api, "_resolve_issue_node_id", return_value=None):
+        cp = github_api.issue_remove_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode != 0
+    assert "parent" in cp.stderr.lower()
+
+
+def test_issue_remove_sub_issue_graphql_failure() -> None:
+    with patch.object(
+        github_api, "_resolve_issue_node_id", side_effect=["I_parent", "I_child"]
+    ):
+        with patch.object(
+            github_api, "graphql", return_value=github_api._err("GQL error")
+        ):
+            cp = github_api.issue_remove_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode != 0
+
+
+def test_issue_remove_sub_issue_bad_json() -> None:
+    with patch.object(
+        github_api, "_resolve_issue_node_id", side_effect=["I_parent", "I_child"]
+    ):
+        with patch.object(
+            github_api, "graphql", return_value=github_api._ok("not-json{")
+        ):
+            cp = github_api.issue_remove_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode != 0
+
+
+def test_issue_remove_sub_issue_child_not_found() -> None:
+    with patch.object(
+        github_api, "_resolve_issue_node_id", side_effect=["I_parent", None]
+    ):
+        cp = github_api.issue_remove_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode != 0
+    assert "child" in cp.stderr.lower()
+
+
+def test_project_all_fields_graphql_error() -> None:
+    with patch.object(github_api, "graphql", return_value=github_api._err("API error")):
+        cp = github_api.project_all_fields("PVT_x", "tok")
+    assert cp.returncode != 0
+
+
+def test_project_all_fields_unexpected_response() -> None:
+    with patch.object(github_api, "graphql", return_value=github_api._ok("not-json")):
+        cp = github_api.project_all_fields("PVT_x", "tok")
+    assert cp.returncode != 0
+
+
+def test_project_views_graphql_error() -> None:
+    with patch.object(github_api, "graphql", return_value=github_api._err("API error")):
+        cp = github_api.project_views("PVT_x", "tok")
+    assert cp.returncode != 0
+
+
+def test_project_views_unexpected_response() -> None:
+    with patch.object(github_api, "graphql", return_value=github_api._ok("not-json")):
+        cp = github_api.project_views("PVT_x", "tok")
     assert cp.returncode != 0
