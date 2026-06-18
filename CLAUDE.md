@@ -11,7 +11,8 @@ Before writing any code, verify every item below. These are non-negotiable and a
 ## Agnosticism
 - [ ] No LLM-specific code, prompts, or dependencies
 - [ ] No assumptions about which AI tool is running
-- [ ] No CLI wrappers around HTTP APIs — use HTTP directly
+- [ ] No shelling out to OS-installed binaries (no `subprocess` calls to `gh`, `brew`, `apt`, etc.)
+- [ ] Python library imports (`import requests`, `import copier`, etc.) are fine and encouraged
 - [ ] HTTP/REST preferred over SDK when SDK adds OS assumptions
 
 ## Execution Layer
@@ -21,17 +22,19 @@ Before writing any code, verify every item below. These are non-negotiable and a
 - [ ] Acceptable CueQueue job types: HTTP calls, file sync, local git, build tools, agent chains, any shell command routed through CueQueue
 
 ## Dependencies
+- [ ] Before building any feature, search PyPI for a well-maintained library that already does it
+- [ ] Wrapping a good library (`copier`, `requests`, etc.) is always better than rebuilding it
 - [ ] Every external dependency is explicitly justified
-- [ ] HTTP APIs preferred over installed CLIs
-- [ ] If a CLI wraps an HTTP API, the API is used directly
+- [ ] No shelling out to OS-installed CLIs — use the Python library or HTTP API directly
 - [ ] Each dependency's purpose is documented
 
 ## Standing Rules (non-negotiable)
-- [ ] Never use `gh` CLI — use GitHub REST API directly
+- [ ] Never use `gh` CLI (subprocess) — use GitHub REST API directly or repo-scaffold commands
 - [ ] Never assume a shell exists — queue a CueQueue job instead
 - [ ] Never write LLM-specific code — stay model-agnostic
-- [ ] Never write OS-specific code — HTTP works everywhere
+- [ ] Never write OS-specific code — Python libraries and HTTP work everywhere
 - [ ] CueQueue is the universal executor for all shell operations
+- [ ] Check PyPI first — do not rebuild what a well-maintained Python library already does well
 
 ---
 

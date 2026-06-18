@@ -205,9 +205,26 @@ Coverage must stay at or above 70%.
 - Never merge or close PRs -- only CODEOWNERS may do that.
 - Never push to a branch whose PR is already merged -- cut a fresh branch from main.
 - Always use issue and PR templates -- no freeform bodies.
+- Before creating a ticket, search open AND closed issues for overlap. Update the existing ticket instead of creating a duplicate.
 - Always add issues to the project board after creating them (issues only, not PRs).
 - Commit messages: subject + blank line + body. No one-liners.
 - Git identity: confirm `user.name` and `user.email` are real values before the first commit.
+- Every ticket must have an `epic:<slug>` label before moving to In Progress. No orphans in the active lane. Tickets without an epic belong in `epic:maintenance` (Maintenance & Chores) until triaged into the correct epic.
+- Epic slugs must be lowercase-kebab names derived from the epic title -- never numbers. Example: `epic:agent-orchestrator`, not `epic:48`. A slug must be human-readable without looking up the issue.
+- Issue titles must be plain descriptive text -- never invent a prefix scheme. No `REPO-N:`, no `[Ticket]`, no `[EPIC]`, no `A1:`, no Jira-style codes. The issue number is GitHub's job.
+
+### Triage workflow for orphaned tickets
+
+```bash
+# 1. Dry run -- see what is unaffiliated
+poetry run repo-scaffold issue sync-hierarchy --repo OWNER/REPO
+
+# 2. Label each orphan with the correct epic slug
+poetry run repo-scaffold issue label --repo OWNER/REPO --issue-number N --add epic:maintenance
+
+# 3. Re-run with --apply to backfill parent/child links
+poetry run repo-scaffold issue sync-hierarchy --repo OWNER/REPO --apply
+```
 
 See [CLAUDE.md](CLAUDE.md) for the full portability and agnosticism requirements.
 See [examples/README.md](examples/README.md) for backlog and ticket format examples.
