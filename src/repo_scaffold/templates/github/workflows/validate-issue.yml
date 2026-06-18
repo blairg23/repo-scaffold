@@ -26,6 +26,17 @@ jobs:
               return;
             }
 
+            // Create needs-format label if it does not exist yet (422 = already exists)
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: "needs-format",
+                color: "e11d48",
+                description: "Issue body does not match the required template format",
+              });
+            } catch (_) {}
+
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo: context.repo.repo,

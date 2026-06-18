@@ -177,6 +177,10 @@ contact_links:
 """
 
 
+def _render_validate_issue_workflow() -> str:
+    return _load_template("github/workflows/validate-issue.yml", "")
+
+
 def _render_ci_yaml(languages: Iterable[str]) -> str:
     selected = set(languages)
     parts: list[str] = [
@@ -3188,6 +3192,10 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
             _render_codeql_yaml(config.languages),
         ),
         ScaffoldFile(
+            config.out_dir / ".github" / "workflows" / "validate-issue.yml",
+            _render_validate_issue_workflow(),
+        ),
+        ScaffoldFile(
             config.out_dir / ".github" / "dependabot.yml",
             _render_dependabot_yaml(config.languages),
         ),
@@ -3321,6 +3329,7 @@ TEMPLATE_FILE_PATHS = (
     ".github/ISSUE_TEMPLATE/epic.md",
     ".github/ISSUE_TEMPLATE/ticket.md",
     ".github/ISSUE_TEMPLATE/config.yml",
+    ".github/workflows/validate-issue.yml",
 )
 
 
