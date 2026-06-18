@@ -1492,6 +1492,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ws_prune.add_argument("--repo", required=True, help="OWNER/REPO")
 
+    ws_configure_auth = workspace_sub.add_parser(
+        "configure-auth",
+        help=(
+            "Configure git credential-store from .env GH_TOKEN, "
+            "bypassing Windows Credential Manager (GCM)"
+        ),
+    )
+    ws_configure_auth.add_argument(
+        "--path",
+        default=None,
+        dest="auth_path",
+        help="Path to a git working tree (default: current directory)",
+    )
+
     return parser
 
 
@@ -3110,6 +3124,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if ns.mode == "workspace":
         from .workspace_ops import (
+            workspace_configure_auth,
             workspace_create,
             workspace_delete,
             workspace_list,
@@ -3147,6 +3162,15 @@ def main(argv: list[str] | None = None) -> int:
 
         if ns.workspace_command == "prune":
             cp = workspace_prune(ns.repo)
+            if cp.returncode != 0:
+                print(cp.stderr.strip(), file=sys.stderr)
+                return 1
+            print(cp.stdout.strip())
+            return 0
+
+        if ns.workspace_command == "configure-auth":
+            auth_path = Path(ns.auth_path) if ns.auth_path else None
+            cp = workspace_configure_auth(token, path=auth_path)
             if cp.returncode != 0:
                 print(cp.stderr.strip(), file=sys.stderr)
                 return 1
