@@ -1,7 +1,7 @@
 ---
 name: Epic
 about: Track a multi-ticket initiative
-title: "[EPIC] "
+title: ""
 labels: ["epic", "needs-triage"]
 assignees: []
 ---

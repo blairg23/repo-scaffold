@@ -669,6 +669,9 @@ def _sanitize_title(raw: str | None) -> str | None:
     title = raw.strip()
     if not title:
         return None
+    import re as _re
+
+    title = _re.sub(r"^[A-Z][A-Z0-9]+-\d+:\s+", "", title)
     for prefix in ("[EPIC]", "[Ticket]", "[TICKET]"):
         if title.startswith(prefix):
             title = title[len(prefix) :].strip()
