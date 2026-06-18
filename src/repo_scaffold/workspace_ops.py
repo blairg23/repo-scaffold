@@ -245,6 +245,13 @@ def workspace_create(
             cwd=bare,
             bare=True,
         )
+        # Populate local ref for the requested branch if it exists on origin so
+        # the show-ref check below finds it (remote-tracking refs alone are not enough).
+        _run(
+            ["git", "fetch", "origin", f"+refs/heads/{branch}:refs/heads/{branch}"],
+            cwd=bare,
+            bare=True,
+        )
 
     cp = _run(
         ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
