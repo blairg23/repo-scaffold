@@ -3169,8 +3169,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if ns.workspace_command == "configure-auth":
-            auth_path = Path(ns.auth_path) if ns.auth_path else None
-            cp = workspace_configure_auth(token, path=auth_path)
+            auth_path = Path(ns.auth_path).resolve() if ns.auth_path else None
+            effective_token = (auth_path and token_from_repo(auth_path)) or token
+            cp = workspace_configure_auth(effective_token, path=auth_path)
             if cp.returncode != 0:
                 print(cp.stderr.strip(), file=sys.stderr)
                 return 1

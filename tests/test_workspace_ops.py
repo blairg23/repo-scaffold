@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 from repo_scaffold.workspace_ops import (
     _copy_ignored_files,
@@ -486,7 +488,7 @@ def test_workspace_configure_auth_writes_credentials(tmp_path: Path):
     raw = creds.read_bytes()
     assert not raw.startswith(b"\xef\xbb\xbf"), "must not have UTF-8 BOM"
     assert b"fake-token" in raw
-    assert b"github.com" in raw
+    assert b"@github.com\n" in raw, "token must appear immediately before @github.com"
     assert raw.endswith(b"\n"), "must have trailing LF"
     assert b"\r" not in raw, "must not have CRLF"
 
@@ -532,3 +534,16 @@ def test_workspace_configure_auth_fails_for_non_repo(tmp_path: Path):
     cp = workspace_configure_auth("fake-token", path=not_a_repo)
     assert cp.returncode != 0
     assert "Not a git repository" in cp.stderr
+
+
+def test_workspace_configure_auth_chmod_not_implemented_is_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    repo = _init_working_tree(tmp_path)
+
+    def _raise_not_implemented(self: Path, mode: int) -> None:
+        raise NotImplementedError
+
+    monkeypatch.setattr(Path, "chmod", _raise_not_implemented)
+    cp = workspace_configure_auth("fake-token", path=repo)
+    assert cp.returncode == 0

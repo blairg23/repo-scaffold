@@ -3395,3 +3395,38 @@ def test_issue_reparent_rollback_also_fails(
     )
     assert rc == 1
     assert mock_add.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# workspace configure-auth
+# ---------------------------------------------------------------------------
+
+
+def test_workspace_configure_auth_cli_returns_1_on_error(
+    tmp_path: Path,
+) -> None:
+    not_a_repo = tmp_path / "not-a-repo"
+    not_a_repo.mkdir()
+    rc = main(["workspace", "configure-auth", "--path", str(not_a_repo)])
+    assert rc == 1
+
+
+def test_workspace_configure_auth_cli_defaults_to_cwd_on_error(
+    tmp_path: Path,
+) -> None:
+    # autouse fixture already chdirs to tmp_path (not a git repo)
+    rc = main(["workspace", "configure-auth"])
+    assert rc == 1
+
+
+def test_workspace_configure_auth_cli_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "repo_scaffold.workspace_ops.workspace_configure_auth",
+        lambda token, path=None: SimpleNamespace(
+            returncode=0, stdout="Configured.", stderr=""
+        ),
+    )
+    rc = main(["workspace", "configure-auth"])
+    assert rc == 0

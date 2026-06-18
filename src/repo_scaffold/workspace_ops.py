@@ -188,7 +188,7 @@ def workspace_configure_auth(
     Manager (GCM) in non-interactive contexts. Safe to run multiple times -- clears
     any accumulated helper entries before writing fresh config.
     """
-    worktree = path or Path.cwd()
+    worktree = (path or Path.cwd()).resolve()
     git_dir = worktree / ".git"
     if not git_dir.is_dir():
         return _err(f"Not a git repository: {worktree}")
