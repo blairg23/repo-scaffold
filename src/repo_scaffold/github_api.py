@@ -1054,7 +1054,7 @@ def issue_label(
     for label in effective_remove:
         encoded = urllib.parse.quote(label, safe="")
         cp = rest("DELETE", f"/repos/{repo}/issues/{number}/labels/{encoded}", token)
-        if cp.returncode not in (0, 200, 204):
+        if cp.returncode not in (0, 200, 204, 404):
             return cp
     return _ok("{}")
 

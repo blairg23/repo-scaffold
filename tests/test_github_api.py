@@ -1074,7 +1074,9 @@ def test_issue_label_non_epic_does_not_remove_needs_triage() -> None:
 def test_issue_label_404_on_needs_triage_delete_is_ignored() -> None:
     responses = [
         _mock_resp(200, "[]"),  # POST add epic:foo
-        _mock_resp(204, ""),  # DELETE needs-triage (not present, still 204)
+        _http_error(
+            404, "Label not found"
+        ),  # DELETE needs-triage -- label not on issue
     ]
     with patch("urllib.request.urlopen", side_effect=responses):
         cp = github_api.issue_label("acme/repo", 1, "tok", add=["epic:foo"])
