@@ -847,3 +847,129 @@ def test_setup_project_no_project_id_raises(
             project_title="Roadmap",
             out=lambda _: None,
         )
+
+
+# ---------------------------------------------------------------------------
+# setup_project_views
+# ---------------------------------------------------------------------------
+
+
+def _cp_err(stderr: str = "boom") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=stderr)
+
+
+def test_setup_project_views_both_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import repo_scaffold.github_api as _ga
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    project = project_ops.ProjectInfo(
+        owner="acme", number=1, title="Roadmap", id="PVT_x"
+    )
+    monkeypatch.setattr(project_ops, "_find_existing_project", lambda **_kw: project)
+    monkeypatch.setattr(_ga, "token_from_repo", lambda _: "tok")
+
+    views_payload = json.dumps(
+        {
+            "views": [
+                {"id": "V1", "name": "Kanban Board", "layout": "BOARD_LAYOUT"},
+                {"id": "V2", "name": "Progress View", "layout": "TABLE_LAYOUT"},
+            ]
+        }
+    )
+    monkeypatch.setattr(_ga, "project_views", lambda *_a, **_kw: _cp_ok(views_payload))
+
+    messages: list[str] = []
+    summary = project_ops.setup_project_views(
+        repo_dir=repo_dir,
+        owner="acme",
+        project_number=1,
+        project_title="Roadmap",
+        out=messages.append,
+    )
+
+    assert summary.failures == 0
+    assert any("Both views present" in m for m in messages)
+
+
+def test_setup_project_views_missing_views(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import repo_scaffold.github_api as _ga
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    project = project_ops.ProjectInfo(
+        owner="acme", number=1, title="Roadmap", id="PVT_x"
+    )
+    monkeypatch.setattr(project_ops, "_find_existing_project", lambda **_kw: project)
+    monkeypatch.setattr(_ga, "token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        _ga, "project_views", lambda *_a, **_kw: _cp_ok('{"views": []}')
+    )
+
+    messages: list[str] = []
+    summary = project_ops.setup_project_views(
+        repo_dir=repo_dir,
+        owner="acme",
+        project_number=1,
+        project_title="Roadmap",
+        out=messages.append,
+    )
+
+    assert summary.failures == 2
+    assert any("Kanban Board" in m for m in messages)
+    assert any("Progress View" in m for m in messages)
+
+
+def test_setup_project_views_fetch_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import repo_scaffold.github_api as _ga
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    project = project_ops.ProjectInfo(
+        owner="acme", number=1, title="Roadmap", id="PVT_x"
+    )
+    monkeypatch.setattr(project_ops, "_find_existing_project", lambda **_kw: project)
+    monkeypatch.setattr(_ga, "token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        _ga, "project_views", lambda *_a, **_kw: _cp_err("connection refused")
+    )
+
+    with pytest.raises(RuntimeError, match="connection refused"):
+        project_ops.setup_project_views(
+            repo_dir=repo_dir,
+            owner="acme",
+            project_number=1,
+            project_title="Roadmap",
+            out=lambda _: None,
+        )
+
+
+def test_setup_project_views_no_project_id_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import repo_scaffold.github_api as _ga
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    project = project_ops.ProjectInfo(owner="acme", number=1, title="Roadmap", id=None)
+    monkeypatch.setattr(project_ops, "_find_existing_project", lambda **_kw: project)
+    monkeypatch.setattr(_ga, "token_from_repo", lambda _: "tok")
+
+    with pytest.raises(RuntimeError, match="Could not resolve project ID"):
+        project_ops.setup_project_views(
+            repo_dir=repo_dir,
+            owner="acme",
+            project_number=1,
+            project_title="Roadmap",
+            out=lambda _: None,
+        )

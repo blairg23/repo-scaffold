@@ -1241,3 +1241,43 @@ def test_project_views_returns_list() -> None:
     names = {v["name"] for v in result["views"]}
     assert "Kanban Board" in names
     assert "Progress View" in names
+
+
+def test_issue_remove_sub_issue_parent_not_found() -> None:
+    with patch.object(github_api, "_resolve_issue_node_id", return_value=None):
+        cp = github_api.issue_remove_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode != 0
+    assert "parent" in cp.stderr.lower()
+
+
+def test_issue_remove_sub_issue_child_not_found() -> None:
+    with patch.object(
+        github_api, "_resolve_issue_node_id", side_effect=["I_parent", None]
+    ):
+        cp = github_api.issue_remove_sub_issue("owner", "repo", 1, 2, "tok")
+    assert cp.returncode != 0
+    assert "child" in cp.stderr.lower()
+
+
+def test_project_all_fields_graphql_error() -> None:
+    with patch.object(github_api, "graphql", return_value=github_api._err("API error")):
+        cp = github_api.project_all_fields("PVT_x", "tok")
+    assert cp.returncode != 0
+
+
+def test_project_all_fields_unexpected_response() -> None:
+    with patch.object(github_api, "graphql", return_value=github_api._ok("not-json")):
+        cp = github_api.project_all_fields("PVT_x", "tok")
+    assert cp.returncode != 0
+
+
+def test_project_views_graphql_error() -> None:
+    with patch.object(github_api, "graphql", return_value=github_api._err("API error")):
+        cp = github_api.project_views("PVT_x", "tok")
+    assert cp.returncode != 0
+
+
+def test_project_views_unexpected_response() -> None:
+    with patch.object(github_api, "graphql", return_value=github_api._ok("not-json")):
+        cp = github_api.project_views("PVT_x", "tok")
+    assert cp.returncode != 0
