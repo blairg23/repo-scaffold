@@ -5,10 +5,13 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 from repo_scaffold.workspace_ops import (
     _copy_ignored_files,
     _slug,
+    workspace_configure_auth,
     workspace_create,
     workspace_delete,
     workspace_list,
@@ -449,3 +452,98 @@ def test_workspace_create_missing_env_source_warns_not_errors(tmp_path: Path):
 
     assert cp.returncode == 0
     assert "Warning" in cp.stdout
+
+
+# ---------------------------------------------------------------------------
+# workspace_configure_auth
+# ---------------------------------------------------------------------------
+
+
+def _init_working_tree(tmp_path: Path, name: str = "worktree") -> Path:
+    """Create a regular (non-bare) git repo for configure-auth tests."""
+    repo = tmp_path / name
+    repo.mkdir()
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+    )
+    return repo
+
+
+def test_workspace_configure_auth_writes_credentials(tmp_path: Path):
+    repo = _init_working_tree(tmp_path)
+    cp = workspace_configure_auth("fake-token", path=repo)
+    assert cp.returncode == 0
+    creds = repo / ".git" / ".git-credentials"
+    assert creds.exists()
+    raw = creds.read_bytes()
+    assert not raw.startswith(b"\xef\xbb\xbf"), "must not have UTF-8 BOM"
+    assert b"fake-token" in raw
+    assert b"@github.com\n" in raw, "token must appear immediately before @github.com"
+    assert raw.endswith(b"\n"), "must have trailing LF"
+    assert b"\r" not in raw, "must not have CRLF"
+
+
+def _local_credential_helpers(repo: Path) -> list[str]:
+    """Return credential.helper values from local git config as 'key=value' strings."""
+    r = subprocess.run(
+        ["git", "config", "--local", "--list"],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+    )
+    return [
+        line for line in r.stdout.splitlines() if line.startswith("credential.helper=")
+    ]
+
+
+def test_workspace_configure_auth_sets_credential_helper(tmp_path: Path):
+    repo = _init_working_tree(tmp_path)
+    workspace_configure_auth("fake-token", path=repo)
+    helpers = _local_credential_helpers(repo)
+    assert (
+        helpers[0] == "credential.helper="
+    ), "first entry must be empty string (chain reset)"
+    assert any(
+        "store" in h and ".git-credentials" in h for h in helpers
+    ), "must include a store helper pointing at .git-credentials"
+
+
+def test_workspace_configure_auth_is_idempotent(tmp_path: Path):
+    repo = _init_working_tree(tmp_path)
+    workspace_configure_auth("fake-token", path=repo)
+    workspace_configure_auth("fake-token", path=repo)
+    helpers = _local_credential_helpers(repo)
+    assert (
+        len(helpers) == 2
+    ), f"expected exactly 2 entries (empty + store), got {helpers}"
+
+
+def test_workspace_configure_auth_fails_for_non_repo(tmp_path: Path):
+    not_a_repo = tmp_path / "not-a-repo"
+    not_a_repo.mkdir()
+    cp = workspace_configure_auth("fake-token", path=not_a_repo)
+    assert cp.returncode != 0
+    assert "Not a git repository" in cp.stderr
+
+
+def test_workspace_configure_auth_chmod_not_implemented_is_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    repo = _init_working_tree(tmp_path)
+
+    def _raise_not_implemented(self: Path, mode: int) -> None:
+        raise NotImplementedError
+
+    monkeypatch.setattr(Path, "chmod", _raise_not_implemented)
+    cp = workspace_configure_auth("fake-token", path=repo)
+    assert cp.returncode == 0
