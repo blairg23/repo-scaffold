@@ -1,0 +1,47 @@
+name: Validate issue body format
+
+on:
+  issues:
+    types: [opened, edited]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Check body and flag if malformed
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || "";
+            const number = context.payload.issue.number;
+
+            const required = ["## 🧾 Title", "## 🧠 Summary"];
+            const missing = required.filter(h => !body.includes(h));
+
+            if (missing.length === 0) {
+              core.info(`Issue #${number} body looks good.`);
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              labels: ["needs-format"],
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              body: [
+                "This issue is missing required template sections:",
+                ...missing.map(h => `- \`${h}\``),
+                "",
+                "Please update the body to match the [epic template](../.github/ISSUE_TEMPLATE/epic.md) or [ticket template](../.github/ISSUE_TEMPLATE/ticket.md).",
+                "Remove the `needs-format` label once the body is corrected.",
+              ].join("\n"),
+            });
