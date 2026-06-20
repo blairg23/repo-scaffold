@@ -46,7 +46,7 @@ jobs:
           {
             "version": "2.1.0",
             "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-            "runs": []
+            "runs": [{"tool": {"driver": {"name": "CodeQL", "version": "0.0.0", "rules": []}}, "results": []}]
           }
           SARIF
       - uses: github/codeql-action/upload-sarif@v4
