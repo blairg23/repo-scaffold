@@ -368,11 +368,19 @@ jobs:
         run: echo "No supported CodeQL languages selected; scan is skipped."
 """
 
+    pr_paths = {
+        "python": "      - '**/*.py'",
+        "go": "      - '**/*.go'",
+        "javascript-typescript": "      - '**/*.js'\n      - '**/*.ts'\n      - '**/*.jsx'\n      - '**/*.tsx'",
+    }
+    path_lines = "\n".join(pr_paths[lang] for lang in codeql_langs if lang in pr_paths)
     matrix_lines = "\n".join(f"          - {lang}" for lang in codeql_langs)
     return f"""name: CodeQL
 
 on:
   pull_request:
+    paths:
+{path_lines}
   push:
     branches: [main]
   schedule:
@@ -394,11 +402,11 @@ jobs:
 {matrix_lines}
     steps:
       - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: ${{{{ matrix.language }}}}
-      - uses: github/codeql-action/autobuild@v3
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/autobuild@v4
+      - uses: github/codeql-action/analyze@v4
 """
 
 
