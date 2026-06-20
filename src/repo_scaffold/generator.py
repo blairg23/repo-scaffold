@@ -368,19 +368,19 @@ jobs:
         run: echo "No supported CodeQL languages selected; scan is skipped."
 """
 
-    pr_paths = {
-        "python": "      - '**/*.py'",
-        "go": "      - '**/*.go'",
-        "javascript-typescript": "      - '**/*.js'\n      - '**/*.ts'\n      - '**/*.jsx'\n      - '**/*.tsx'",
+    src_globs = {
+        "python": '"*.py"',
+        "go": '"*.go"',
+        "javascript-typescript": '"*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx"',
     }
-    path_lines = "\n".join(pr_paths[lang] for lang in codeql_langs if lang in pr_paths)
+    find_expr = " -o -name ".join(
+        src_globs[lang] for lang in codeql_langs if lang in src_globs
+    )
     matrix_lines = "\n".join(f"          - {lang}" for lang in codeql_langs)
     return f"""name: CodeQL
 
 on:
   pull_request:
-    paths:
-{path_lines}
   push:
     branches: [main]
   schedule:
@@ -402,11 +402,22 @@ jobs:
 {matrix_lines}
     steps:
       - uses: actions/checkout@v4
+      - name: Check for source files
+        id: check-src
+        run: |
+          if find . -name {find_expr} -not -path "./.git/*" | grep -q .; then
+            echo "has_source=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_source=false" >> $GITHUB_OUTPUT
+          fi
       - uses: github/codeql-action/init@v4
+        if: steps.check-src.outputs.has_source == 'true'
         with:
           languages: ${{{{ matrix.language }}}}
       - uses: github/codeql-action/autobuild@v4
+        if: steps.check-src.outputs.has_source == 'true'
       - uses: github/codeql-action/analyze@v4
+        if: steps.check-src.outputs.has_source == 'true'
 """
 
 
