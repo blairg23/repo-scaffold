@@ -373,7 +373,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v4
       - name: Check for source files
         id: check-src
         run: |
@@ -382,6 +381,8 @@ jobs:
           else
             echo "has_source=false" >> $GITHUB_OUTPUT
           fi
+      - uses: github/codeql-action/init@v4
+        if: steps.check-src.outputs.has_source == 'true'
       - uses: github/codeql-action/autobuild@v4
         if: steps.check-src.outputs.has_source == 'true'
       - uses: github/codeql-action/analyze@v4
@@ -435,9 +436,6 @@ jobs:
 {matrix_lines}
     steps:
       - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v4
-        with:
-          languages: ${{{{ matrix.language }}}}
       - name: Check for source files
         id: check-src
         run: |
@@ -446,6 +444,10 @@ jobs:
           else
             echo "has_source=false" >> $GITHUB_OUTPUT
           fi
+      - uses: github/codeql-action/init@v4
+        if: steps.check-src.outputs.has_source == 'true'
+        with:
+          languages: ${{{{ matrix.language }}}}
       - uses: github/codeql-action/autobuild@v4
         if: steps.check-src.outputs.has_source == 'true'
       - uses: github/codeql-action/analyze@v4
