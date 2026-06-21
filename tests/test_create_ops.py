@@ -506,6 +506,64 @@ def test_ruleset_and_legacy_branch_helpers_cover_error_paths(
     assert any(endpoint.endswith("/protection") for _, endpoint in calls)
 
 
+def test_enable_code_scanning_default_setup_success_and_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out_lines: list[str] = []
+    warn_lines: list[str] = []
+    endpoints: list[str] = []
+    payloads: list[str | None] = []
+
+    api_responses = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="", stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="not enabled"
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **kwargs: (
+            endpoints.append(kwargs["endpoint"])
+            or payloads.append(kwargs.get("stdin_text"))
+            or next(api_responses)
+        ),
+    )
+
+    create_ops._enable_code_scanning_default_setup(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=out_lines.append,
+        warn=warn_lines.append,
+    )
+    create_ops._enable_code_scanning_default_setup(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=out_lines.append,
+        warn=warn_lines.append,
+    )
+
+    assert endpoints == [
+        "/repos/acme/repo/code-scanning/default-setup",
+        "/repos/acme/repo/code-scanning/default-setup",
+    ]
+    assert all(p is not None and '"state"' in p for p in payloads)
+    assert any(
+        "enabled code scanning default setup" in line.lower() for line in out_lines
+    )
+    assert any(
+        "could not enable code scanning default setup" in line.lower()
+        for line in warn_lines
+    )
+
+
 def test_sync_ruleset_covers_update_create_missing_id_and_api_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
