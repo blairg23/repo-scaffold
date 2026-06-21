@@ -823,7 +823,9 @@ def test_sync_ruleset_falls_back_on_put_when_code_quality_rejected(
     monkeypatch.setattr(
         create_ops,
         "_api",
-        lambda **kwargs: (payloads.append(kwargs.get("stdin_text")) or next(api_responses)),
+        lambda **kwargs: (
+            payloads.append(kwargs.get("stdin_text")) or next(api_responses)
+        ),
     )
 
     create_ops._sync_default_branch_ruleset(
