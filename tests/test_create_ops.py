@@ -621,6 +621,63 @@ def test_sync_ruleset_covers_update_create_missing_id_and_api_failure(
         )
 
 
+def test_default_branch_ruleset_payload_excludes_code_quality_when_flagged() -> None:
+    payload = json.loads(
+        create_ops._default_branch_ruleset_payload(include_code_quality=False)
+    )
+    types = [r["type"] for r in payload["rules"]]
+    assert "code_quality" not in types
+    assert "code_scanning" in types
+    assert "copilot_code_review" in types
+
+
+def test_sync_ruleset_falls_back_when_code_quality_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines: list[str] = []
+    warnings: list[str] = []
+    payloads: list[str | None] = []
+
+    api_responses = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["gh"],
+                returncode=1,
+                stdout="",
+                stderr="code_quality not supported",
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="", stderr=""
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(create_ops, "_list_repo_rulesets", lambda **_: [])
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **kwargs: (
+            payloads.append(kwargs.get("stdin_text")) or next(api_responses)
+        ),
+    )
+
+    create_ops._sync_default_branch_ruleset(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=lines.append,
+        warn=warnings.append,
+    )
+
+    assert any("Created ruleset" in line for line in lines)
+    assert any("code_quality" in w.lower() for w in warnings)
+    assert len(payloads) == 2
+    first = json.loads(payloads[0])
+    second = json.loads(payloads[1])
+    assert any(r["type"] == "code_quality" for r in first["rules"])
+    assert all(r["type"] != "code_quality" for r in second["rules"])
+
+
 def test_tool_auth_remote_and_push_helpers_cover_common_error_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
