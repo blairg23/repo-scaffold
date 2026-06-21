@@ -141,11 +141,17 @@ def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
     assert code_scanning_rule["parameters"]["code_scanning_tools"] == [
         {
             "tool": "CodeQL",
-            "alerts_threshold": "errors",
+            "alerts_threshold": "errors_and_warnings",
             "security_alerts_threshold": "high_or_higher",
         }
     ]
-    assert copilot_code_review_rule["parameters"]["review_draft_pull_requests"] is False
+    code_quality_rule = next(
+        rule for rule in payload["rules"] if rule["type"] == "code_quality"
+    )
+    assert code_quality_rule["parameters"]["code_quality_tools"] == [
+        {"tool": "CodeQL", "severity": "notes"}
+    ]
+    assert copilot_code_review_rule["parameters"]["review_draft_pull_requests"] is True
     assert copilot_code_review_rule["parameters"]["review_on_push"] is True
 
 
@@ -264,7 +270,7 @@ def test_compare_ruleset_against_baseline_reports_multiple_drifts() -> None:
                     {
                         "type": "copilot_code_review",
                         "parameters": {
-                            "review_draft_pull_requests": True,
+                            "review_draft_pull_requests": False,
                             "review_on_push": False,
                         },
                     },
@@ -293,8 +299,9 @@ def test_compare_ruleset_against_baseline_reports_multiple_drifts() -> None:
     assert "pull_request.required_approving_review_count expected 0 got 2" in drifts
     assert any("pull_request.allowed_merge_methods" in item for item in drifts)
     assert any("code_scanning.code_scanning_tools" in item for item in drifts)
+    assert "missing rule: code_quality" in drifts
     assert (
-        "copilot_code_review.review_draft_pull_requests expected False got True"
+        "copilot_code_review.review_draft_pull_requests expected True got False"
         in drifts
     )
     assert "copilot_code_review.review_on_push expected True got False" in drifts
@@ -499,6 +506,64 @@ def test_ruleset_and_legacy_branch_helpers_cover_error_paths(
     assert any(endpoint.endswith("/protection") for _, endpoint in calls)
 
 
+def test_enable_code_scanning_default_setup_success_and_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out_lines: list[str] = []
+    warn_lines: list[str] = []
+    endpoints: list[str] = []
+    payloads: list[str | None] = []
+
+    api_responses = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="", stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="not enabled"
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **kwargs: (
+            endpoints.append(kwargs["endpoint"])
+            or payloads.append(kwargs.get("stdin_text"))
+            or next(api_responses)
+        ),
+    )
+
+    create_ops._enable_code_scanning_default_setup(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=out_lines.append,
+        warn=warn_lines.append,
+    )
+    create_ops._enable_code_scanning_default_setup(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=out_lines.append,
+        warn=warn_lines.append,
+    )
+
+    assert endpoints == [
+        "/repos/acme/repo/code-scanning/default-setup",
+        "/repos/acme/repo/code-scanning/default-setup",
+    ]
+    assert all(p is not None and '"state"' in p for p in payloads)
+    assert any(
+        "enabled code scanning default setup" in line.lower() for line in out_lines
+    )
+    assert any(
+        "could not enable code scanning default setup" in line.lower()
+        for line in warn_lines
+    )
+
+
 def test_sync_ruleset_covers_update_create_missing_id_and_api_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -553,6 +618,315 @@ def test_sync_ruleset_covers_update_create_missing_id_and_api_failure(
     with pytest.raises(RuntimeError, match="failed"):
         create_ops._sync_default_branch_ruleset(
             repo_dir=Path("/tmp/repo"), env={}, repo="acme/repo", out=lambda _line: None
+        )
+
+
+def test_default_branch_ruleset_payload_excludes_code_quality_when_flagged() -> None:
+    payload = json.loads(
+        create_ops._default_branch_ruleset_payload(include_code_quality=False)
+    )
+    types = [r["type"] for r in payload["rules"]]
+    assert "code_quality" not in types
+    assert "code_scanning" in types
+    assert "copilot_code_review" in types
+
+
+def test_sync_ruleset_falls_back_when_code_quality_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines: list[str] = []
+    warnings: list[str] = []
+    payloads: list[str | None] = []
+
+    api_responses = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["gh"],
+                returncode=1,
+                stdout="",
+                stderr="code_quality not supported",
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="", stderr=""
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(create_ops, "_list_repo_rulesets", lambda **_: [])
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **kwargs: (
+            payloads.append(kwargs.get("stdin_text")) or next(api_responses)
+        ),
+    )
+
+    create_ops._sync_default_branch_ruleset(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=lines.append,
+        warn=warnings.append,
+    )
+
+    assert any("Created ruleset" in line for line in lines)
+    assert any("code_quality" in w.lower() for w in warnings)
+    assert len(payloads) == 2
+    first = json.loads(payloads[0])
+    second = json.loads(payloads[1])
+    assert any(r["type"] == "code_quality" for r in first["rules"])
+    assert all(r["type"] != "code_quality" for r in second["rules"])
+
+
+def test_compare_ruleset_code_quality_tools_drift() -> None:
+    """code_quality rule present but tools mismatch → drift reported."""
+    drifts = create_ops._compare_ruleset_against_baseline(
+        [
+            {
+                "name": create_ops._SETTINGS_RULESET_NAME,
+                "target": "branch",
+                "enforcement": "active",
+                "conditions": {
+                    "ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}
+                },
+                "rules": [
+                    {"type": "deletion"},
+                    {"type": "non_fast_forward"},
+                    {"type": "required_linear_history"},
+                    {
+                        "type": "pull_request",
+                        "parameters": {
+                            "allowed_merge_methods": ["squash"],
+                            "dismiss_stale_reviews_on_push": False,
+                            "require_code_owner_review": False,
+                            "require_last_push_approval": False,
+                            "required_approving_review_count": 0,
+                            "required_review_thread_resolution": True,
+                        },
+                    },
+                    {
+                        "type": "code_scanning",
+                        "parameters": {
+                            "code_scanning_tools": [
+                                {
+                                    "tool": "CodeQL",
+                                    "alerts_threshold": "errors_and_warnings",
+                                    "security_alerts_threshold": "high_or_higher",
+                                }
+                            ]
+                        },
+                    },
+                    {
+                        "type": "code_quality",
+                        "parameters": {
+                            "code_quality_tools": [
+                                {"tool": "CodeQL", "severity": "errors"}
+                            ]
+                        },
+                    },
+                    {
+                        "type": "copilot_code_review",
+                        "parameters": {
+                            "review_draft_pull_requests": True,
+                            "review_on_push": True,
+                        },
+                    },
+                ],
+            }
+        ],
+        default_branch="main",
+    )
+    assert any("code_quality.code_quality_tools" in d for d in drifts)
+    assert not any("missing rule: code_quality" in d for d in drifts)
+
+
+def test_compare_ruleset_code_quality_parameters_invalid() -> None:
+    """code_quality rule present but parameters is not a dict → drift reported."""
+    drifts = create_ops._compare_ruleset_against_baseline(
+        [
+            {
+                "name": create_ops._SETTINGS_RULESET_NAME,
+                "target": "branch",
+                "enforcement": "active",
+                "conditions": {
+                    "ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}
+                },
+                "rules": [
+                    {"type": "deletion"},
+                    {"type": "non_fast_forward"},
+                    {"type": "required_linear_history"},
+                    {
+                        "type": "pull_request",
+                        "parameters": {
+                            "allowed_merge_methods": ["squash"],
+                            "dismiss_stale_reviews_on_push": False,
+                            "require_code_owner_review": False,
+                            "require_last_push_approval": False,
+                            "required_approving_review_count": 0,
+                            "required_review_thread_resolution": True,
+                        },
+                    },
+                    {
+                        "type": "code_scanning",
+                        "parameters": {
+                            "code_scanning_tools": [
+                                {
+                                    "tool": "CodeQL",
+                                    "alerts_threshold": "errors_and_warnings",
+                                    "security_alerts_threshold": "high_or_higher",
+                                }
+                            ]
+                        },
+                    },
+                    {"type": "code_quality", "parameters": None},
+                    {
+                        "type": "copilot_code_review",
+                        "parameters": {
+                            "review_draft_pull_requests": True,
+                            "review_on_push": True,
+                        },
+                    },
+                ],
+            }
+        ],
+        default_branch="main",
+    )
+    assert any("code_quality rule parameters missing or invalid" in d for d in drifts)
+
+
+def test_sync_ruleset_falls_back_on_put_when_code_quality_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warnings: list[str] = []
+    lines: list[str] = []
+    payloads: list[str | None] = []
+
+    api_responses = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["gh"],
+                returncode=1,
+                stdout="",
+                stderr="code_quality not supported",
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="", stderr=""
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        create_ops,
+        "_list_repo_rulesets",
+        lambda **_: [{"id": 42, "name": create_ops._SETTINGS_RULESET_NAME}],
+    )
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **kwargs: (
+            payloads.append(kwargs.get("stdin_text")) or next(api_responses)
+        ),
+    )
+
+    create_ops._sync_default_branch_ruleset(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=lines.append,
+        warn=warnings.append,
+    )
+
+    assert any("Updated ruleset" in line for line in lines)
+    assert any("code_quality" in w.lower() for w in warnings)
+    assert len(payloads) == 2
+    first = json.loads(payloads[0])
+    second = json.loads(payloads[1])
+    assert any(r["type"] == "code_quality" for r in first["rules"])
+    assert all(r["type"] != "code_quality" for r in second["rules"])
+
+
+def test_sync_ruleset_put_fallback_failure_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_responses = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["gh"],
+                returncode=1,
+                stdout="",
+                stderr="code_quality not supported",
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="internal server error"
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        create_ops,
+        "_list_repo_rulesets",
+        lambda **_: [{"id": 42, "name": create_ops._SETTINGS_RULESET_NAME}],
+    )
+    monkeypatch.setattr(create_ops, "_api", lambda **_: next(api_responses))
+
+    with pytest.raises(RuntimeError, match="internal server error"):
+        create_ops._sync_default_branch_ruleset(
+            repo_dir=Path("/tmp/repo"),
+            env={},
+            repo="acme/repo",
+            out=lambda _: None,
+            warn=lambda _: None,
+        )
+
+
+def test_sync_ruleset_post_fallback_failure_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_responses = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["gh"],
+                returncode=1,
+                stdout="",
+                stderr="code_quality not supported",
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=1, stdout="", stderr="permission denied"
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(create_ops, "_list_repo_rulesets", lambda **_: [])
+    monkeypatch.setattr(create_ops, "_api", lambda **_: next(api_responses))
+
+    with pytest.raises(RuntimeError, match="permission denied"):
+        create_ops._sync_default_branch_ruleset(
+            repo_dir=Path("/tmp/repo"),
+            env={},
+            repo="acme/repo",
+            out=lambda _: None,
+            warn=lambda _: None,
+        )
+
+
+def test_apply_payload_raises_for_non_code_quality_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(create_ops, "_list_repo_rulesets", lambda **_: [])
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **_: subprocess.CompletedProcess(
+            args=["gh"], returncode=1, stdout="", stderr="unrelated API error"
+        ),
+    )
+    with pytest.raises(RuntimeError, match="unrelated API error"):
+        create_ops._sync_default_branch_ruleset(
+            repo_dir=Path("/tmp/repo"),
+            env={},
+            repo="acme/repo",
+            out=lambda _: None,
+            warn=lambda _: None,
         )
 
 
@@ -788,6 +1162,11 @@ def test_apply_settings_uses_ruleset_and_public_security_defaults(
         create_ops,
         "_enable_optional_endpoint_feature",
         _fake_enable_optional_endpoint_feature,
+    )
+    monkeypatch.setattr(
+        create_ops,
+        "_enable_code_scanning_default_setup",
+        lambda **_: None,
     )
 
     create_ops._apply_settings(

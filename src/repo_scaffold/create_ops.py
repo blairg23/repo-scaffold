@@ -83,6 +83,8 @@ _LANGUAGE_CI_CONTEXT: dict[str, str] = {
 
 def _default_branch_ruleset_payload(
     languages: list[str] | None = None,
+    *,
+    include_code_quality: bool = True,
 ) -> str:
     rules: list[dict[str, object]] = [
         {"type": "deletion"},
@@ -105,20 +107,36 @@ def _default_branch_ruleset_payload(
                 "code_scanning_tools": [
                     {
                         "tool": "CodeQL",
-                        "alerts_threshold": "errors",
+                        "alerts_threshold": "errors_and_warnings",
                         "security_alerts_threshold": "high_or_higher",
                     }
                 ]
             },
         },
+    ]
+    if include_code_quality:
+        rules.append(
+            {
+                "type": "code_quality",
+                "parameters": {
+                    "code_quality_tools": [
+                        {
+                            "tool": "CodeQL",
+                            "severity": "notes",
+                        }
+                    ]
+                },
+            }
+        )
+    rules.append(
         {
             "type": "copilot_code_review",
             "parameters": {
-                "review_draft_pull_requests": False,
+                "review_draft_pull_requests": True,
                 "review_on_push": True,
             },
-        },
-    ]
+        }
+    )
 
     if languages:
         contexts = list(
@@ -357,40 +375,75 @@ def _sync_default_branch_ruleset(
     env: dict[str, str],
     repo: str,
     out: Callable[[str], None],
+    warn: Callable[[str], None] | None = None,
     languages: list[str] | None = None,
 ) -> None:
+    emit_warn = warn if warn is not None else out
     managed_rulesets = [
         item
         for item in _list_repo_rulesets(repo_dir=repo_dir, env=env, repo=repo)
         if _is_managed_ruleset_name(item.get("name"))
     ]
+
+    def _apply_payload(payload: str, method: str, endpoint: str) -> bool:
+        cp = _api(
+            repo_dir=repo_dir,
+            env=env,
+            method=method,
+            endpoint=endpoint,
+            stdin_text=payload,
+        )
+        if cp.returncode == 0:
+            return True
+        err = cp.stderr.strip() or cp.stdout.strip() or ""
+        if "code_quality" in err.lower():
+            return False
+        raise RuntimeError(err or f"Failed applying managed ruleset ({method}).")
+
     payload = _default_branch_ruleset_payload(languages=languages)
+    fallback_payload = _default_branch_ruleset_payload(
+        languages=languages, include_code_quality=False
+    )
 
     if managed_rulesets:
         ruleset_id = managed_rulesets[0].get("id")
         if not isinstance(ruleset_id, int):
             raise RuntimeError("Managed ruleset exists but is missing a numeric id.")
-        cp = _api(
-            repo_dir=repo_dir,
-            env=env,
-            method="PUT",
-            endpoint=f"/repos/{repo}/rulesets/{ruleset_id}",
-            stdin_text=payload,
-        )
-        if cp.returncode != 0:
-            raise RuntimeError(cp.stderr.strip() or "Failed updating managed ruleset.")
+        endpoint = f"/repos/{repo}/rulesets/{ruleset_id}"
+        if not _apply_payload(payload, "PUT", endpoint):
+            emit_warn(
+                "Warning: code_quality rule not supported on this repo; "
+                "applying ruleset without it."
+            )
+            cp2 = _api(
+                repo_dir=repo_dir,
+                env=env,
+                method="PUT",
+                endpoint=endpoint,
+                stdin_text=fallback_payload,
+            )
+            if cp2.returncode != 0:
+                raise RuntimeError(
+                    cp2.stderr.strip() or "Failed updating managed ruleset."
+                )
         out(f"Updated ruleset '{_SETTINGS_RULESET_NAME}'.")
         return
 
-    cp = _api(
-        repo_dir=repo_dir,
-        env=env,
-        method="POST",
-        endpoint=f"/repos/{repo}/rulesets",
-        stdin_text=payload,
-    )
-    if cp.returncode != 0:
-        raise RuntimeError(cp.stderr.strip() or "Failed creating managed ruleset.")
+    endpoint = f"/repos/{repo}/rulesets"
+    if not _apply_payload(payload, "POST", endpoint):
+        emit_warn(
+            "Warning: code_quality rule not supported on this repo; "
+            "applying ruleset without it."
+        )
+        cp2 = _api(
+            repo_dir=repo_dir,
+            env=env,
+            method="POST",
+            endpoint=endpoint,
+            stdin_text=fallback_payload,
+        )
+        if cp2.returncode != 0:
+            raise RuntimeError(cp2.stderr.strip() or "Failed creating managed ruleset.")
     out(f"Created ruleset '{_SETTINGS_RULESET_NAME}'.")
 
 
@@ -433,6 +486,28 @@ def _enable_optional_endpoint_feature(
         return
     feature_err = cp.stderr.strip() or cp.stdout.strip() or "unknown error"
     warn(f"Warning: could not enable {feature_name.lower()}: {feature_err}")
+
+
+def _enable_code_scanning_default_setup(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    out: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> None:
+    cp = _api(
+        repo_dir=repo_dir,
+        env=env,
+        method="PATCH",
+        endpoint=f"/repos/{repo}/code-scanning/default-setup",
+        stdin_text=json.dumps({"state": "configured"}),
+    )
+    if cp.returncode == 0:
+        out("Enabled code scanning default setup.")
+        return
+    feature_err = cp.stderr.strip() or cp.stdout.strip() or "unknown error"
+    warn(f"Warning: could not enable code scanning default setup: {feature_err}")
 
 
 def _legacy_branch_protection_exists(
@@ -562,6 +637,7 @@ def _compare_ruleset_against_baseline(
         "required_linear_history",
         "pull_request",
         "code_scanning",
+        "code_quality",
         "copilot_code_review",
     ):
         if required_rule not in rule_map:
@@ -604,13 +680,27 @@ def _compare_ruleset_against_baseline(
             expected_tools = [
                 {
                     "tool": "CodeQL",
-                    "alerts_threshold": "errors",
+                    "alerts_threshold": "errors_and_warnings",
                     "security_alerts_threshold": "high_or_higher",
                 }
             ]
             if tools != expected_tools:
                 drifts.append(
                     "code_scanning.code_scanning_tools expected "
+                    f"{expected_tools!r} got {tools!r}"
+                )
+
+    code_quality_rule = rule_map.get("code_quality")
+    if isinstance(code_quality_rule, dict):
+        code_quality_parameters = code_quality_rule.get("parameters")
+        if not isinstance(code_quality_parameters, dict):
+            drifts.append("code_quality rule parameters missing or invalid")
+        else:
+            tools = code_quality_parameters.get("code_quality_tools")
+            expected_tools = [{"tool": "CodeQL", "severity": "notes"}]
+            if tools != expected_tools:
+                drifts.append(
+                    "code_quality.code_quality_tools expected "
                     f"{expected_tools!r} got {tools!r}"
                 )
 
@@ -621,7 +711,7 @@ def _compare_ruleset_against_baseline(
             drifts.append("copilot_code_review rule parameters missing or invalid")
         else:
             expected_copilot_params = {
-                "review_draft_pull_requests": False,
+                "review_draft_pull_requests": True,
                 "review_on_push": True,
             }
             for key, expected in expected_copilot_params.items():
@@ -1028,6 +1118,7 @@ def _apply_settings(
         out("[dry-run] enable secret scanning push protection")
         for feature_name, _ in _BEST_EFFORT_SECURITY_FEATURES:
             out(f"[dry-run] enable {feature_name.lower()}")
+        out("[dry-run] enable code scanning default setup")
         out("[dry-run] enable private vulnerability reporting when supported")
         return
 
@@ -1049,7 +1140,7 @@ def _apply_settings(
     out("Applied repository merge settings.")
 
     _sync_default_branch_ruleset(
-        repo_dir=repo_dir, env=env, repo=repo, out=out, languages=languages
+        repo_dir=repo_dir, env=env, repo=repo, out=out, warn=warn, languages=languages
     )
 
     _clear_legacy_branch_protection(
@@ -1089,6 +1180,14 @@ def _apply_settings(
             out=out,
             warn=warn,
         )
+
+    _enable_code_scanning_default_setup(
+        repo_dir=repo_dir,
+        env=env,
+        repo=repo,
+        out=out,
+        warn=warn,
+    )
 
     if visibility == "public":
         _enable_optional_endpoint_feature(

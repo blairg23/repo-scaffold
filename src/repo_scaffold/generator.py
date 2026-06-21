@@ -3255,10 +3255,6 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
             _render_ci_yaml(config.languages),
         ),
         ScaffoldFile(
-            config.out_dir / ".github" / "workflows" / "codeql.yml",
-            _render_codeql_yaml(config.languages),
-        ),
-        ScaffoldFile(
             config.out_dir / ".github" / "workflows" / "validate-issue.yml",
             _render_validate_issue_workflow(),
         ),
@@ -3397,7 +3393,6 @@ TEMPLATE_FILE_PATHS = (
     ".github/ISSUE_TEMPLATE/ticket.md",
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/workflows/validate-issue.yml",
-    ".github/workflows/codeql.yml",
 )
 
 
@@ -3464,7 +3459,6 @@ def build_ci_files(
         target_dir,
         [
             ".github/workflows/ci.yml",
-            ".github/workflows/codeql.yml",
             "web/.husky/pre-commit",
         ],
     )
