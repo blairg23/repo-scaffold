@@ -2325,6 +2325,79 @@ def test_pr_comment_posts_and_prints_url(
     assert "Comment posted" in capsys.readouterr().out
 
 
+def test_pr_react_posts_reaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.react",
+        lambda repo, subject, subject_id, content, token: subprocess.CompletedProcess(
+            args=[],
+            returncode=201,
+            stdout=json.dumps({"content": "+1", "id": 99}),
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(
+        [
+            "pr",
+            "react",
+            "--repo",
+            "acme/repo",
+            "--comment-id",
+            "12345",
+            "--reaction",
+            "+1",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Reaction added" in out
+    assert "+1" in out
+
+
+def test_pr_react_error_returns_nonzero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.react",
+        lambda repo, subject, subject_id, content, token: subprocess.CompletedProcess(
+            args=[],
+            returncode=422,
+            stdout="",
+            stderr="Unprocessable Entity",
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(
+        [
+            "pr",
+            "react",
+            "--repo",
+            "acme/repo",
+            "--comment-id",
+            "12345",
+            "--reaction",
+            "+1",
+        ]
+    )
+    assert rc == 1
+    assert "Unprocessable Entity" in capsys.readouterr().err
+
+
 def test_pr_resolve_thread(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

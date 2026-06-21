@@ -42,6 +42,7 @@ from .github_api import (
     pr_list,
     pr_list_comments,
     pr_merge,
+    react,
     pr_rerun,
     pr_resolve_thread,
     pr_review_threads,
@@ -1291,6 +1292,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pr_comment_cmd.add_argument(
         "--reply-to", type=int, dest="reply_to", help="Comment ID to reply to"
+    )
+
+    pr_react_cmd = pr_sub.add_parser(
+        "react", help="Add a reaction to a PR review comment"
+    )
+    pr_react_cmd.add_argument("--repo", required=True)
+    pr_react_cmd.add_argument(
+        "--comment-id", type=int, required=True, dest="comment_id"
+    )
+    pr_react_cmd.add_argument(
+        "--reaction",
+        required=True,
+        choices=["+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"],
     )
 
     pr_create_cmd = pr_sub.add_parser("create", help="Open a new pull request")
@@ -2818,6 +2832,21 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             comment = _json.loads(cp.stdout)
             print(f"Comment posted: {comment.get('html_url', '')}")
+            return 0
+
+        if ns.pr_command == "react":
+            cp = react(
+                target_repo,
+                "pull_request_review_comment",
+                ns.comment_id,
+                ns.reaction,
+                token,
+            )
+            if cp.returncode not in (0, 201):
+                print(cp.stderr.strip() or "Failed adding reaction.", file=sys.stderr)
+                return 1
+            reaction = _json.loads(cp.stdout)
+            print(f"Reaction added: {reaction.get('content', ns.reaction)}")
             return 0
 
         if ns.pr_command == "resolve-thread":
