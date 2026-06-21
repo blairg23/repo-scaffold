@@ -356,16 +356,51 @@ def _render_codeql_yaml(languages: Iterable[str]) -> str:
         return """name: CodeQL
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   schedule:
     - cron: "0 6 * * 1"
-  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
 
 jobs:
-  noop:
+  analyze:
+    name: Analyze
     runs-on: ubuntu-latest
     steps:
-      - name: Skip
-        run: echo "No supported CodeQL languages selected; scan is skipped."
+      - uses: actions/checkout@v4
+      - name: Check for source files
+        id: check-src
+        run: |
+          if find . \\( -name "*.py" -o -name "*.go" -o -name "*.js" -o -name "*.ts" \\) -not -path "./.git/*" | grep -q .; then
+            echo "has_source=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_source=false" >> $GITHUB_OUTPUT
+          fi
+      - uses: github/codeql-action/init@v4
+        if: steps.check-src.outputs.has_source == 'true'
+      - uses: github/codeql-action/autobuild@v4
+        if: steps.check-src.outputs.has_source == 'true'
+      - uses: github/codeql-action/analyze@v4
+        if: steps.check-src.outputs.has_source == 'true'
+      - name: Upload empty SARIF (no source files found)
+        if: steps.check-src.outputs.has_source == 'false'
+        run: |
+          cat > empty.sarif <<'SARIF'
+          {
+            "version": "2.1.0",
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "runs": [{"tool": {"driver": {"name": "CodeQL", "version": "0.0.0", "rules": []}}, "results": []}]
+          }
+          SARIF
+      - uses: github/codeql-action/upload-sarif@v4
+        if: steps.check-src.outputs.has_source == 'false'
+        with:
+          sarif_file: empty.sarif
 """
 
     src_globs = {
@@ -3401,7 +3436,7 @@ def build_template_files(
     repo_name = name or target_dir.name
     cfg = ScaffoldConfig(
         name=repo_name,
-        languages=ALLOWED_LANGUAGES,
+        languages=(),
         owner=owner,
         license_id=SUPPORTED_LICENSE,
         out_dir=target_dir,
