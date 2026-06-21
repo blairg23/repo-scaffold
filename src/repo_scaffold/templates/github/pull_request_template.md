@@ -22,7 +22,7 @@ This PR aims to [describe the goal or intended outcome].
 <!-- Link GitHub issues/epics for traceability. -->
 - **Epic:** #<epic-issue-number>
 - **Issue:** #<issue-number>
-- **Closes:** Fixes #<issue-number>
+- Closes #<issue-number>
 
 ## 🧪 Testing
 <!-- Describe how reviewers can verify this PR works as intended. -->
