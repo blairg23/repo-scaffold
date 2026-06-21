@@ -373,6 +373,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v4
       - name: Check for source files
         id: check-src
         run: |
@@ -381,26 +382,23 @@ jobs:
           else
             echo "has_source=false" >> $GITHUB_OUTPUT
           fi
-      - uses: github/codeql-action/init@v4
-        if: steps.check-src.outputs.has_source == 'true'
       - uses: github/codeql-action/autobuild@v4
         if: steps.check-src.outputs.has_source == 'true'
       - uses: github/codeql-action/analyze@v4
         if: steps.check-src.outputs.has_source == 'true'
+        with:
+          sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && format('refs/heads/{0}', github.event.pull_request.head.ref) || github.ref }}
       - name: Upload empty SARIF (no source files found)
         if: steps.check-src.outputs.has_source == 'false'
         run: |
-          cat > empty.sarif <<'SARIF'
-          {
-            "version": "2.1.0",
-            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-            "runs": [{"tool": {"driver": {"name": "CodeQL", "version": "0.0.0", "rules": []}}, "results": []}]
-          }
-          SARIF
+          echo '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"CodeQL","version":"0.0.0","rules":[]}},"results":[]}]}' > empty.sarif
       - uses: github/codeql-action/upload-sarif@v4
         if: steps.check-src.outputs.has_source == 'false'
         with:
           sarif_file: empty.sarif
+          sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && format('refs/heads/{0}', github.event.pull_request.head.ref) || github.ref }}
 """
 
     src_globs = {
@@ -437,6 +435,9 @@ jobs:
 {matrix_lines}
     steps:
       - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{{{ matrix.language }}}}
       - name: Check for source files
         id: check-src
         run: |
@@ -445,29 +446,24 @@ jobs:
           else
             echo "has_source=false" >> $GITHUB_OUTPUT
           fi
-      - uses: github/codeql-action/init@v4
-        if: steps.check-src.outputs.has_source == 'true'
-        with:
-          languages: ${{{{ matrix.language }}}}
       - uses: github/codeql-action/autobuild@v4
         if: steps.check-src.outputs.has_source == 'true'
       - uses: github/codeql-action/analyze@v4
         if: steps.check-src.outputs.has_source == 'true'
+        with:
+          sha: ${{{{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}}}
+          ref: ${{{{ github.event_name == 'pull_request' && format('refs/heads/{{0}}', github.event.pull_request.head.ref) || github.ref }}}}
       - name: Upload empty SARIF (no source files found)
         if: steps.check-src.outputs.has_source == 'false'
         run: |
-          cat > empty.sarif <<'SARIF'
-          {{
-            "version": "2.1.0",
-            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-            "runs": [{{"tool": {{"driver": {{"name": "CodeQL", "version": "0.0.0", "rules": []}}}}, "results": []}}]
-          }}
-          SARIF
+          echo '{{"version":"2.1.0","runs":[{{"tool":{{"driver":{{"name":"CodeQL","version":"0.0.0","rules":[]}}}},"results":[]}}]}}' > empty.sarif
       - uses: github/codeql-action/upload-sarif@v4
         if: steps.check-src.outputs.has_source == 'false'
         with:
           sarif_file: empty.sarif
           category: /language:${{{{ matrix.language }}}}
+          sha: ${{{{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}}}
+          ref: ${{{{ github.event_name == 'pull_request' && format('refs/heads/{{0}}', github.event.pull_request.head.ref) || github.ref }}}}
 """
 
 
