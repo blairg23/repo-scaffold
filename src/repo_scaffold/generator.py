@@ -3364,6 +3364,7 @@ TEMPLATE_FILE_PATHS = (
     ".github/ISSUE_TEMPLATE/ticket.md",
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/workflows/validate-issue.yml",
+    ".github/workflows/codeql.yml",
 )
 
 
