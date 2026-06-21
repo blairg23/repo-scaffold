@@ -368,6 +368,14 @@ jobs:
         run: echo "No supported CodeQL languages selected; scan is skipped."
 """
 
+    src_globs = {
+        "python": '"*.py"',
+        "go": '"*.go"',
+        "javascript-typescript": '"*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx"',
+    }
+    find_expr = " -o -name ".join(
+        src_globs[lang] for lang in codeql_langs if lang in src_globs
+    )
     matrix_lines = "\n".join(f"          - {lang}" for lang in codeql_langs)
     return f"""name: CodeQL
 
@@ -394,11 +402,37 @@ jobs:
 {matrix_lines}
     steps:
       - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - name: Check for source files
+        id: check-src
+        run: |
+          if find . -name {find_expr} -not -path "./.git/*" | grep -q .; then
+            echo "has_source=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_source=false" >> $GITHUB_OUTPUT
+          fi
+      - uses: github/codeql-action/init@v4
+        if: steps.check-src.outputs.has_source == 'true'
         with:
           languages: ${{{{ matrix.language }}}}
-      - uses: github/codeql-action/autobuild@v3
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/autobuild@v4
+        if: steps.check-src.outputs.has_source == 'true'
+      - uses: github/codeql-action/analyze@v4
+        if: steps.check-src.outputs.has_source == 'true'
+      - name: Upload empty SARIF (no source files found)
+        if: steps.check-src.outputs.has_source == 'false'
+        run: |
+          cat > empty.sarif <<'SARIF'
+          {{
+            "version": "2.1.0",
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "runs": [{{"tool": {{"driver": {{"name": "CodeQL", "version": "0.0.0", "rules": []}}}}, "results": []}}]
+          }}
+          SARIF
+      - uses: github/codeql-action/upload-sarif@v4
+        if: steps.check-src.outputs.has_source == 'false'
+        with:
+          sarif_file: empty.sarif
+          category: /language:${{{{ matrix.language }}}}
 """
 
 
