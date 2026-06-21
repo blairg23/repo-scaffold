@@ -930,6 +930,43 @@ def test_apply_payload_raises_for_non_code_quality_error(
         )
 
 
+def test_apply_payload_falls_back_on_github_invalid_property_rules_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GitHub returns 'Invalid property /rules/N' rather than 'code_quality' when
+    the rule type is unsupported -- the fallback must trigger on that pattern too."""
+    lines: list[str] = []
+    warnings: list[str] = []
+
+    api_responses = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["gh"],
+                returncode=1,
+                stdout="",
+                stderr="Invalid property /rules/5: data matches no possible input.",
+            ),
+            subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="", stderr=""
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(create_ops, "_list_repo_rulesets", lambda **_: [])
+    monkeypatch.setattr(create_ops, "_api", lambda **_: next(api_responses))
+
+    create_ops._sync_default_branch_ruleset(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=lines.append,
+        warn=warnings.append,
+    )
+
+    assert any("Created ruleset" in line for line in lines)
+    assert any("code_quality" in w.lower() for w in warnings)
+
+
 def test_tool_auth_remote_and_push_helpers_cover_common_error_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
