@@ -46,7 +46,6 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
         ".github/ISSUE_TEMPLATE/ticket.md",
         ".github/ISSUE_TEMPLATE/config.yml",
         ".github/workflows/ci.yml",
-        ".github/workflows/codeql.yml",
         ".github/dependabot.yml",
         "docs/requirements.md",
         "docs/api-v1.md",
@@ -101,9 +100,6 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "Upload coverage.xml artifact" in ci_yaml
     assert "codecov/codecov-action@v5" in ci_yaml
     assert "CODECOV_TOKEN" in ci_yaml
-    assert "language:" in (out_dir / ".github/workflows/codeql.yml").read_text(
-        encoding="utf-8"
-    )
     generated_readme = (out_dir / "README.md").read_text(encoding="utf-8")
     assert "[![codecov](" in generated_readme
     assert "Created by [repo-scaffold]" in generated_readme
@@ -254,7 +250,7 @@ def test_generation_is_deterministic(tmp_path: Path) -> None:
     assert _tree_hash(cfg_a.out_dir) == _tree_hash(cfg_b.out_dir)
 
 
-def test_react_only_codeql_scans_javascript(tmp_path: Path) -> None:
+def test_react_only_dependabot_packages(tmp_path: Path) -> None:
     cfg = ScaffoldConfig(
         name="frontend",
         languages=("react",),
@@ -265,10 +261,7 @@ def test_react_only_codeql_scans_javascript(tmp_path: Path) -> None:
 
     generate_scaffold(cfg)
 
-    codeql = (cfg.out_dir / ".github/workflows/codeql.yml").read_text(encoding="utf-8")
-    assert "javascript-typescript" in codeql
-    assert "Analyze (${{ matrix.language }})" in codeql
-
+    assert not (cfg.out_dir / ".github/workflows/codeql.yml").exists()
     dependabot = (cfg.out_dir / ".github/dependabot.yml").read_text(encoding="utf-8")
     assert 'package-ecosystem: "github-actions"' in dependabot
     assert 'package-ecosystem: "npm"' in dependabot
@@ -462,11 +455,7 @@ def test_gin_scaffold_generates_expected_files(tmp_path: Path) -> None:
     assert "gin:" in ci_yaml
     assert "go mod tidy" in ci_yaml
 
-    codeql_yaml = (out_dir / ".github" / "workflows" / "codeql.yml").read_text(
-        encoding="utf-8"
-    )
-    assert "- go" in codeql_yaml
-    assert "No Go/Python selected" not in codeql_yaml
+    assert not (out_dir / ".github" / "workflows" / "codeql.yml").exists()
 
     dependabot = (out_dir / ".github" / "dependabot.yml").read_text(encoding="utf-8")
     assert 'package-ecosystem: "gomod"' in dependabot

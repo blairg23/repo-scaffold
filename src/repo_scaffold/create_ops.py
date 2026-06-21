@@ -105,8 +105,19 @@ def _default_branch_ruleset_payload(
                 "code_scanning_tools": [
                     {
                         "tool": "CodeQL",
-                        "alerts_threshold": "errors",
+                        "alerts_threshold": "errors_and_warnings",
                         "security_alerts_threshold": "high_or_higher",
+                    }
+                ]
+            },
+        },
+        {
+            "type": "code_quality",
+            "parameters": {
+                "code_quality_tools": [
+                    {
+                        "tool": "CodeQL",
+                        "severity": "notes",
                     }
                 ]
             },
@@ -114,7 +125,7 @@ def _default_branch_ruleset_payload(
         {
             "type": "copilot_code_review",
             "parameters": {
-                "review_draft_pull_requests": False,
+                "review_draft_pull_requests": True,
                 "review_on_push": True,
             },
         },
@@ -435,6 +446,28 @@ def _enable_optional_endpoint_feature(
     warn(f"Warning: could not enable {feature_name.lower()}: {feature_err}")
 
 
+def _enable_code_scanning_default_setup(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    out: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> None:
+    cp = _api(
+        repo_dir=repo_dir,
+        env=env,
+        method="PATCH",
+        endpoint=f"/repos/{repo}/code-scanning/default-setup",
+        stdin_text=json.dumps({"state": "configured"}),
+    )
+    if cp.returncode == 0:
+        out("Enabled code scanning default setup.")
+        return
+    feature_err = cp.stderr.strip() or cp.stdout.strip() or "unknown error"
+    warn(f"Warning: could not enable code scanning default setup: {feature_err}")
+
+
 def _legacy_branch_protection_exists(
     *,
     repo_dir: Path,
@@ -562,6 +595,7 @@ def _compare_ruleset_against_baseline(
         "required_linear_history",
         "pull_request",
         "code_scanning",
+        "code_quality",
         "copilot_code_review",
     ):
         if required_rule not in rule_map:
@@ -604,13 +638,27 @@ def _compare_ruleset_against_baseline(
             expected_tools = [
                 {
                     "tool": "CodeQL",
-                    "alerts_threshold": "errors",
+                    "alerts_threshold": "errors_and_warnings",
                     "security_alerts_threshold": "high_or_higher",
                 }
             ]
             if tools != expected_tools:
                 drifts.append(
                     "code_scanning.code_scanning_tools expected "
+                    f"{expected_tools!r} got {tools!r}"
+                )
+
+    code_quality_rule = rule_map.get("code_quality")
+    if isinstance(code_quality_rule, dict):
+        code_quality_parameters = code_quality_rule.get("parameters")
+        if not isinstance(code_quality_parameters, dict):
+            drifts.append("code_quality rule parameters missing or invalid")
+        else:
+            tools = code_quality_parameters.get("code_quality_tools")
+            expected_tools = [{"tool": "CodeQL", "severity": "notes"}]
+            if tools != expected_tools:
+                drifts.append(
+                    "code_quality.code_quality_tools expected "
                     f"{expected_tools!r} got {tools!r}"
                 )
 
@@ -621,7 +669,7 @@ def _compare_ruleset_against_baseline(
             drifts.append("copilot_code_review rule parameters missing or invalid")
         else:
             expected_copilot_params = {
-                "review_draft_pull_requests": False,
+                "review_draft_pull_requests": True,
                 "review_on_push": True,
             }
             for key, expected in expected_copilot_params.items():
@@ -1028,6 +1076,7 @@ def _apply_settings(
         out("[dry-run] enable secret scanning push protection")
         for feature_name, _ in _BEST_EFFORT_SECURITY_FEATURES:
             out(f"[dry-run] enable {feature_name.lower()}")
+        out("[dry-run] enable code scanning default setup")
         out("[dry-run] enable private vulnerability reporting when supported")
         return
 
@@ -1089,6 +1138,14 @@ def _apply_settings(
             out=out,
             warn=warn,
         )
+
+    _enable_code_scanning_default_setup(
+        repo_dir=repo_dir,
+        env=env,
+        repo=repo,
+        out=out,
+        warn=warn,
+    )
 
     if visibility == "public":
         _enable_optional_endpoint_feature(

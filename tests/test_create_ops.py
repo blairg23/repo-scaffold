@@ -141,11 +141,17 @@ def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
     assert code_scanning_rule["parameters"]["code_scanning_tools"] == [
         {
             "tool": "CodeQL",
-            "alerts_threshold": "errors",
+            "alerts_threshold": "errors_and_warnings",
             "security_alerts_threshold": "high_or_higher",
         }
     ]
-    assert copilot_code_review_rule["parameters"]["review_draft_pull_requests"] is False
+    code_quality_rule = next(
+        rule for rule in payload["rules"] if rule["type"] == "code_quality"
+    )
+    assert code_quality_rule["parameters"]["code_quality_tools"] == [
+        {"tool": "CodeQL", "severity": "notes"}
+    ]
+    assert copilot_code_review_rule["parameters"]["review_draft_pull_requests"] is True
     assert copilot_code_review_rule["parameters"]["review_on_push"] is True
 
 
@@ -264,7 +270,7 @@ def test_compare_ruleset_against_baseline_reports_multiple_drifts() -> None:
                     {
                         "type": "copilot_code_review",
                         "parameters": {
-                            "review_draft_pull_requests": True,
+                            "review_draft_pull_requests": False,
                             "review_on_push": False,
                         },
                     },
@@ -293,8 +299,9 @@ def test_compare_ruleset_against_baseline_reports_multiple_drifts() -> None:
     assert "pull_request.required_approving_review_count expected 0 got 2" in drifts
     assert any("pull_request.allowed_merge_methods" in item for item in drifts)
     assert any("code_scanning.code_scanning_tools" in item for item in drifts)
+    assert "missing rule: code_quality" in drifts
     assert (
-        "copilot_code_review.review_draft_pull_requests expected False got True"
+        "copilot_code_review.review_draft_pull_requests expected True got False"
         in drifts
     )
     assert "copilot_code_review.review_on_push expected True got False" in drifts
@@ -788,6 +795,11 @@ def test_apply_settings_uses_ruleset_and_public_security_defaults(
         create_ops,
         "_enable_optional_endpoint_feature",
         _fake_enable_optional_endpoint_feature,
+    )
+    monkeypatch.setattr(
+        create_ops,
+        "_enable_code_scanning_default_setup",
+        lambda **_: None,
     )
 
     create_ops._apply_settings(
