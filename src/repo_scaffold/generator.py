@@ -389,7 +389,7 @@ jobs:
         if: steps.check-src.outputs.has_source == 'true'
         with:
           sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          ref: ${{ github.event_name == 'pull_request' && format('refs/heads/{0}', github.event.pull_request.head.ref) || github.ref }}
+          ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.pull_request.number) || github.ref }}
       - name: Upload empty SARIF (no source files found)
         if: steps.check-src.outputs.has_source == 'false'
         run: |
@@ -399,7 +399,7 @@ jobs:
         with:
           sarif_file: empty.sarif
           sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          ref: ${{ github.event_name == 'pull_request' && format('refs/heads/{0}', github.event.pull_request.head.ref) || github.ref }}
+          ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.pull_request.number) || github.ref }}
 """
 
     src_globs = {
@@ -454,7 +454,7 @@ jobs:
         if: steps.check-src.outputs.has_source == 'true'
         with:
           sha: ${{{{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}}}
-          ref: ${{{{ github.event_name == 'pull_request' && format('refs/heads/{{0}}', github.event.pull_request.head.ref) || github.ref }}}}
+          ref: ${{{{ github.event_name == 'pull_request' && format('refs/pull/{{0}}/head', github.event.pull_request.number) || github.ref }}}}
       - name: Upload empty SARIF (no source files found)
         if: steps.check-src.outputs.has_source == 'false'
         run: |
@@ -465,7 +465,7 @@ jobs:
           sarif_file: empty.sarif
           category: /language:${{{{ matrix.language }}}}
           sha: ${{{{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}}}
-          ref: ${{{{ github.event_name == 'pull_request' && format('refs/heads/{{0}}', github.event.pull_request.head.ref) || github.ref }}}}
+          ref: ${{{{ github.event_name == 'pull_request' && format('refs/pull/{{0}}/head', github.event.pull_request.number) || github.ref }}}}
 """
 
 
