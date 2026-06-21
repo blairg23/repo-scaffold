@@ -396,7 +396,7 @@ def _sync_default_branch_ruleset(
         if cp.returncode == 0:
             return True
         err = cp.stderr.strip() or cp.stdout.strip() or ""
-        if "code_quality" in err.lower():
+        if "code_quality" in err.lower() or "invalid property /rules/" in err.lower():
             return False
         raise RuntimeError(err or f"Failed applying managed ruleset ({method}).")
 
