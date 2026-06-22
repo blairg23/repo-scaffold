@@ -381,11 +381,11 @@ jobs:
           else
             echo "has_source=false" >> $GITHUB_OUTPUT
           fi
-      - uses: github/codeql-action/init@v5
+      - uses: github/codeql-action/init@v4
         if: steps.check-src.outputs.has_source == 'true'
-      - uses: github/codeql-action/autobuild@v5
+      - uses: github/codeql-action/autobuild@v4
         if: steps.check-src.outputs.has_source == 'true'
-      - uses: github/codeql-action/analyze@v5
+      - uses: github/codeql-action/analyze@v4
         if: steps.check-src.outputs.has_source == 'true'
         with:
           sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
@@ -394,7 +394,7 @@ jobs:
         if: steps.check-src.outputs.has_source == 'false'
         run: |
           echo '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"CodeQL","version":"0.0.0","rules":[]}},"results":[]}]}' > empty.sarif
-      - uses: github/codeql-action/upload-sarif@v5
+      - uses: github/codeql-action/upload-sarif@v4
         if: steps.check-src.outputs.has_source == 'false'
         with:
           sarif_file: empty.sarif
@@ -444,13 +444,13 @@ jobs:
           else
             echo "has_source=false" >> $GITHUB_OUTPUT
           fi
-      - uses: github/codeql-action/init@v5
+      - uses: github/codeql-action/init@v4
         if: steps.check-src.outputs.has_source == 'true'
         with:
           languages: ${{{{ matrix.language }}}}
-      - uses: github/codeql-action/autobuild@v5
+      - uses: github/codeql-action/autobuild@v4
         if: steps.check-src.outputs.has_source == 'true'
-      - uses: github/codeql-action/analyze@v5
+      - uses: github/codeql-action/analyze@v4
         if: steps.check-src.outputs.has_source == 'true'
         with:
           sha: ${{{{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}}}
@@ -459,7 +459,7 @@ jobs:
         if: steps.check-src.outputs.has_source == 'false'
         run: |
           echo '{{"version":"2.1.0","runs":[{{"tool":{{"driver":{{"name":"CodeQL","version":"0.0.0","rules":[]}}}},"results":[]}}]}}' > empty.sarif
-      - uses: github/codeql-action/upload-sarif@v5
+      - uses: github/codeql-action/upload-sarif@v4
         if: steps.check-src.outputs.has_source == 'false'
         with:
           sarif_file: empty.sarif
