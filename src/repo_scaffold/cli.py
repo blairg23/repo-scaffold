@@ -3029,13 +3029,13 @@ def main(argv: list[str] | None = None) -> int:
                 print("No review threads found.")
                 return 0
             non_compliant = 0
-            for entry in report:
-                tid = entry.get("thread_id", "?")
-                cid = entry.get("first_comment_id", "?")
-                if entry.get("compliant"):
+            for t in report:
+                tid = t.get("thread_id", "?")
+                cid = t.get("first_comment_id", "?")
+                if t.get("compliant"):
                     print(f"  OK  thread={tid}  comment={cid}")
                 else:
-                    missing = ", ".join(entry.get("missing", []))
+                    missing = ", ".join(t.get("missing", []))
                     print(f"  FAIL  thread={tid}  comment={cid}  missing: {missing}")
                     non_compliant += 1
             total = len(report)
