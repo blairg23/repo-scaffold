@@ -181,6 +181,10 @@ def _render_validate_issue_workflow() -> str:
     return _load_template("github/workflows/validate-issue.yml", "")
 
 
+def _render_validate_pr_workflow() -> str:
+    return _load_template("github/workflows/validate-pr.yml", "")
+
+
 def _render_validate_pr_sop_workflow() -> str:
     return _load_template("github/workflows/validate-pr-sop.yml", "")
 
@@ -3217,6 +3221,10 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
             _render_validate_issue_workflow(),
         ),
         ScaffoldFile(
+            config.out_dir / ".github" / "workflows" / "validate-pr.yml",
+            _render_validate_pr_workflow(),
+        ),
+        ScaffoldFile(
             config.out_dir / ".github" / "workflows" / "validate-pr-sop.yml",
             _render_validate_pr_sop_workflow(),
         ),
@@ -3355,6 +3363,7 @@ TEMPLATE_FILE_PATHS = (
     ".github/ISSUE_TEMPLATE/ticket.md",
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/workflows/validate-issue.yml",
+    ".github/workflows/validate-pr.yml",
     ".github/workflows/validate-pr-sop.yml",
 )
 
