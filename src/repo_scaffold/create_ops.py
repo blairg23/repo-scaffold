@@ -37,8 +37,13 @@ class SettingsCheckSummary:
 
 
 _API_VERSION = "2026-03-10"
-_SETTINGS_RULESET_NAME = "repo-scaffold baseline branch rules"
-_LEGACY_SETTINGS_RULESET_NAME = "repo-scaffold default-branch ruleset"
+_SETTINGS_RULESET_NAME = "default-branch (managed by repo-scaffold)"
+_LEGACY_RULESET_NAMES: frozenset[str] = frozenset(
+    {
+        "repo-scaffold baseline branch rules",
+        "repo-scaffold default-branch ruleset",
+    }
+)
 
 _BEST_EFFORT_SECURITY_FEATURES: tuple[tuple[str, str], ...] = (
     ("Dependabot alerts", "/repos/{repo}/vulnerability-alerts"),
@@ -47,10 +52,9 @@ _BEST_EFFORT_SECURITY_FEATURES: tuple[tuple[str, str], ...] = (
 
 
 def _is_managed_ruleset_name(name: object) -> bool:
-    return isinstance(name, str) and name in {
-        _SETTINGS_RULESET_NAME,
-        _LEGACY_SETTINGS_RULESET_NAME,
-    }
+    return isinstance(name, str) and (
+        name == _SETTINGS_RULESET_NAME or name in _LEGACY_RULESET_NAMES
+    )
 
 
 def _api_headers() -> list[str]:
@@ -87,6 +91,8 @@ def _default_branch_ruleset_payload(
     include_code_quality: bool = True,
 ) -> str:
     rules: list[dict[str, object]] = [
+        {"type": "creation"},
+        {"type": "update"},
         {"type": "deletion"},
         {"type": "non_fast_forward"},
         {"type": "required_linear_history"},
@@ -632,6 +638,8 @@ def _compare_ruleset_against_baseline(
             rule_map[rule_type] = item
 
     for required_rule in (
+        "creation",
+        "update",
         "deletion",
         "non_fast_forward",
         "required_linear_history",
@@ -1041,6 +1049,27 @@ def check_repository_settings(
     _ensure_gh_auth(repo_dir, env)
     return _check_settings(
         repo_dir=repo_dir.resolve(), env=env, repo=repo, out=out, languages=languages
+    )
+
+
+def sync_repository_ruleset(
+    *,
+    repo_dir: Path,
+    repo: str,
+    languages: list[str] | None = None,
+    out: Callable[[str], None] = print,
+    warn: Callable[[str], None] | None = None,
+) -> None:
+    _ensure_tools()
+    env = _build_env(repo_dir)
+    _ensure_gh_auth(repo_dir, env)
+    _sync_default_branch_ruleset(
+        repo_dir=repo_dir.resolve(),
+        env=env,
+        repo=repo,
+        languages=languages,
+        out=out,
+        warn=warn,
     )
 
 

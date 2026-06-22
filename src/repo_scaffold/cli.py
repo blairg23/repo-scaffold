@@ -59,6 +59,7 @@ from .create_ops import (
     apply_repository_settings,
     check_repository_settings,
     create_repository,
+    sync_repository_ruleset,
 )
 from .delete_ops import DeleteSummary, delete_repositories
 from .generator import (
@@ -575,6 +576,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--languages",
         required=True,
         help="Comma-separated language list: go, gin, python, react",
+    )
+    apply_ci.add_argument(
+        "--repo",
+        help="GitHub repo (owner/repo) to sync the managed branch ruleset after writing CI files",
     )
 
     apply_dependabot = apply_sub.add_parser(
@@ -1793,6 +1798,17 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"{'Dry-run complete for' if ns.dry_run else 'CI applied to'}: {repo_dir}"
             )
+        if rc == 0 and not ns.dry_run and ns.repo:
+            try:
+                sync_repository_ruleset(
+                    repo_dir=repo_dir,
+                    repo=ns.repo,
+                    languages=list(languages),
+                    out=print,
+                    warn=lambda msg: print(msg, file=sys.stderr),
+                )
+            except RuntimeError as exc:
+                print(f"Warning: ruleset sync failed: {exc}", file=sys.stderr)
         return rc
 
     if ns.mode == "apply" and ns.apply_command == "dependabot":
