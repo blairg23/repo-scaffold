@@ -23,6 +23,16 @@ jobs:
 
             if (missing.length === 0) {
               core.info(`Issue #${number} body looks good.`);
+              // Remove needs-format if it was added by a previous failed check
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: number,
+                  name: "needs-format",
+                });
+                core.info(`Removed needs-format label from issue #${number}.`);
+              } catch (_) {}
               return;
             }
 
@@ -53,6 +63,5 @@ jobs:
                 ...missing.map(h => `- \`${h}\``),
                 "",
                 "Please update the body to match the [epic template](../.github/ISSUE_TEMPLATE/epic.md) or [ticket template](../.github/ISSUE_TEMPLATE/ticket.md).",
-                "Remove the `needs-format` label once the body is corrected.",
               ].join("\n"),
             });
