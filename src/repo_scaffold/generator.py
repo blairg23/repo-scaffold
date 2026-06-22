@@ -192,7 +192,7 @@ def _render_ci_yaml(languages: Iterable[str]) -> str:
   pre-commit-hooks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -215,7 +215,7 @@ def _render_ci_yaml(languages: Iterable[str]) -> str:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -241,7 +241,7 @@ def _render_ci_yaml(languages: Iterable[str]) -> str:
   gin:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -273,7 +273,7 @@ def _render_ci_yaml(languages: Iterable[str]) -> str:
       matrix:
         tox-env: [lint, type, coverage]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -285,7 +285,7 @@ def _render_ci_yaml(languages: Iterable[str]) -> str:
         run: tox -e ${{ matrix.tox-env }}
       - name: Upload coverage.xml artifact
         if: matrix.tox-env == 'coverage'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-xml
           path: coverage.xml
@@ -309,8 +309,8 @@ def _render_ci_yaml(languages: Iterable[str]) -> str:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: lts/*
           cache: npm
@@ -372,7 +372,7 @@ jobs:
     name: Analyze
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Check for source files
         id: check-src
         run: |
@@ -435,7 +435,7 @@ jobs:
         language:
 {matrix_lines}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Check for source files
         id: check-src
         run: |
