@@ -1362,4 +1362,114 @@ def test_project_views_graphql_error() -> None:
 def test_project_views_unexpected_response() -> None:
     with patch.object(github_api, "graphql", return_value=github_api._ok("not-json")):
         cp = github_api.project_views("PVT_x", "tok")
+
+
+# ---------------------------------------------------------------------------
+# pr_check_sop
+# ---------------------------------------------------------------------------
+
+
+def _make_thread(
+    thread_id: str,
+    is_resolved: bool,
+    num_comments: int,
+    first_has_thumbs_up: bool,
+) -> dict:
+    reactions = [{"content": "THUMBS_UP", "user": {"login": "me"}}] if first_has_thumbs_up else []
+    comments = [
+        {
+            "databaseId": 100,
+            "author": {"login": "reviewer"},
+            "reactions": {"nodes": reactions},
+        }
+    ]
+    for i in range(1, num_comments):
+        comments.append(
+            {
+                "databaseId": 100 + i,
+                "author": {"login": "author"},
+                "reactions": {"nodes": []},
+            }
+        )
+    return {
+        "id": thread_id,
+        "isResolved": is_resolved,
+        "comments": {"nodes": comments},
+    }
+
+
+def _gql_resp(threads: list) -> str:
+    return json.dumps(
+        {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {"nodes": threads}
+                }
+            }
+        }
+    )
+
+
+def test_pr_check_sop_all_compliant() -> None:
+    thread = _make_thread("PRRT_1", is_resolved=True, num_comments=2, first_has_thumbs_up=True)
+    with patch.object(github_api, "graphql", return_value=github_api._ok(_gql_resp([thread]))):
+        cp = github_api.pr_check_sop("acme", "repo", 1, "tok")
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert len(report) == 1
+    assert report[0]["compliant"] is True
+    assert report[0]["missing"] == []
+
+
+def test_pr_check_sop_missing_reply() -> None:
+    thread = _make_thread("PRRT_2", is_resolved=True, num_comments=1, first_has_thumbs_up=True)
+    with patch.object(github_api, "graphql", return_value=github_api._ok(_gql_resp([thread]))):
+        cp = github_api.pr_check_sop("acme", "repo", 2, "tok")
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert report[0]["compliant"] is False
+    assert "reply" in report[0]["missing"]
+
+
+def test_pr_check_sop_not_resolved() -> None:
+    thread = _make_thread("PRRT_3", is_resolved=False, num_comments=2, first_has_thumbs_up=True)
+    with patch.object(github_api, "graphql", return_value=github_api._ok(_gql_resp([thread]))):
+        cp = github_api.pr_check_sop("acme", "repo", 3, "tok")
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert report[0]["compliant"] is False
+    assert "resolved" in report[0]["missing"]
+
+
+def test_pr_check_sop_missing_reaction() -> None:
+    thread = _make_thread("PRRT_4", is_resolved=True, num_comments=2, first_has_thumbs_up=False)
+    with patch.object(github_api, "graphql", return_value=github_api._ok(_gql_resp([thread]))):
+        cp = github_api.pr_check_sop("acme", "repo", 4, "tok")
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert report[0]["compliant"] is False
+    assert "reaction(+1)" in report[0]["missing"]
+
+
+def test_pr_check_sop_all_missing() -> None:
+    thread = _make_thread("PRRT_5", is_resolved=False, num_comments=1, first_has_thumbs_up=False)
+    with patch.object(github_api, "graphql", return_value=github_api._ok(_gql_resp([thread]))):
+        cp = github_api.pr_check_sop("acme", "repo", 5, "tok")
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    missing = set(report[0]["missing"])
+    assert missing == {"reply", "resolved", "reaction(+1)"}
+
+
+def test_pr_check_sop_empty_pr() -> None:
+    with patch.object(github_api, "graphql", return_value=github_api._ok(_gql_resp([]))):
+        cp = github_api.pr_check_sop("acme", "repo", 6, "tok")
+    assert cp.returncode == 0
+    assert json.loads(cp.stdout) == []
+
+
+def test_pr_check_sop_api_error_propagates() -> None:
+    with patch.object(github_api, "graphql", return_value=github_api._err("GraphQL error")):
+        cp = github_api.pr_check_sop("acme", "repo", 7, "tok")
+    assert cp.returncode != 0
     assert cp.returncode != 0

@@ -70,6 +70,7 @@ poetry run repo-scaffold pr annotations --repo OWNER/REPO --pr-number N [--json]
 poetry run repo-scaffold pr rerun --repo OWNER/REPO --pr-number N [--failed-only]
 poetry run repo-scaffold pr list-comments --repo OWNER/REPO --pr-number N [--json]
 poetry run repo-scaffold pr review-threads --repo OWNER/REPO --pr-number N [--json]
+poetry run repo-scaffold pr check-sop --repo OWNER/REPO --pr-number N [--json]
 
 # Branches
 poetry run repo-scaffold branch create --repo OWNER/REPO --name BRANCH [--from main]
@@ -104,6 +105,54 @@ poetry run repo-scaffold apply templates --path . --name NAME --owner OWNER
 poetry run repo-scaffold create --repo OWNER/REPO --visibility public --path /path/to/code
 
 poetry run repo-scaffold check rules --repo OWNER/REPO
+```
+
+## PR Conventions
+
+### Title format (required on every PR)
+
+```
+type(scope): description (#issue-number)
+```
+
+- `type`: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`
+- `(#issue-number)` at the end is **required** -- always include the tracking issue number
+- Example: `feat(ruleset): add DRY sync command (#208)`
+- If you forgot the issue number: `poetry run repo-scaffold pr update --repo OWNER/REPO --pr-number N --title "type(scope): description (#N)"`
+
+### Review comment SOP (all three steps, in order, non-negotiable)
+
+For every review thread on a PR you are working on, complete ALL of the following:
+
+**Step 1 -- Push the fix.** Make the code change, commit, push. Note the commit hash.
+
+**Step 2 -- Reply to the thread** with the commit hash and a one-sentence explanation:
+```bash
+poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N \
+  --body "Fixed in <hash>. <one sentence what changed>." \
+  --reply-to COMMENT_ID
+```
+
+**Step 3 -- Resolve the thread:**
+```bash
+poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_ID
+```
+
+**Step 4 -- React +1 to the original reviewer comment:**
+```bash
+poetry run repo-scaffold pr react --repo OWNER/REPO --comment-id COMMENT_ID --reaction "+1"
+```
+
+A thread is **NOT done** until all four steps are complete (fix, reply, resolve, react).
+
+To get THREAD_ID and COMMENT_ID (databaseId of the first comment in each thread):
+```bash
+poetry run repo-scaffold pr review-threads --repo OWNER/REPO --pr-number N --json
+```
+
+To verify all threads are SOP-compliant before declaring work done:
+```bash
+poetry run repo-scaffold pr check-sop --repo OWNER/REPO --pr-number N
 ```
 
 ## Supported languages for init/apply ci
