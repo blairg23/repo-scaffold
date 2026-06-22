@@ -128,7 +128,7 @@ def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
     assert payload["conditions"]["ref_name"]["include"] == ["~DEFAULT_BRANCH"]
     rule_types = [r["type"] for r in payload["rules"]]
     assert "creation" in rule_types
-    assert "update" in rule_types
+    assert "update" not in rule_types
     assert "deletion" in rule_types
     pull_request_rule = next(
         rule for rule in payload["rules"] if rule["type"] == "pull_request"

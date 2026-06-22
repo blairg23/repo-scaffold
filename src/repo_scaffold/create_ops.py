@@ -92,7 +92,6 @@ def _default_branch_ruleset_payload(
 ) -> str:
     rules: list[dict[str, object]] = [
         {"type": "creation"},
-        {"type": "update"},
         {"type": "deletion"},
         {"type": "non_fast_forward"},
         {"type": "required_linear_history"},
@@ -639,7 +638,6 @@ def _compare_ruleset_against_baseline(
 
     for required_rule in (
         "creation",
-        "update",
         "deletion",
         "non_fast_forward",
         "required_linear_history",
