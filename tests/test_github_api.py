@@ -1375,6 +1375,7 @@ def _make_thread(
     is_resolved: bool,
     num_comments: int,
     first_has_thumbs_up: bool,
+    reply_author: str = "agent",
 ) -> dict:
     reactions = (
         [{"content": "THUMBS_UP", "user": {"login": "me"}}]
@@ -1385,6 +1386,7 @@ def _make_thread(
         {
             "databaseId": 100,
             "author": {"login": "reviewer"},
+            "body": "Please fix this.",
             "reactions": {"nodes": reactions},
         }
     ]
@@ -1392,7 +1394,8 @@ def _make_thread(
         comments.append(
             {
                 "databaseId": 100 + i,
-                "author": {"login": "author"},
+                "author": {"login": reply_author},
+                "body": f"Fixed in abc1234. Change #{i}.",
                 "reactions": {"nodes": []},
             }
         )
@@ -1403,9 +1406,23 @@ def _make_thread(
     }
 
 
-def _sop_resp(threads: list) -> str:
+def _sop_resp(
+    threads: list, has_next_page: bool = False, end_cursor: str | None = None
+) -> str:
     return json.dumps(
-        {"repository": {"pullRequest": {"reviewThreads": {"nodes": threads}}}}
+        {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "pageInfo": {
+                            "hasNextPage": has_next_page,
+                            "endCursor": end_cursor,
+                        },
+                        "nodes": threads,
+                    }
+                }
+            }
+        }
     )
 
 
@@ -1495,4 +1512,49 @@ def test_pr_check_sop_api_error_propagates() -> None:
     ):
         cp = github_api.pr_check_sop("acme", "repo", 7, "tok")
     assert cp.returncode != 0
-    assert cp.returncode != 0
+
+
+def test_pr_check_sop_reply_same_author_not_compliant() -> None:
+    thread = _make_thread(
+        "PRRT_8",
+        is_resolved=True,
+        num_comments=2,
+        first_has_thumbs_up=True,
+        reply_author="reviewer",  # same author as thread opener -- not a valid SOP reply
+    )
+    with patch.object(
+        github_api, "graphql", return_value=github_api._ok(_sop_resp([thread]))
+    ):
+        cp = github_api.pr_check_sop("acme", "repo", 8, "tok")
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert report[0]["has_reply"] is False
+    assert "reply" in report[0]["missing"]
+
+
+def test_pr_check_sop_paginates_all_threads() -> None:
+    page1_thread = _make_thread(
+        "PRRT_P1", is_resolved=True, num_comments=2, first_has_thumbs_up=True
+    )
+    page2_thread = _make_thread(
+        "PRRT_P2", is_resolved=False, num_comments=1, first_has_thumbs_up=False
+    )
+    responses = iter(
+        [
+            github_api._ok(
+                _sop_resp([page1_thread], has_next_page=True, end_cursor="cursor1")
+            ),
+            github_api._ok(_sop_resp([page2_thread], has_next_page=False)),
+        ]
+    )
+    with patch.object(
+        github_api, "graphql", side_effect=lambda *_a, **_kw: next(responses)
+    ):
+        cp = github_api.pr_check_sop("acme", "repo", 9, "tok")
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert len(report) == 2
+    assert report[0]["thread_id"] == "PRRT_P1"
+    assert report[0]["compliant"] is True
+    assert report[1]["thread_id"] == "PRRT_P2"
+    assert report[1]["compliant"] is False

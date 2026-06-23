@@ -3659,3 +3659,38 @@ def test_pr_check_sop_json_output(
     out = capsys.readouterr().out
     parsed = json.loads(out)
     assert parsed[0]["thread_id"] == "PRRT_3"
+
+
+def test_pr_check_sop_json_output_non_compliant_exits_nonzero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    report = [
+        {
+            "thread_id": "PRRT_4",
+            "first_comment_id": 400,
+            "is_resolved": False,
+            "has_reply": False,
+            "has_plus_one": False,
+            "compliant": False,
+            "missing": ["reply", "resolved", "reaction(+1)"],
+        }
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_check_sop",
+        lambda owner, repo, number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(report), stderr=""
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(["pr", "check-sop", "--repo", "acme/repo", "--pr-number", "4", "--json"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    parsed = json.loads(out)
+    assert parsed[0]["compliant"] is False

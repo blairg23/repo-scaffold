@@ -3022,13 +3022,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(cp.stderr.strip() or "Failed checking SOP.", file=sys.stderr)
                 return 1
             report = _json.loads(cp.stdout)
+            non_compliant = sum(1 for t in report if not t.get("compliant"))
             if ns.json_output:
                 print(_json.dumps(report, indent=2))
-                return 0
+                return 1 if non_compliant else 0
             if not report:
                 print("No review threads found.")
                 return 0
-            non_compliant = 0
             for t in report:
                 tid = t.get("thread_id", "?")
                 cid = t.get("first_comment_id", "?")
@@ -3037,7 +3037,6 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     missing = ", ".join(t.get("missing", []))
                     print(f"  FAIL  thread={tid}  comment={cid}  missing: {missing}")
-                    non_compliant += 1
             total = len(report)
             print(f"\n{total - non_compliant}/{total} threads SOP-compliant.")
             return 1 if non_compliant else 0
