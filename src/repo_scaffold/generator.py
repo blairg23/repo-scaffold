@@ -1429,52 +1429,6 @@ gh api \
   -H "Accept: application/vnd.github+json" \
   "/repos/$OWNER/$REPO/branches/$DEFAULT_BRANCH/protection" >/dev/null 2>&1 || true
 
-RULESET_NAME="repo-scaffold default-branch ruleset"
-RULESET_ID="$(gh api "/repos/$OWNER/$REPO/rulesets?includes_parents=false&targets=branch" --jq ".[] | select(.name == \\\"$RULESET_NAME\\\") | .id" 2>/dev/null | head -n 1)"
-
-echo "Syncing managed default-branch ruleset..."
-if [ -n "$RULESET_ID" ]; then
-  RULESET_METHOD="PUT"
-  RULESET_ENDPOINT="/repos/$OWNER/$REPO/rulesets/$RULESET_ID"
-else
-  RULESET_METHOD="POST"
-  RULESET_ENDPOINT="/repos/$OWNER/$REPO/rulesets"
-fi
-
-gh api \
-  --method "$RULESET_METHOD" \
-  -H "Accept: application/vnd.github+json" \
-  "$RULESET_ENDPOINT" \
-  --input - >/dev/null <<'JSON'
-{
-  "name": "repo-scaffold default-branch ruleset",
-  "target": "branch",
-  "enforcement": "active",
-  "conditions": {
-    "ref_name": {
-      "include": ["~DEFAULT_BRANCH"],
-      "exclude": []
-    }
-  },
-  "rules": [
-    {"type": "deletion"},
-    {"type": "non_fast_forward"},
-    {"type": "required_linear_history"},
-    {
-      "type": "pull_request",
-      "parameters": {
-        "allowed_merge_methods": ["squash"],
-        "dismiss_stale_reviews_on_push": false,
-        "require_code_owner_review": false,
-        "require_last_push_approval": false,
-        "required_approving_review_count": 0,
-        "required_review_thread_resolution": true
-      }
-    }
-  ]
-}
-JSON
-
 enable_optional_feature() {
   local label="$1"
   local endpoint="$2"

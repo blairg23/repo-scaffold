@@ -124,8 +124,12 @@ def test_load_json_invalid_raises_runtime_error() -> None:
 
 def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
     payload = json.loads(create_ops._default_branch_ruleset_payload())
-    assert payload["name"] == "repo-scaffold baseline branch rules"
+    assert payload["name"] == "default-branch (managed by repo-scaffold)"
     assert payload["conditions"]["ref_name"]["include"] == ["~DEFAULT_BRANCH"]
+    rule_types = [r["type"] for r in payload["rules"]]
+    assert "creation" in rule_types
+    assert "update" not in rule_types
+    assert "deletion" in rule_types
     pull_request_rule = next(
         rule for rule in payload["rules"] if rule["type"] == "pull_request"
     )
@@ -213,6 +217,32 @@ def test_apply_repository_settings_forwards_languages(
     assert captured["languages"] == ["react", "python"]
 
 
+def test_sync_repository_ruleset_calls_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(create_ops, "_ensure_tools", lambda: None)
+    monkeypatch.setattr(create_ops, "_build_env", lambda _repo_dir: {"GH_TOKEN": "x"})
+    monkeypatch.setattr(create_ops, "_ensure_gh_auth", lambda _repo_dir, _env: None)
+    monkeypatch.setattr(
+        create_ops,
+        "_sync_default_branch_ruleset",
+        lambda **kwargs: captured.update(kwargs),
+    )
+
+    create_ops.sync_repository_ruleset(
+        repo_dir=repo_dir,
+        repo="acme/repo",
+        languages=["python"],
+    )
+
+    assert captured["repo"] == "acme/repo"
+    assert captured["languages"] == ["python"]
+
+
 def test_branch_protection_endpoint_url_encodes_branch_name() -> None:
     assert (
         create_ops._branch_protection_endpoint(
@@ -224,6 +254,9 @@ def test_branch_protection_endpoint_url_encodes_branch_name() -> None:
 
 
 def test_is_managed_ruleset_name_accepts_new_and_legacy_names() -> None:
+    assert create_ops._is_managed_ruleset_name(
+        "default-branch (managed by repo-scaffold)"
+    )
     assert create_ops._is_managed_ruleset_name("repo-scaffold baseline branch rules")
     assert create_ops._is_managed_ruleset_name("repo-scaffold default-branch ruleset")
     assert create_ops._is_managed_ruleset_name("something else") is False
