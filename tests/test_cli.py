@@ -3564,3 +3564,192 @@ def test_workspace_configure_auth_cli_success(
     )
     rc = main(["workspace", "configure-auth"])
     assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# pr check-sop
+# ---------------------------------------------------------------------------
+
+
+def test_pr_check_sop_all_compliant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    report = [
+        {
+            "thread_id": "PRRT_1",
+            "first_comment_id": 100,
+            "is_resolved": True,
+            "has_reply": True,
+            "has_plus_one": True,
+            "compliant": True,
+            "missing": [],
+        }
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_check_sop",
+        lambda owner, repo, number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(report), stderr=""
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(["pr", "check-sop", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "OK" in out
+    assert "1/1 threads SOP-compliant" in out
+
+
+def test_pr_check_sop_non_compliant_exits_nonzero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    report = [
+        {
+            "thread_id": "PRRT_2",
+            "first_comment_id": 200,
+            "is_resolved": False,
+            "has_reply": False,
+            "has_plus_one": False,
+            "compliant": False,
+            "missing": ["reply", "resolved", "reaction(+1)"],
+        }
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_check_sop",
+        lambda owner, repo, number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(report), stderr=""
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(["pr", "check-sop", "--repo", "acme/repo", "--pr-number", "7"])
+    assert rc != 0
+    out = capsys.readouterr().out
+    assert "FAIL" in out
+    assert "reply" in out
+    assert "0/1 threads SOP-compliant" in out
+
+
+def test_pr_check_sop_no_threads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_check_sop",
+        lambda owner, repo, number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps([]), stderr=""
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(["pr", "check-sop", "--repo", "acme/repo", "--pr-number", "1"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "No review threads" in out
+
+
+def test_pr_check_sop_api_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_check_sop",
+        lambda owner, repo, number, token: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="GraphQL error"
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(["pr", "check-sop", "--repo", "acme/repo", "--pr-number", "9"])
+    assert rc != 0
+
+
+def test_pr_check_sop_json_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    report = [
+        {
+            "thread_id": "PRRT_3",
+            "first_comment_id": 300,
+            "is_resolved": True,
+            "has_reply": True,
+            "has_plus_one": True,
+            "compliant": True,
+            "missing": [],
+        }
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_check_sop",
+        lambda owner, repo, number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(report), stderr=""
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(["pr", "check-sop", "--repo", "acme/repo", "--pr-number", "3", "--json"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    parsed = json.loads(out)
+    assert parsed[0]["thread_id"] == "PRRT_3"
+
+
+def test_pr_check_sop_json_output_non_compliant_exits_nonzero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    report = [
+        {
+            "thread_id": "PRRT_4",
+            "first_comment_id": 400,
+            "is_resolved": False,
+            "has_reply": False,
+            "has_plus_one": False,
+            "compliant": False,
+            "missing": ["reply", "resolved", "reaction(+1)"],
+        }
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_check_sop",
+        lambda owner, repo, number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(report), stderr=""
+        ),
+    )
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+
+    rc = main(["pr", "check-sop", "--repo", "acme/repo", "--pr-number", "4", "--json"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    parsed = json.loads(out)
+    assert parsed[0]["compliant"] is False

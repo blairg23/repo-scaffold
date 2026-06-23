@@ -1519,11 +1519,25 @@ mutation($threadId: ID!) {
 """
 
 _GQL_PR_REVIEW_THREADS = """
-query($owner: String!, $repo: String!, $number: Int!) {
+query($owner: String!, $repo: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      reviewThreads(first: 50) {
-        nodes { id isResolved }
+      reviewThreads(first: 50, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          isResolved
+          comments(first: 50) {
+            nodes {
+              databaseId
+              author { login }
+              body
+              reactions(first: 30) {
+                nodes { content user { login } }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -1585,6 +1599,79 @@ def pr_resolve_thread(thread_id: str, token: str) -> subprocess.CompletedProcess
         return _ok(json.dumps(thread))
     except (json.JSONDecodeError, AttributeError):
         return _err("Unexpected response resolving thread.")
+
+
+def pr_check_sop(
+    owner: str, repo: str, number: int, token: str
+) -> subprocess.CompletedProcess[str]:
+    """Check each review thread on a PR for SOP compliance: replied, resolved, reacted +1."""
+    all_threads: list[Any] = []
+    cursor: str | None = None
+
+    while True:
+        variables: dict[str, object] = {
+            "owner": owner,
+            "repo": repo,
+            "number": number,
+            "after": cursor,
+        }
+        cp = graphql(_GQL_PR_REVIEW_THREADS, variables, token)
+        if cp.returncode != 0:
+            return cp
+        try:
+            data = json.loads(cp.stdout)
+            review_threads = (
+                data.get("repository", {})
+                .get("pullRequest", {})
+                .get("reviewThreads", {})
+            )
+            all_threads.extend(review_threads.get("nodes", []))
+            page_info = review_threads.get("pageInfo", {})
+        except (json.JSONDecodeError, AttributeError):
+            return _err("Unexpected response from GitHub.")
+
+        if not page_info.get("hasNextPage"):
+            break
+        cursor = page_info.get("endCursor")
+
+    report = []
+    for thread in all_threads:
+        thread_id = thread.get("id", "")
+        is_resolved = bool(thread.get("isResolved", False))
+        comments = thread.get("comments", {}).get("nodes", [])
+        first_comment = comments[0] if comments else {}
+        first_comment_id = first_comment.get("databaseId")
+        first_author = first_comment.get("author", {}).get("login", "")
+        reactions = first_comment.get("reactions", {}).get("nodes", [])
+        has_plus_one = any(r.get("content") == "THUMBS_UP" for r in reactions)
+
+        # A valid SOP reply must come from a different author than the thread opener.
+        # This distinguishes an agent fix-reply from the reviewer adding follow-up comments.
+        has_reply = any(
+            c.get("author", {}).get("login", "") != first_author for c in comments[1:]
+        )
+
+        missing = []
+        if not has_reply:
+            missing.append("reply")
+        if not is_resolved:
+            missing.append("resolved")
+        if not has_plus_one:
+            missing.append("reaction(+1)")
+
+        report.append(
+            {
+                "thread_id": thread_id,
+                "first_comment_id": first_comment_id,
+                "is_resolved": is_resolved,
+                "has_reply": has_reply,
+                "has_plus_one": has_plus_one,
+                "compliant": not missing,
+                "missing": missing,
+            }
+        )
+
+    return _ok(json.dumps(report))
 
 
 def pr_create(
