@@ -198,6 +198,65 @@ def test_apply_ci_dry_run_prints_plan_without_writes(
     )
 
 
+def test_apply_ci_with_repo_syncs_ruleset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    synced: list[dict] = []
+    monkeypatch.setattr(
+        "repo_scaffold.cli.sync_repository_ruleset",
+        lambda **kwargs: synced.append(kwargs),
+    )
+
+    rc = main(
+        [
+            "apply",
+            "ci",
+            "--path",
+            str(repo_dir),
+            "--languages",
+            "python",
+            "--repo",
+            "acme/repo",
+        ]
+    )
+
+    assert rc == 0
+    assert len(synced) == 1
+    assert synced[0]["repo"] == "acme/repo"
+    assert "python" in synced[0]["languages"]
+
+
+def test_apply_ci_with_repo_sync_failure_warns_but_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.sync_repository_ruleset",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("auth failed")),
+    )
+
+    rc = main(
+        [
+            "apply",
+            "ci",
+            "--path",
+            str(repo_dir),
+            "--languages",
+            "go",
+            "--repo",
+            "acme/repo",
+        ]
+    )
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "Warning: ruleset sync failed" in err
+    assert "auth failed" in err
+
+
 def test_apply_dependabot_infers_languages_from_repo(tmp_path: Path) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir(parents=True)
