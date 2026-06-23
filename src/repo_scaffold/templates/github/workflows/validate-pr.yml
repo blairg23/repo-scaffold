@@ -1,0 +1,67 @@
+name: Validate PR body format
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  validate-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Check PR body and flag if malformed
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || "";
+            const number = context.payload.pull_request.number;
+
+            const required = ["## 🧾 Title"];
+            const missing = required.filter(h => !body.includes(h));
+
+            if (missing.length === 0) {
+              core.info(`PR #${number} body looks good.`);
+              // Remove needs-format if it was added by a previous failed check
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: number,
+                  name: "needs-format",
+                });
+                core.info(`Removed needs-format label from PR #${number}.`);
+              } catch (_) {}
+              return;
+            }
+
+            // Create needs-format label if it does not exist yet (422 = already exists)
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: "needs-format",
+                color: "e11d48",
+                description: "Issue body does not match the required template format",
+              });
+            } catch (_) {}
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              labels: ["needs-format"],
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              body: [
+                "This PR is missing required body sections:",
+                ...missing.map(h => `- \`${h}\``),
+                "",
+                "Please update the PR description to match the [pull request template](../.github/pull_request_template.md).",
+              ].join("\n"),
+            });
