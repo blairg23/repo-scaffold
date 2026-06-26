@@ -604,6 +604,21 @@ indent_style = tab
 """
 
 
+def _render_gitattributes() -> str:
+    return """* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+*.txt text eol=lf
+"""
+
+
 def _render_makefile() -> str:
     return """.PHONY: format lint typecheck test build
 
@@ -3248,6 +3263,7 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
         ScaffoldFile(
             config.out_dir / ".gitignore", _render_gitignore(config.languages)
         ),
+        ScaffoldFile(config.out_dir / ".gitattributes", _render_gitattributes()),
         ScaffoldFile(config.out_dir / ".editorconfig", _render_editorconfig()),
         ScaffoldFile(config.out_dir / "Makefile", _render_makefile()),
         ScaffoldFile(

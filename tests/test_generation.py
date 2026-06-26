@@ -55,6 +55,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
         ".claude/settings.local.json",
         "LICENSE",
         ".gitignore",
+        ".gitattributes",
         ".editorconfig",
         "Makefile",
         "scripts/first_time_setup.sh",
