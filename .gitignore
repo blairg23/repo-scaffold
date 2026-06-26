@@ -25,6 +25,7 @@ htmlcov/
 
 # Local machine-only data (do not commit)
 local/
+artifacts/
 
 # Repo-scaffold local metadata (do not commit)
 .repo-scaffold/
