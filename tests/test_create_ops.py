@@ -159,12 +159,18 @@ def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
     assert copilot_code_review_rule["parameters"]["review_on_push"] is True
 
 
-def test_default_branch_ruleset_payload_without_languages_has_no_required_status_checks() -> (
+def test_default_branch_ruleset_payload_always_includes_required_status_checks() -> (
     None
 ):
     payload = json.loads(create_ops._default_branch_ruleset_payload())
-    types = [rule["type"] for rule in payload["rules"]]
-    assert "required_status_checks" not in types
+    rule = next(
+        (r for r in payload["rules"] if r["type"] == "required_status_checks"), None
+    )
+    assert rule is not None
+    contexts = [c["context"] for c in rule["parameters"]["required_status_checks"]]
+    assert "check-sop" in contexts
+    assert "validate-pr" in contexts
+    assert rule["parameters"]["strict_required_status_checks_policy"] is False
 
 
 def test_default_branch_ruleset_payload_with_react_adds_required_status_checks() -> (
@@ -178,7 +184,7 @@ def test_default_branch_ruleset_payload_with_react_adds_required_status_checks()
     )
     assert rule is not None
     contexts = [c["context"] for c in rule["parameters"]["required_status_checks"]]
-    assert contexts == ["react"]
+    assert contexts == ["check-sop", "validate-pr", "react"]
     assert rule["parameters"]["strict_required_status_checks_policy"] is False
 
 
@@ -188,7 +194,7 @@ def test_default_branch_ruleset_payload_deduplicates_go_gin_context() -> None:
     )
     rule = next(r for r in payload["rules"] if r["type"] == "required_status_checks")
     contexts = [c["context"] for c in rule["parameters"]["required_status_checks"]]
-    assert contexts == ["go"]
+    assert contexts == ["check-sop", "validate-pr", "go"]
 
 
 def test_apply_repository_settings_forwards_languages(
@@ -333,11 +339,140 @@ def test_compare_ruleset_against_baseline_reports_multiple_drifts() -> None:
     assert any("pull_request.allowed_merge_methods" in item for item in drifts)
     assert any("code_scanning.code_scanning_tools" in item for item in drifts)
     assert "missing rule: code_quality" in drifts
+    assert "missing rule: required_status_checks" in drifts
     assert (
         "copilot_code_review.review_draft_pull_requests expected True got False"
         in drifts
     )
     assert "copilot_code_review.review_on_push expected True got False" in drifts
+
+
+def _clean_baseline_ruleset(
+    extra_rules: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    rules: list[dict[str, object]] = [
+        {"type": "deletion"},
+        {"type": "non_fast_forward"},
+        {"type": "required_linear_history"},
+        {
+            "type": "pull_request",
+            "parameters": {
+                "allowed_merge_methods": ["squash"],
+                "dismiss_stale_reviews_on_push": False,
+                "require_code_owner_review": False,
+                "require_last_push_approval": False,
+                "required_approving_review_count": 0,
+                "required_review_thread_resolution": True,
+            },
+        },
+        {
+            "type": "code_scanning",
+            "parameters": {
+                "code_scanning_tools": [
+                    {
+                        "tool": "CodeQL",
+                        "alerts_threshold": "errors_and_warnings",
+                        "security_alerts_threshold": "high_or_higher",
+                    }
+                ]
+            },
+        },
+        {
+            "type": "code_quality",
+            "parameters": {
+                "code_quality_tools": [{"tool": "CodeQL", "severity": "notes"}]
+            },
+        },
+        {
+            "type": "copilot_code_review",
+            "parameters": {"review_draft_pull_requests": True, "review_on_push": True},
+        },
+    ]
+    if extra_rules:
+        rules.extend(extra_rules)
+    return {
+        "name": create_ops._SETTINGS_RULESET_NAME,
+        "target": "branch",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+        "rules": rules,
+    }
+
+
+def test_compare_ruleset_missing_required_status_checks_reports_drift() -> None:
+    drifts = create_ops._compare_ruleset_against_baseline(
+        [_clean_baseline_ruleset()],
+        default_branch="main",
+    )
+    assert "missing rule: required_status_checks" in drifts
+
+
+def test_compare_ruleset_required_status_checks_missing_always_required_contexts() -> (
+    None
+):
+    ruleset = _clean_baseline_ruleset(
+        extra_rules=[
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "required_status_checks": [{"context": "python"}],
+                    "strict_required_status_checks_policy": False,
+                },
+            }
+        ]
+    )
+    drifts = create_ops._compare_ruleset_against_baseline(
+        [ruleset], default_branch="main"
+    )
+    assert any("required_status_checks missing contexts" in d for d in drifts)
+    missing_drift = next(
+        d for d in drifts if "required_status_checks missing contexts" in d
+    )
+    assert "check-sop" in missing_drift
+    assert "validate-pr" in missing_drift
+
+
+def test_compare_ruleset_required_status_checks_all_contexts_present_no_drift() -> None:
+    ruleset = _clean_baseline_ruleset(
+        extra_rules=[
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "required_status_checks": [
+                        {"context": "check-sop"},
+                        {"context": "validate-pr"},
+                    ],
+                    "strict_required_status_checks_policy": False,
+                },
+            }
+        ]
+    )
+    drifts = create_ops._compare_ruleset_against_baseline(
+        [ruleset], default_branch="main"
+    )
+    assert not any("required_status_checks" in d for d in drifts)
+
+
+def test_compare_ruleset_always_required_plus_language_contexts() -> None:
+    ruleset = _clean_baseline_ruleset(
+        extra_rules=[
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "required_status_checks": [
+                        {"context": "check-sop"},
+                        {"context": "validate-pr"},
+                        {"context": "python"},
+                    ],
+                    "strict_required_status_checks_policy": False,
+                },
+            }
+        ]
+    )
+    drifts = create_ops._compare_ruleset_against_baseline(
+        [ruleset], default_branch="main", languages=["python"]
+    )
+    assert not any("required_status_checks" in d for d in drifts)
 
 
 def test_repo_metadata_and_ruleset_loaders_cover_success_and_error_paths(
@@ -1852,9 +1987,15 @@ def test_create_repository_covers_success_skip_and_error_paths(
     assert errors == ["bad repo"]
 
 
-def test_create_repository_rejects_invalid_visibility(tmp_path: Path) -> None:
+def test_create_repository_rejects_invalid_visibility(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
+
+    monkeypatch.setattr(create_ops, "_ensure_tools", lambda: None)
+    monkeypatch.setattr(create_ops, "_build_env", lambda _: {"GH_TOKEN": "x"})
+    monkeypatch.setattr(create_ops, "_ensure_gh_auth", lambda _d, _e: None)
 
     with pytest.raises(RuntimeError, match="Visibility must be one of"):
         create_ops.create_repository(
