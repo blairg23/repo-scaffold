@@ -512,17 +512,20 @@ Edit these source templates to customize generated `.github` markdown:
 
 `repo-scaffold` applies and generates `.github/pull_request_template.md`, which is used by GitHub when opening PRs.
 
-There is currently no dedicated `repo-scaffold` PR-create command. Use `gh` directly:
+Use `repo-scaffold pr create` for all PR operations -- no `gh` CLI required:
 
 ```bash
-gh pr create --base main --head <branch>
+poetry run repo-scaffold pr create \
+  --repo OWNER/REPO \
+  --title "type(scope): description (#NNN)" \
+  --head <branch> \
+  --base main \
+  --body-file .github/pull_request_template.md
 ```
 
-If you want to force the local template body explicitly:
+Fill in the template's sections (Description, Related Issues, Testing, etc.) before opening the PR -- `--body-file` preserves the required fields that `--body "..."` would otherwise drop.
 
-```bash
-gh pr create --base main --head <branch> --body-file .github/pull_request_template.md
-```
+See [AGENTS.md](AGENTS.md) for the full branch naming convention, PR title format, and review SOP.
 
 ## Generated structure (init)
 

@@ -175,8 +175,9 @@ The issue number at the end is required so the PR is immediately traceable to it
      --repo blairg23/repo-scaffold \
      --title "feat(scope): your change (#NNN)" \
      --head feat/NNN-short-description \
-     --body "..."
+     --body-file .github/pull_request_template.md
    ```
+   Fill in the template's sections before opening the PR -- `--body-file` preserves the required fields that `--body "..."` would drop.
 6. Add the issue to the project board (issues only -- not PRs):
    ```bash
    poetry run repo-scaffold project item-add \
@@ -184,6 +185,48 @@ The issue number at the end is required so the PR is immediately traceable to it
      --repo blairg23/repo-scaffold \
      --issue-number NNN
    ```
+7. Link the issue as a sub-issue of its parent epic:
+   ```bash
+   poetry run repo-scaffold issue add-sub-issue \
+     --repo blairg23/repo-scaffold \
+     --parent EPIC_NUMBER \
+     --child NNN
+   ```
+
+---
+
+## Review thread SOP
+
+For every review thread on a PR you are working on, complete ALL four steps in order:
+
+**Step 1 -- Push the fix.** Make the code change, commit, push. Note the commit hash.
+
+**Step 2 -- Reply to the thread** with the commit hash and a one-sentence explanation:
+```bash
+poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N \
+  --body "Fixed in <hash>. <one sentence what changed>." \
+  --reply-to COMMENT_ID
+```
+
+**Step 3 -- Resolve the thread:**
+```bash
+poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_ID
+```
+
+**Step 4 -- React +1 to the original reviewer comment:**
+```bash
+poetry run repo-scaffold pr react --repo OWNER/REPO --comment-id COMMENT_ID --reaction "+1"
+```
+
+A thread is **NOT done** until all four steps are complete. To get THREAD_ID and COMMENT_ID:
+```bash
+poetry run repo-scaffold pr review-threads --repo OWNER/REPO --pr-number N --json
+```
+
+Verify SOP compliance before declaring work done:
+```bash
+poetry run repo-scaffold pr check-sop --repo OWNER/REPO --pr-number N
+```
 
 ---
 
@@ -226,5 +269,7 @@ poetry run repo-scaffold issue label --repo OWNER/REPO --issue-number N --add ep
 poetry run repo-scaffold issue sync-hierarchy --repo OWNER/REPO --apply
 ```
 
-See [CLAUDE.md](CLAUDE.md) for the full portability and agnosticism requirements.
+This file is the canonical agent reference. All other docs (CLAUDE.md, docs/WORKFLOW.md, .claude/prompt.md) defer to it for branch naming, PR conventions, and review SOP.
+
+See [CLAUDE.md](CLAUDE.md) for portability and agnosticism requirements.
 See [examples/README.md](examples/README.md) for backlog and ticket format examples.
