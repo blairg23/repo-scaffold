@@ -3446,6 +3446,7 @@ def build_ci_files(
         build_scaffold_files(cfg),
         target_dir,
         [
+            ".gitattributes",
             ".github/workflows/ci.yml",
             "web/.husky/pre-commit",
         ],

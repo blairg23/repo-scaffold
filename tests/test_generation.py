@@ -359,6 +359,7 @@ def test_build_ci_files_includes_husky_for_react(tmp_path: Path) -> None:
 
     files = build_ci_files(tmp_path, languages=("react",))
     rel_paths = {f.path.relative_to(tmp_path).as_posix() for f in files}
+    assert ".gitattributes" in rel_paths
     assert "web/.husky/pre-commit" in rel_paths
 
 
