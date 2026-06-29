@@ -43,12 +43,14 @@ Each ticket must include:
 - Docs impact (what to update)
 
 ## PR standards
-- Branch name: `issue-<id>-<slug>`
-- PR title: `<type>: <short summary>` (example: `feat: add job schema loader`)
-- Link the issue using `Fixes #<id>`
+
+See [AGENTS.md](../AGENTS.md) for the canonical branch naming and PR title formats. Summary:
+
+- Branch name: `type/NNN-short-description` (e.g., `feat/221-align-docs`)
+- PR title: `type(scope): description (#NNN)` (e.g., `docs(agents): align agent docs (#221)`)
 - Required: tests updated/added
 - Required: screenshots for UI changes
-- Required: `make test` passes locally (or project equivalent)
+- Required: `poetry run tox -e precommit` passes locally
 
 ## Decision locks
 If a PR changes a locked decision, it must:
