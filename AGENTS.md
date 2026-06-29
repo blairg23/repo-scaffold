@@ -175,8 +175,9 @@ The issue number at the end is required so the PR is immediately traceable to it
      --repo blairg23/repo-scaffold \
      --title "feat(scope): your change (#NNN)" \
      --head feat/NNN-short-description \
-     --body "..."
+     --body-file .github/pull_request_template.md
    ```
+   Fill in the template's sections before opening the PR -- `--body-file` preserves the required fields that `--body "..."` would drop.
 6. Add the issue to the project board (issues only -- not PRs):
    ```bash
    poetry run repo-scaffold project item-add \

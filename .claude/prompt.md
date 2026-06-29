@@ -10,7 +10,7 @@ For each ticket:
 4. Run the full gate: `poetry run tox -e precommit`
 5. Commit with a subject + blank line + body (verbose, no one-liners)
 6. Push: `git push origin type/NNN-short-description`
-7. Open PR: `poetry run repo-scaffold pr create --repo OWNER/REPO --title "type(scope): description (#NNN)" --head type/NNN-short-description --body "..."`
+7. Open PR: `poetry run repo-scaffold pr create --repo OWNER/REPO --title "type(scope): description (#NNN)" --head type/NNN-short-description --body-file .github/pull_request_template.md`
 8. Add issue to project: `poetry run repo-scaffold project item-add --project-title "TITLE" --repo OWNER/REPO --issue-number N`
 9. Link issue to parent epic: `poetry run repo-scaffold issue add-sub-issue --repo OWNER/REPO --parent EPIC_N --child N`
 10. Keep the PR in your active queue until it is merged -- do not consider a ticket done at push.

@@ -520,8 +520,10 @@ poetry run repo-scaffold pr create \
   --title "type(scope): description (#NNN)" \
   --head <branch> \
   --base main \
-  --body "..."
+  --body-file .github/pull_request_template.md
 ```
+
+Fill in the template's sections (Description, Related Issues, Testing, etc.) before opening the PR -- `--body-file` preserves the required fields that `--body "..."` would otherwise drop.
 
 See [AGENTS.md](AGENTS.md) for the full branch naming convention, PR title format, and review SOP.
 
