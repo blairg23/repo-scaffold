@@ -25,13 +25,17 @@ class TestDeviceFlowAuth:
                 {"access_token": "gho_real"},
             ]
         )
-        monkeypatch.setattr(discover_ops, "_post_form", lambda url, data: next(responses))
+        monkeypatch.setattr(
+            discover_ops, "_post_form", lambda url, data: next(responses)
+        )
         monkeypatch.setattr(time, "sleep", lambda _: None)
         monkeypatch.setattr("builtins.print", lambda *a, **kw: None)
 
         assert discover_ops.device_flow_auth("client_id") == "gho_real"
 
-    def test_slow_down_increases_interval(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_slow_down_increases_interval(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         intervals: list[float] = []
         responses = iter(
             [
@@ -46,7 +50,9 @@ class TestDeviceFlowAuth:
                 {"access_token": "tok"},
             ]
         )
-        monkeypatch.setattr(discover_ops, "_post_form", lambda url, data: next(responses))
+        monkeypatch.setattr(
+            discover_ops, "_post_form", lambda url, data: next(responses)
+        )
         monkeypatch.setattr(time, "sleep", intervals.append)
         monkeypatch.setattr("builtins.print", lambda *a, **kw: None)
 
@@ -66,7 +72,9 @@ class TestDeviceFlowAuth:
                 {"error": "access_denied", "error_description": "User denied"},
             ]
         )
-        monkeypatch.setattr(discover_ops, "_post_form", lambda url, data: next(responses))
+        monkeypatch.setattr(
+            discover_ops, "_post_form", lambda url, data: next(responses)
+        )
         monkeypatch.setattr(time, "sleep", lambda _: None)
         monkeypatch.setattr("builtins.print", lambda *a, **kw: None)
 
@@ -135,7 +143,9 @@ class TestDiscoverRepos:
         monkeypatch.setattr(discover_ops, "_get_paginated", lambda token, url: repos)
         assert discover_ops.discover_repos("tok") == ["acme/alpha", "acme/beta"]
 
-    def test_uses_user_repos_url_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_uses_user_repos_url_by_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         captured: list[str] = []
         monkeypatch.setattr(
             discover_ops,
@@ -155,7 +165,9 @@ class TestDiscoverRepos:
         discover_ops.discover_repos("tok", org="acme")
         assert "/orgs/acme/repos" in captured[0]
 
-    def test_filters_items_without_full_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_filters_items_without_full_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         repos = [{"full_name": "ok/repo"}, {"id": 99}, {"full_name": ""}]
         monkeypatch.setattr(discover_ops, "_get_paginated", lambda token, url: repos)
         assert discover_ops.discover_repos("tok") == ["ok/repo"]
@@ -164,7 +176,9 @@ class TestDiscoverRepos:
 class TestParseNext:
     def test_extracts_next_url(self) -> None:
         link = '<https://api.github.com/user/repos?page=2>; rel="next", <https://api.github.com/user/repos?page=5>; rel="last"'
-        assert discover_ops._parse_next(link) == "https://api.github.com/user/repos?page=2"
+        assert (
+            discover_ops._parse_next(link) == "https://api.github.com/user/repos?page=2"
+        )
 
     def test_returns_empty_when_no_next(self) -> None:
         link = '<https://api.github.com/user/repos?page=1>; rel="prev"'

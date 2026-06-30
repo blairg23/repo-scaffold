@@ -80,7 +80,9 @@ from .registry_ops import (
     RegistryEntry,
     forget_repo,
     list_registry,
+    load_registry,
     register_repo,
+    save_registry,
 )
 from .project_ops import (
     ProjectItemsSummary,
@@ -2193,14 +2195,17 @@ def main(argv: list[str] | None = None) -> int:
             print("\nRun with --register to add them to the local registry.")
             return 0
         if not ns.yes:
-            answer = input(
-                f"Register all {len(new_repos)} repos? [y/N] "
-            ).strip().lower()
+            answer = (
+                input(f"Register all {len(new_repos)} repos? [y/N] ").strip().lower()
+            )
             if answer != "y":
                 print("Aborted.")
                 return 0
+        reg = load_registry()
         for r in new_repos:
-            register_repo(r, "")
+            reg[r] = RegistryEntry(repo=r, local_path="", notes="discovered")
+        save_registry(reg)
+        for r in new_repos:
             print(f"Registered {r}")
         return 0
 

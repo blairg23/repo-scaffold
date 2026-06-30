@@ -66,8 +66,11 @@ def device_flow_auth(client_id: str) -> str:
     )
     device_code = str(resp["device_code"])
     user_code = str(resp["user_code"])
-    verification_uri = str(resp.get("verification_uri", "https://github.com/login/device"))
-    interval = int(resp.get("interval", 5))
+    verification_uri = str(
+        resp.get("verification_uri", "https://github.com/login/device")
+    )
+    _raw_interval = resp.get("interval", 5)
+    interval = int(_raw_interval) if isinstance(_raw_interval, int) else 5
 
     print(f"\nOpen: {verification_uri}")
     print(f"Enter code: {user_code}\n")
@@ -113,9 +116,7 @@ def prompt_for_token(client_id: str | None) -> str:
         " (set GITHUB_CLIENT_ID in .env to enable browser-based auth): "
     ).strip()
     if not token:
-        raise RuntimeError(
-            "No token provided. Set GH_TOKEN in .env and retry."
-        )
+        raise RuntimeError("No token provided. Set GH_TOKEN in .env and retry.")
     return token
 
 
