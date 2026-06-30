@@ -2037,9 +2037,16 @@ def test_ensure_dependabot_version_updates_skips_when_present(
     out_lines: list[str] = []
     api_calls: list[str] = []
 
-    def _fake_api(*, method: str, endpoint: str, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def _fake_api(
+        *,
+        method: str,
+        endpoint: str,
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
         api_calls.append(f"{method} {endpoint}")
-        return subprocess.CompletedProcess(args=[], returncode=0, stdout="{}", stderr="")
+        return subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="{}", stderr=""
+        )
 
     monkeypatch.setattr(create_ops, "_api", _fake_api)
     create_ops._ensure_dependabot_version_updates(
@@ -2062,11 +2069,20 @@ def test_ensure_dependabot_version_updates_creates_when_missing(
     out_lines: list[str] = []
     call_count = {"n": 0}
 
-    def _fake_api(*, method: str, endpoint: str, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def _fake_api(
+        *,
+        method: str,
+        endpoint: str,
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
         call_count["n"] += 1
         if method == "GET":
-            return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="HTTP 404")
-        return subprocess.CompletedProcess(args=[], returncode=0, stdout="{}", stderr="")
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="HTTP 404"
+            )
+        return subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="{}", stderr=""
+        )
 
     monkeypatch.setattr(create_ops, "_api", _fake_api)
     create_ops._ensure_dependabot_version_updates(

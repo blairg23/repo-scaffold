@@ -513,7 +513,9 @@ def _ensure_dependabot_version_updates(
     if create_cp.returncode == 0:
         out(f"Created {_DEPENDABOT_YML_PATH}.")
         return
-    feature_err = create_cp.stderr.strip() or create_cp.stdout.strip() or "unknown error"
+    feature_err = (
+        create_cp.stderr.strip() or create_cp.stdout.strip() or "unknown error"
+    )
     warn(f"Warning: could not create {_DEPENDABOT_YML_PATH}: {feature_err}")
 
 
