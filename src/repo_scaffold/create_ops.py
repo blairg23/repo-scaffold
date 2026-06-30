@@ -50,6 +50,15 @@ _BEST_EFFORT_SECURITY_FEATURES: tuple[tuple[str, str], ...] = (
     ("Dependabot security updates", "/repos/{repo}/automated-security-fixes"),
 )
 
+_DEPENDABOT_YML_PATH = ".github/dependabot.yml"
+
+_LANG_ECOSYSTEM_MAP: dict[str, str] = {
+    "python": "pip",
+    "go": "gomod",
+    "gin": "gomod",
+    "react": "npm",
+}
+
 
 def _is_managed_ruleset_name(name: object) -> bool:
     return isinstance(name, str) and (
@@ -450,6 +459,64 @@ def _sync_default_branch_ruleset(
         if cp2.returncode != 0:
             raise RuntimeError(cp2.stderr.strip() or "Failed creating managed ruleset.")
     out(f"Created ruleset '{_SETTINGS_RULESET_NAME}'.")
+
+
+def _minimal_dependabot_yml(languages: list[str] | None) -> str:
+    ecosystems: dict[str, str] = {"github-actions": "/"}
+    for lang in languages or []:
+        eco = _LANG_ECOSYSTEM_MAP.get(lang)
+        if eco and eco not in ecosystems:
+            ecosystems[eco] = "/"
+    entries = []
+    for eco, directory in ecosystems.items():
+        entries += [
+            f'  - package-ecosystem: "{eco}"',
+            f'    directory: "{directory}"',
+            "    schedule:",
+            '      interval: "weekly"',
+        ]
+    return "version: 2\nupdates:\n" + "\n".join(entries) + "\n"
+
+
+def _ensure_dependabot_version_updates(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    languages: list[str] | None,
+    out: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> None:
+    check_cp = _api(
+        repo_dir=repo_dir,
+        env=env,
+        method="GET",
+        endpoint=f"/repos/{repo}/contents/{_DEPENDABOT_YML_PATH}",
+    )
+    if check_cp.returncode == 0:
+        out("Dependabot version updates already configured.")
+        return
+    content = _minimal_dependabot_yml(languages)
+    encoded = base64.b64encode(content.encode()).decode()
+    create_cp = _api(
+        repo_dir=repo_dir,
+        env=env,
+        method="PUT",
+        endpoint=f"/repos/{repo}/contents/{_DEPENDABOT_YML_PATH}",
+        stdin_text=json.dumps(
+            {
+                "message": "chore: add dependabot version updates config",
+                "content": encoded,
+            }
+        ),
+    )
+    if create_cp.returncode == 0:
+        out(f"Created {_DEPENDABOT_YML_PATH}.")
+        return
+    feature_err = (
+        create_cp.stderr.strip() or create_cp.stdout.strip() or "unknown error"
+    )
+    warn(f"Warning: could not create {_DEPENDABOT_YML_PATH}: {feature_err}")
 
 
 def _enable_security_and_analysis_feature(
@@ -1134,6 +1201,7 @@ def _apply_settings(
     out(f"{'[dry-run] ' if dry_run else ''}apply repository settings: {repo}")
     if dry_run:
         out("[dry-run] sync repository merge settings")
+        out(f"[dry-run] create {_DEPENDABOT_YML_PATH} if not present")
         out(
             "[dry-run] sync managed default-branch ruleset "
             "(pull request required, 0 approvals, squash-only, no force-push, no delete, "
@@ -1164,6 +1232,15 @@ def _apply_settings(
             patch_cp.stderr.strip() or "Failed applying repository merge settings."
         )
     out("Applied repository merge settings.")
+
+    _ensure_dependabot_version_updates(
+        repo_dir=repo_dir,
+        env=env,
+        repo=repo,
+        languages=languages,
+        out=out,
+        warn=warn,
+    )
 
     _sync_default_branch_ruleset(
         repo_dir=repo_dir, env=env, repo=repo, out=out, warn=warn, languages=languages
@@ -1357,6 +1434,22 @@ def _check_settings(
     else:
         skipped += 1
         out("SKIP  private vulnerability reporting (repo is not public)")
+
+    # Dependabot malware alerts have no separate REST endpoint -- they are bundled
+    # with Dependabot alerts (checked above via /vulnerability-alerts).
+    enabled, _ = _optional_endpoint_feature_enabled(
+        repo_dir=repo_dir,
+        env=env,
+        endpoint=f"/repos/{repo}/contents/{_DEPENDABOT_YML_PATH}",
+    )
+    if enabled:
+        passed += 1
+        out("PASS  dependabot version updates")
+    else:
+        failed += 1
+        drift = f"dependabot version updates: {_DEPENDABOT_YML_PATH} not configured"
+        drifts.append(drift)
+        out(f"DRIFT dependabot version updates: {_DEPENDABOT_YML_PATH} not configured")
 
     return SettingsCheckSummary(
         repo=repo,
