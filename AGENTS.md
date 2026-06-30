@@ -195,6 +195,27 @@ The issue number at the end is required so the PR is immediately traceable to it
 
 ---
 
+## Reading all PR feedback
+
+GitHub stores PR feedback across three separate endpoints. Always check all three before
+concluding there is no feedback -- each covers a different type:
+
+```bash
+# 1. Inline review threads (line-level comments, may be unresolved)
+poetry run repo-scaffold pr review-threads --repo OWNER/REPO --pr-number N --json
+
+# 2. General conversation comments (posted in the PR timeline)
+poetry run repo-scaffold pr list-comments --repo OWNER/REPO --pr-number N --json
+
+# 3. Submitted PR reviews (approve / request-changes / comment with a body)
+poetry run repo-scaffold pr reviews --repo OWNER/REPO --pr-number N --json
+```
+
+`pr check-sop` only covers inline review threads (endpoint 1). Endpoints 2 and 3 must
+be checked manually.
+
+---
+
 ## Review thread SOP
 
 For every review thread on a PR you are working on, complete ALL four steps in order:
