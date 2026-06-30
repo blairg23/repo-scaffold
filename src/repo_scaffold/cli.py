@@ -75,11 +75,19 @@ from .generator import (
 )
 from .overwrite_policy import ApplySummary, OverwritePolicy, apply_files
 from .project_config import resolve_languages
+from .discover_ops import (
+    discover_repos,
+    parse_repo_selection,
+    prompt_for_token,
+    upsert_env_var,
+)
 from .registry_ops import (
     RegistryEntry,
     forget_repo,
     list_registry,
+    load_registry,
     register_repo,
+    save_registry,
 )
 from .project_ops import (
     ProjectItemsSummary,
@@ -744,6 +752,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     repo_forget_cmd.add_argument(
         "--repo", required=True, help="GitHub repo (owner/repo)"
+    )
+    repo_discover_cmd = repo_sub.add_parser(
+        "discover",
+        help="Discover GitHub repos visible to your token and optionally register them",
+    )
+    repo_discover_cmd.add_argument(
+        "--org",
+        help="Scope discovery to a specific GitHub org/user (default: authenticated user)",
+    )
+    repo_discover_cmd.add_argument(
+        "--register",
+        action="store_true",
+        help="Bulk-register all discovered repos into the local registry",
+    )
+    repo_discover_cmd.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip confirmation before registering",
     )
 
     sync_cmd = subparsers.add_parser(
@@ -2144,6 +2170,53 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Error: repo not registered: {ns.repo}", file=sys.stderr)
             return 2
         print(f"Removed {ns.repo} from the registry.")
+        return 0
+
+    if ns.mode == "repo" and ns.repo_command == "discover":
+        token = token_from_repo(Path.cwd())
+        if not token:
+            client_id = os.environ.get("GITHUB_CLIENT_ID")
+            try:
+                token = prompt_for_token(client_id)
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+            upsert_env_var("GH_TOKEN", token, Path.cwd() / ".env")
+            print("Token saved to .env")
+        try:
+            all_repos = discover_repos(token, org=getattr(ns, "org", None))
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        registered = set(load_registry().keys())
+        new_repos = [r for r in all_repos if r not in registered]
+        if not new_repos:
+            print("No new repos found (all visible repos are already registered).")
+            return 0
+        print(f"Found {len(new_repos)} repo(s) not yet registered:")
+        for i, r in enumerate(new_repos, 1):
+            print(f"  [{i:>3}] {r}")
+        if not ns.register:
+            print("\nRun with --register to choose which to add to the local registry.")
+            return 0
+        if ns.yes:
+            selected = list(new_repos)
+        else:
+            print()
+            answer = input(
+                'Enter numbers to register (e.g. 1,3,5-8), "all", or press Enter to skip: '
+            ).strip()
+            indices = parse_repo_selection(answer, len(new_repos))
+            if not indices:
+                print("Nothing registered.")
+                return 0
+            selected = [new_repos[i] for i in indices]
+        reg = load_registry()
+        for r in selected:
+            reg[r] = RegistryEntry(repo=r, local_path="", notes="discovered")
+        save_registry(reg)
+        for r in selected:
+            print(f"Registered {r}")
         return 0
 
     if ns.mode == "sync" and ns.sync_command == "rules":
