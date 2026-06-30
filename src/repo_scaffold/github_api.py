@@ -1556,7 +1556,24 @@ def pr_view(repo: str, number: int, token: str) -> subprocess.CompletedProcess[s
 def pr_list_comments(
     repo: str, number: int, token: str
 ) -> subprocess.CompletedProcess[str]:
-    return rest_paginated(f"/repos/{repo}/pulls/{number}/comments?per_page=100", token)
+    """Return all PR comments: inline review comments and general conversation comments.
+
+    Fetches both the pull request review comments endpoint and the issue comments
+    endpoint, merges, and sorts by created_at.
+    """
+    review_cp = rest_paginated(
+        f"/repos/{repo}/pulls/{number}/comments?per_page=100", token
+    )
+    if review_cp.returncode != 0:
+        return review_cp
+    issue_cp = rest_paginated(
+        f"/repos/{repo}/issues/{number}/comments?per_page=100", token
+    )
+    if issue_cp.returncode != 0:
+        return issue_cp
+    all_comments = json.loads(review_cp.stdout) + json.loads(issue_cp.stdout)
+    all_comments.sort(key=lambda c: c.get("created_at", ""))
+    return _ok(json.dumps(all_comments))
 
 
 def pr_comment(

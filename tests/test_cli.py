@@ -2634,6 +2634,122 @@ def test_pr_annotations_json(tmp_path, monkeypatch, capsys) -> None:
     assert data[0]["path"] == "x.ts"
 
 
+def test_pr_list_comments_inline_review(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    comments = [
+        {
+            "id": 1,
+            "user": {"login": "alice"},
+            "body": "nit: rename this",
+            "path": "src/foo.py",
+            "line": 42,
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_list_comments",
+        lambda repo, pr_number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(comments), stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "list-comments", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "alice" in out
+    assert "src/foo.py:42" in out
+    assert "nit: rename this" in out
+
+
+def test_pr_list_comments_general_conversation(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    comments = [
+        {
+            "id": 2,
+            "user": {"login": "bob"},
+            "body": "lgtm overall",
+            "created_at": "2026-01-02T00:00:00Z",
+        }
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_list_comments",
+        lambda repo, pr_number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(comments), stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "list-comments", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "bob" in out
+    assert "2026-01-02" in out
+    assert "lgtm overall" in out
+
+
+def test_pr_list_comments_json(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    comments = [{"id": 1, "user": {"login": "alice"}, "body": "nit"}]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_list_comments",
+        lambda repo, pr_number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(comments), stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(
+        ["pr", "list-comments", "--repo", "acme/repo", "--pr-number", "42", "--json"]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert json.loads(out)[0]["user"]["login"] == "alice"
+
+
+def test_pr_list_comments_empty(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_list_comments",
+        lambda repo, pr_number, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps([]), stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "list-comments", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc == 0
+    assert "No comments found" in capsys.readouterr().out
+
+
+def test_pr_list_comments_error(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_list_comments",
+        lambda repo, pr_number, token: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="API error"
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "list-comments", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc != 0
+
+
 def test_pr_rerun(tmp_path, monkeypatch, capsys) -> None:
     import json
     import subprocess

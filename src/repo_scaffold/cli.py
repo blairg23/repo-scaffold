@@ -1421,7 +1421,8 @@ def build_parser() -> argparse.ArgumentParser:
     pr_reviews_cmd.add_argument("--json", action="store_true", dest="json_output")
 
     pr_list_comments_cmd = pr_sub.add_parser(
-        "list-comments", help="List all inline review comments on a PR"
+        "list-comments",
+        help="List all comments on a PR (inline review and general conversation)",
     )
     pr_list_comments_cmd.add_argument("--repo", required=True)
     pr_list_comments_cmd.add_argument(
@@ -3085,7 +3086,7 @@ def main(argv: list[str] | None = None) -> int:
             cp = pr_list_comments(target_repo, ns.pr_number, token)
             if cp.returncode != 0:
                 print(
-                    cp.stderr.strip() or "Failed fetching review comments.",
+                    cp.stderr.strip() or "Failed fetching PR comments.",
                     file=sys.stderr,
                 )
                 return 1
@@ -3094,13 +3095,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(_json.dumps(comments, indent=2))
             else:
                 if not comments:
-                    print("No inline review comments found.")
+                    print("No comments found.")
                 for c in comments:
                     author = c.get("user", {}).get("login", "?")
-                    path = c.get("path", "")
-                    line = c.get("line") or c.get("original_line") or "?"
                     body = (c.get("body") or "").strip()
-                    print(f"{author} on {path}:{line}")
+                    path = c.get("path", "")
+                    if path:
+                        line = c.get("line") or c.get("original_line") or "?"
+                        print(f"{author} on {path}:{line}")
+                    else:
+                        created = (c.get("created_at") or "")[:10]
+                        print(f"{author} ({created})")
                     print(f"  {body[:200]}")
             return 0
 
