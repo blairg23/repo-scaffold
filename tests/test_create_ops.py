@@ -1444,12 +1444,13 @@ def test_check_settings_reports_clean_public_repo(
     )
 
     assert summary.repo == "acme/repo"
-    assert summary.passed == 8
+    assert summary.passed == 9
     assert summary.failed == 0
     assert summary.skipped == 0
     assert summary.drifts == ()
     assert "check repository settings: acme/repo" in lines
     assert "PASS  managed default-branch ruleset" in lines
+    assert "PASS  dependabot version updates" in lines
 
 
 def test_check_settings_fetches_ruleset_details_and_accepts_expanded_default_branch(
@@ -1501,8 +1502,9 @@ def test_check_settings_fetches_ruleset_details_and_accepts_expanded_default_bra
     )
 
     assert summary.failed == 0
-    assert summary.passed == 8
+    assert summary.passed == 9
     assert "PASS  managed default-branch ruleset" in lines
+    assert "PASS  dependabot version updates" in lines
 
 
 def test_check_settings_reports_drift_and_skips_private_repo_only_feature(
@@ -1544,7 +1546,7 @@ def test_check_settings_reports_drift_and_skips_private_repo_only_feature(
         out=lines.append,
     )
 
-    assert summary.failed == 7
+    assert summary.failed == 8
     assert summary.passed == 0
     assert summary.skipped == 1
     assert any("merge settings" in drift for drift in summary.drifts)
@@ -2009,3 +2011,72 @@ def test_create_repository_rejects_invalid_visibility(
             out=lambda _line: None,
             err=lambda _line: None,
         )
+
+
+def test_minimal_dependabot_yml_always_includes_github_actions() -> None:
+    yml = create_ops._minimal_dependabot_yml(None)
+    assert "version: 2" in yml
+    assert 'package-ecosystem: "github-actions"' in yml
+
+
+def test_minimal_dependabot_yml_adds_language_ecosystems() -> None:
+    yml = create_ops._minimal_dependabot_yml(["python", "react"])
+    assert 'package-ecosystem: "pip"' in yml
+    assert 'package-ecosystem: "npm"' in yml
+    assert 'package-ecosystem: "github-actions"' in yml
+
+
+def test_minimal_dependabot_yml_deduplicates_go_gin() -> None:
+    yml = create_ops._minimal_dependabot_yml(["go", "gin"])
+    assert yml.count('package-ecosystem: "gomod"') == 1
+
+
+def test_ensure_dependabot_version_updates_skips_when_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out_lines: list[str] = []
+    api_calls: list[str] = []
+
+    def _fake_api(*, method: str, endpoint: str, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        api_calls.append(f"{method} {endpoint}")
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(create_ops, "_api", _fake_api)
+    create_ops._ensure_dependabot_version_updates(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        languages=["python"],
+        out=out_lines.append,
+        warn=lambda _: None,
+    )
+
+    assert any("GET" in c for c in api_calls)
+    assert len([c for c in api_calls if "PUT" in c]) == 0
+    assert any("already configured" in line for line in out_lines)
+
+
+def test_ensure_dependabot_version_updates_creates_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out_lines: list[str] = []
+    call_count = {"n": 0}
+
+    def _fake_api(*, method: str, endpoint: str, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        call_count["n"] += 1
+        if method == "GET":
+            return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="HTTP 404")
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(create_ops, "_api", _fake_api)
+    create_ops._ensure_dependabot_version_updates(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        languages=["python"],
+        out=out_lines.append,
+        warn=lambda _: None,
+    )
+
+    assert call_count["n"] == 2
+    assert any("Created" in line for line in out_lines)
