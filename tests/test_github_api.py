@@ -1048,6 +1048,73 @@ def test_pr_reviews_api_error_propagates() -> None:
 
 
 # ---------------------------------------------------------------------------
+# pr_list_comments -- merges inline review comments and general conversation comments
+# ---------------------------------------------------------------------------
+
+
+def test_pr_list_comments_merges_both_endpoints() -> None:
+    review_comments = [
+        {"id": 1, "user": {"login": "alice"}, "body": "nit", "path": "foo.py", "created_at": "2026-01-01T00:00:00Z"},
+    ]
+    issue_comments = [
+        {"id": 2, "user": {"login": "bob"}, "body": "lgtm", "created_at": "2026-01-02T00:00:00Z"},
+    ]
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[
+            _mock_resp(200, json.dumps(review_comments)),
+            _mock_resp(200, json.dumps(issue_comments)),
+        ],
+    ):
+        cp = github_api.pr_list_comments("acme/repo", 42, "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert len(result) == 2
+    logins = {c["user"]["login"] for c in result}
+    assert logins == {"alice", "bob"}
+
+
+def test_pr_list_comments_sorted_by_created_at() -> None:
+    review_comments = [
+        {"id": 1, "user": {"login": "alice"}, "body": "later", "path": "foo.py", "created_at": "2026-01-03T00:00:00Z"},
+    ]
+    issue_comments = [
+        {"id": 2, "user": {"login": "bob"}, "body": "earlier", "created_at": "2026-01-01T00:00:00Z"},
+    ]
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[
+            _mock_resp(200, json.dumps(review_comments)),
+            _mock_resp(200, json.dumps(issue_comments)),
+        ],
+    ):
+        cp = github_api.pr_list_comments("acme/repo", 42, "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert result[0]["user"]["login"] == "bob"
+    assert result[1]["user"]["login"] == "alice"
+
+
+def test_pr_list_comments_review_endpoint_error_propagates() -> None:
+    with patch("urllib.request.urlopen", side_effect=_http_error(404, "Not Found")):
+        cp = github_api.pr_list_comments("acme/repo", 42, "tok")
+    assert cp.returncode != 0
+
+
+def test_pr_list_comments_issue_endpoint_error_propagates() -> None:
+    review_comments: list[dict[str, object]] = []
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[
+            _mock_resp(200, json.dumps(review_comments)),
+            _http_error(403, "Forbidden"),
+        ],
+    ):
+        cp = github_api.pr_list_comments("acme/repo", 42, "tok")
+    assert cp.returncode != 0
+
+
+# ---------------------------------------------------------------------------
 # issue_label -- auto-remove needs-triage when epic:slug is added
 # ---------------------------------------------------------------------------
 
