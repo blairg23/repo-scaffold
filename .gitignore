@@ -45,3 +45,6 @@ artifacts/
 
 # Managed worktree workspace
 repos/
+
+# Docker personal override (contains local paths -- never commit)
+docker-compose.override.yml

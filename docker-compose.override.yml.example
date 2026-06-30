@@ -1,0 +1,13 @@
+# Copy this file to docker-compose.override.yml (which is gitignored).
+# It bind-mounts your local .env (containing GH_TOKEN) into the container at runtime.
+# Never commit docker-compose.override.yml -- it is personal and machine-specific.
+#
+# Usage:
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   docker compose up -d
+#   docker exec -it repo-scaffold-dev poetry run repo-scaffold <command>
+
+services:
+  dev:
+    volumes:
+      - ./.env:/workspace/.env:ro

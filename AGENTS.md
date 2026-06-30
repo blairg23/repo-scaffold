@@ -26,6 +26,42 @@ cp .env.example .env
 
 ---
 
+## Docker dev environment
+
+A Docker dev container provides a clean Linux environment for all tool execution,
+avoiding Windows/WSL venv conflicts. Credentials are bind-mounted at runtime -- never
+baked into the image.
+
+**Setup (one time):**
+```bash
+cp docker-compose.override.yml.example docker-compose.override.yml
+# docker-compose.override.yml is gitignored; edit if needed
+docker compose build
+```
+
+**Start the container:**
+```bash
+docker compose up -d
+```
+
+**Run commands inside the container:**
+```bash
+docker exec -it repo-scaffold-dev poetry run repo-scaffold <command>
+docker exec -it repo-scaffold-dev poetry run tox -e precommit
+docker exec -it repo-scaffold-dev poetry run pytest
+```
+
+**Stop the container:**
+```bash
+docker compose down
+```
+
+Repo worktrees are stored in the named volume `repo-worktrees` at `/workspace/repos`
+inside the container, persisting across restarts. The `.env` file is bind-mounted
+read-only from the project root.
+
+---
+
 ## Commands
 
 ### Issues
