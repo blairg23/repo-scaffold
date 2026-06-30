@@ -1306,9 +1306,7 @@ def test_apply_settings_dry_run_previews_ruleset_and_security_defaults() -> None
     assert "0 approvals" in "\n".join(lines)
     assert "[dry-run] enable secret scanning" in lines
     assert "[dry-run] enable secret scanning push protection" in lines
-    assert (
-        f"[dry-run] create {create_ops._DEPENDABOT_YML_PATH} if not present" in lines
-    )
+    assert f"[dry-run] create {create_ops._DEPENDABOT_YML_PATH} if not present" in lines
 
 
 def test_apply_settings_uses_ruleset_and_public_security_defaults(
