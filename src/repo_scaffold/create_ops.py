@@ -1201,6 +1201,7 @@ def _apply_settings(
     out(f"{'[dry-run] ' if dry_run else ''}apply repository settings: {repo}")
     if dry_run:
         out("[dry-run] sync repository merge settings")
+        out(f"[dry-run] create {_DEPENDABOT_YML_PATH} if not present")
         out(
             "[dry-run] sync managed default-branch ruleset "
             "(pull request required, 0 approvals, squash-only, no force-push, no delete, "
@@ -1211,7 +1212,6 @@ def _apply_settings(
         out("[dry-run] enable secret scanning push protection")
         for feature_name, _ in _BEST_EFFORT_SECURITY_FEATURES:
             out(f"[dry-run] enable {feature_name.lower()}")
-        out(f"[dry-run] create {_DEPENDABOT_YML_PATH} if not present")
         out("[dry-run] enable code scanning default setup")
         out("[dry-run] enable private vulnerability reporting when supported")
         return
@@ -1232,6 +1232,15 @@ def _apply_settings(
             patch_cp.stderr.strip() or "Failed applying repository merge settings."
         )
     out("Applied repository merge settings.")
+
+    _ensure_dependabot_version_updates(
+        repo_dir=repo_dir,
+        env=env,
+        repo=repo,
+        languages=languages,
+        out=out,
+        warn=warn,
+    )
 
     _sync_default_branch_ruleset(
         repo_dir=repo_dir, env=env, repo=repo, out=out, warn=warn, languages=languages
@@ -1274,15 +1283,6 @@ def _apply_settings(
             out=out,
             warn=warn,
         )
-
-    _ensure_dependabot_version_updates(
-        repo_dir=repo_dir,
-        env=env,
-        repo=repo,
-        languages=languages,
-        out=out,
-        warn=warn,
-    )
 
     _enable_code_scanning_default_setup(
         repo_dir=repo_dir,
