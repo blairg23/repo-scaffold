@@ -2,12 +2,33 @@
 
 from __future__ import annotations
 
+import io
+import json
 import time
+import urllib.error
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from repo_scaffold import discover_ops
+
+
+class _FakeResp:
+    """Minimal urllib response stub for urlopen context manager."""
+
+    def __init__(self, body: bytes, link: str = "") -> None:
+        self._body = body
+        self.headers: dict[str, str] = {"Link": link}
+
+    def __enter__(self) -> "_FakeResp":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        pass
+
+    def read(self) -> bytes:
+        return self._body
 
 
 class TestDeviceFlowAuth:
@@ -186,3 +207,106 @@ class TestParseNext:
 
     def test_returns_empty_for_empty_string(self) -> None:
         assert discover_ops._parse_next("") == ""
+
+
+class TestPostForm:
+    def test_success_returns_parsed_json(self) -> None:
+        payload = {"access_token": "gho_tok"}
+        with patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResp(json.dumps(payload).encode()),
+        ):
+            result = discover_ops._post_form("https://example.com", {"k": "v"})
+        assert result == payload
+
+    def test_http_error_with_body_raises_runtime_error(self) -> None:
+        exc = urllib.error.HTTPError(
+            "https://example.com", 401, "Unauthorized", {}, io.BytesIO(b"bad token")
+        )
+        with patch("urllib.request.urlopen", side_effect=exc):
+            with pytest.raises(RuntimeError, match="bad token"):
+                discover_ops._post_form("https://example.com", {"k": "v"})
+
+    def test_http_error_no_body_uses_str_repr(self) -> None:
+        exc = urllib.error.HTTPError("https://example.com", 403, "Forbidden", {}, None)
+        with patch("urllib.request.urlopen", side_effect=exc):
+            with pytest.raises(RuntimeError):
+                discover_ops._post_form("https://example.com", {"k": "v"})
+
+
+class TestGetPaginated:
+    def test_single_page_no_link_header(self) -> None:
+        items = [{"full_name": "a/b"}, {"full_name": "c/d"}]
+        with patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResp(json.dumps(items).encode()),
+        ):
+            result = discover_ops._get_paginated(
+                "tok", "https://api.github.com/user/repos"
+            )
+        assert result == items
+
+    def test_two_pages_follows_link_header(self) -> None:
+        page1 = [{"full_name": "a/b"}]
+        page2 = [{"full_name": "c/d"}]
+        calls: list[int] = []
+
+        def fake_urlopen(req: object) -> _FakeResp:
+            calls.append(1)
+            if len(calls) == 1:
+                return _FakeResp(
+                    json.dumps(page1).encode(),
+                    link='<https://api.github.com/user/repos?page=2>; rel="next"',
+                )
+            return _FakeResp(json.dumps(page2).encode())
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            result = discover_ops._get_paginated(
+                "tok", "https://api.github.com/user/repos"
+            )
+        assert result == page1 + page2
+        assert len(calls) == 2
+
+    def test_http_error_raises_runtime_error(self) -> None:
+        exc = urllib.error.HTTPError(
+            "https://api.github.com/user/repos",
+            403,
+            "Forbidden",
+            {},
+            io.BytesIO(b"denied"),
+        )
+        with patch("urllib.request.urlopen", side_effect=exc):
+            with pytest.raises(RuntimeError, match="denied"):
+                discover_ops._get_paginated("tok", "https://api.github.com/user/repos")
+
+
+class TestPromptForToken:
+    def test_with_client_id_returns_pasted_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("builtins.input", lambda _: "gho_pasted")
+        monkeypatch.setattr("builtins.print", lambda *a, **kw: None)
+        assert discover_ops.prompt_for_token("client_id") == "gho_pasted"
+
+    def test_with_client_id_empty_input_triggers_device_flow(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("builtins.input", lambda _: "")
+        monkeypatch.setattr("builtins.print", lambda *a, **kw: None)
+        monkeypatch.setattr(discover_ops, "device_flow_auth", lambda cid: "gho_device")
+        assert discover_ops.prompt_for_token("client_id") == "gho_device"
+
+    def test_without_client_id_returns_pasted_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("builtins.input", lambda _: "gho_manual")
+        monkeypatch.setattr("builtins.print", lambda *a, **kw: None)
+        assert discover_ops.prompt_for_token(None) == "gho_manual"
+
+    def test_without_client_id_empty_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("builtins.input", lambda _: "")
+        monkeypatch.setattr("builtins.print", lambda *a, **kw: None)
+        with pytest.raises(RuntimeError, match="No token provided"):
+            discover_ops.prompt_for_token(None)
