@@ -1437,7 +1437,7 @@ def _check_settings(
 
     # Dependabot malware alerts have no separate REST endpoint -- they are bundled
     # with Dependabot alerts (checked above via /vulnerability-alerts).
-    enabled, detail = _optional_endpoint_feature_enabled(
+    enabled, _ = _optional_endpoint_feature_enabled(
         repo_dir=repo_dir,
         env=env,
         endpoint=f"/repos/{repo}/contents/{_DEPENDABOT_YML_PATH}",
