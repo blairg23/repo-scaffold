@@ -12,5 +12,5 @@
 services:
   dev:
     volumes:
-      - .:/workspace                    # live source edits without rebuild
+      - .:/workspace                    # live source edits + .env readable/writable
       - repo-worktrees:/workspace/repos # named volume wins for git worktrees
