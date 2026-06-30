@@ -40,6 +40,52 @@ Repo-local GitHub convention:
 poetry install
 ```
 
+## Docker dev environment
+
+A Docker dev container provides a clean Linux environment for all tool execution,
+eliminating Windows/WSL venv conflicts. Credentials are bind-mounted at runtime --
+never baked into the image.
+
+**One-time setup:**
+
+```bash
+cp docker-compose.override.yml.example docker-compose.override.yml
+docker compose build
+```
+
+`docker-compose.override.yml` is gitignored. Edit it to customise mounts if needed.
+
+**Start / stop:**
+
+```bash
+docker compose up -d      # start in background
+docker compose down       # stop and remove container (named volume persists)
+```
+
+**Run commands inside the container:**
+
+```bash
+docker exec -it repo-scaffold-dev bash                                   # interactive shell
+docker exec -it repo-scaffold-dev poetry run repo-scaffold <command>     # one-off CLI call
+docker exec -it repo-scaffold-dev poetry run tox -e precommit            # full gate
+docker exec -it repo-scaffold-dev poetry run pytest -q                   # tests only
+```
+
+**How it works:**
+
+- The project root is bind-mounted read-write at `/workspace` -- source edits on the host
+  are visible inside the container immediately; no rebuild needed.
+- `.env` is accessible (and writable) inside the container via the root bind-mount.
+  `GH_TOKEN` and all other env vars load automatically via `_seed_env_from_dotenv`.
+- Repo worktrees (`repos/`) are stored in a named volume (`repo-worktrees`) that persists
+  across `docker compose down` / `up` cycles.
+- Multiple agents can `docker exec` into the same running container concurrently -- all
+  persistent state lives on the host or in the named volume, not in the container layer.
+
+**Windows note:** Docker Desktop for Windows must be running. WSL integration must be
+enabled for your distro (Docker Desktop → Resources → WSL Integration) to use `docker`
+commands from a WSL terminal.
+
 ## Commands
 
 ### `init`

@@ -57,8 +57,10 @@ docker compose down
 ```
 
 Repo worktrees are stored in the named volume `repo-worktrees` at `/workspace/repos`
-inside the container, persisting across restarts. The `.env` file is bind-mounted
-read-only from the project root.
+inside the container, persisting across restarts. The entire project root is bind-mounted
+read-write at `/workspace`, so `.env` is readable and writable (required for `repo discover`
+to save `GH_TOKEN`). Source edits on the host are visible inside the container immediately
+-- no rebuild needed.
 
 ---
 
