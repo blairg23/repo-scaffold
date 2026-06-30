@@ -141,3 +141,35 @@ def discover_repos(token: str, org: str | None = None) -> list[str]:
         )
     items = _get_paginated(token, url)
     return sorted(str(item["full_name"]) for item in items if item.get("full_name"))
+
+
+def parse_repo_selection(answer: str, total: int) -> list[int]:
+    """Parse a selection string into 0-based indices.
+
+    Accepts: "all", "", "none", "1,3", "1-3", "1,3-5,7".
+    Input numbers are 1-based; returned indices are 0-based.
+    Out-of-range numbers are silently ignored.
+    """
+    answer = answer.strip().lower()
+    if not answer or answer == "none":
+        return []
+    if answer == "all":
+        return list(range(total))
+    indices: set[int] = set()
+    for part in answer.split(","):
+        part = part.strip()
+        if "-" in part:
+            lo_str, _, hi_str = part.partition("-")
+            try:
+                lo, hi = int(lo_str), int(hi_str)
+                indices.update(i - 1 for i in range(lo, hi + 1) if 1 <= i <= total)
+            except ValueError:
+                pass
+        else:
+            try:
+                n = int(part)
+                if 1 <= n <= total:
+                    indices.add(n - 1)
+            except ValueError:
+                pass
+    return sorted(indices)

@@ -310,3 +310,38 @@ class TestPromptForToken:
         monkeypatch.setattr("builtins.print", lambda *a, **kw: None)
         with pytest.raises(RuntimeError, match="No token provided"):
             discover_ops.prompt_for_token(None)
+
+
+class TestParseRepoSelection:
+    def test_empty_returns_nothing(self) -> None:
+        assert discover_ops.parse_repo_selection("", 5) == []
+
+    def test_none_returns_nothing(self) -> None:
+        assert discover_ops.parse_repo_selection("none", 5) == []
+
+    def test_all_returns_all_indices(self) -> None:
+        assert discover_ops.parse_repo_selection("all", 3) == [0, 1, 2]
+
+    def test_single_number(self) -> None:
+        assert discover_ops.parse_repo_selection("2", 5) == [1]
+
+    def test_comma_separated(self) -> None:
+        assert discover_ops.parse_repo_selection("1,3,5", 5) == [0, 2, 4]
+
+    def test_range(self) -> None:
+        assert discover_ops.parse_repo_selection("2-4", 5) == [1, 2, 3]
+
+    def test_mixed_range_and_singles(self) -> None:
+        assert discover_ops.parse_repo_selection("1,3-5,7", 8) == [0, 2, 3, 4, 6]
+
+    def test_out_of_range_ignored(self) -> None:
+        assert discover_ops.parse_repo_selection("0,3,99", 5) == [2]
+
+    def test_deduplicates(self) -> None:
+        assert discover_ops.parse_repo_selection("1,1,2", 5) == [0, 1]
+
+    def test_whitespace_tolerated(self) -> None:
+        assert discover_ops.parse_repo_selection(" 1 , 3 ", 5) == [0, 2]
+
+    def test_invalid_token_ignored(self) -> None:
+        assert discover_ops.parse_repo_selection("1,abc,3", 5) == [0, 2]

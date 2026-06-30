@@ -75,7 +75,12 @@ from .generator import (
 )
 from .overwrite_policy import ApplySummary, OverwritePolicy, apply_files
 from .project_config import resolve_languages
-from .discover_ops import discover_repos, prompt_for_token, upsert_env_var
+from .discover_ops import (
+    discover_repos,
+    parse_repo_selection,
+    prompt_for_token,
+    upsert_env_var,
+)
 from .registry_ops import (
     RegistryEntry,
     forget_repo,
@@ -2189,23 +2194,28 @@ def main(argv: list[str] | None = None) -> int:
             print("No new repos found (all visible repos are already registered).")
             return 0
         print(f"Found {len(new_repos)} repo(s) not yet registered:")
-        for r in new_repos:
-            print(f"  {r}")
+        for i, r in enumerate(new_repos, 1):
+            print(f"  [{i:>3}] {r}")
         if not ns.register:
-            print("\nRun with --register to add them to the local registry.")
+            print("\nRun with --register to choose which to add to the local registry.")
             return 0
-        if not ns.yes:
-            answer = (
-                input(f"Register all {len(new_repos)} repos? [y/N] ").strip().lower()
-            )
-            if answer != "y":
-                print("Aborted.")
+        if ns.yes:
+            selected = list(new_repos)
+        else:
+            print()
+            answer = input(
+                'Enter numbers to register (e.g. 1,3,5-8), "all", or press Enter to skip: '
+            ).strip()
+            indices = parse_repo_selection(answer, len(new_repos))
+            if not indices:
+                print("Nothing registered.")
                 return 0
+            selected = [new_repos[i] for i in indices]
         reg = load_registry()
-        for r in new_repos:
+        for r in selected:
             reg[r] = RegistryEntry(repo=r, local_path="", notes="discovered")
         save_registry(reg)
-        for r in new_repos:
+        for r in selected:
             print(f"Registered {r}")
         return 0
 
