@@ -559,11 +559,16 @@ See [AGENTS.md](AGENTS.md) for the full branch naming convention, PR title forma
 poetry run pytest
 ```
 
-Pre-commit checks:
+Pre-commit setup (one-time per clone):
 
 ```bash
 poetry run pre-commit install
-poetry run pre-commit run --all-files
+```
+
+This installs the git hook into `.git/hooks/pre-commit`. Once installed, it fires automatically before every `git commit` -- no manual invocation needed. To run it manually against all files:
+
+```bash
+poetry run pre-commit run --all-files  # optional sanity check
 ```
 
 `pre-commit` runs a local tox gate via the `tox-suite` hook: auto-format first, then `lint`, `type`, and a fast branch-coverage gate.
