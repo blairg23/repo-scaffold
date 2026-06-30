@@ -1054,10 +1054,21 @@ def test_pr_reviews_api_error_propagates() -> None:
 
 def test_pr_list_comments_merges_both_endpoints() -> None:
     review_comments = [
-        {"id": 1, "user": {"login": "alice"}, "body": "nit", "path": "foo.py", "created_at": "2026-01-01T00:00:00Z"},
+        {
+            "id": 1,
+            "user": {"login": "alice"},
+            "body": "nit",
+            "path": "foo.py",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
     ]
     issue_comments = [
-        {"id": 2, "user": {"login": "bob"}, "body": "lgtm", "created_at": "2026-01-02T00:00:00Z"},
+        {
+            "id": 2,
+            "user": {"login": "bob"},
+            "body": "lgtm",
+            "created_at": "2026-01-02T00:00:00Z",
+        },
     ]
     with patch(
         "urllib.request.urlopen",
@@ -1076,10 +1087,21 @@ def test_pr_list_comments_merges_both_endpoints() -> None:
 
 def test_pr_list_comments_sorted_by_created_at() -> None:
     review_comments = [
-        {"id": 1, "user": {"login": "alice"}, "body": "later", "path": "foo.py", "created_at": "2026-01-03T00:00:00Z"},
+        {
+            "id": 1,
+            "user": {"login": "alice"},
+            "body": "later",
+            "path": "foo.py",
+            "created_at": "2026-01-03T00:00:00Z",
+        },
     ]
     issue_comments = [
-        {"id": 2, "user": {"login": "bob"}, "body": "earlier", "created_at": "2026-01-01T00:00:00Z"},
+        {
+            "id": 2,
+            "user": {"login": "bob"},
+            "body": "earlier",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
     ]
     with patch(
         "urllib.request.urlopen",

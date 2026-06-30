@@ -1421,7 +1421,8 @@ def build_parser() -> argparse.ArgumentParser:
     pr_reviews_cmd.add_argument("--json", action="store_true", dest="json_output")
 
     pr_list_comments_cmd = pr_sub.add_parser(
-        "list-comments", help="List all comments on a PR (inline review and general conversation)"
+        "list-comments",
+        help="List all comments on a PR (inline review and general conversation)",
     )
     pr_list_comments_cmd.add_argument("--repo", required=True)
     pr_list_comments_cmd.add_argument(
