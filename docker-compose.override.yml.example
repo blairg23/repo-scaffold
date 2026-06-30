@@ -1,13 +1,16 @@
 # Copy this file to docker-compose.override.yml (which is gitignored).
-# It bind-mounts your local .env (containing GH_TOKEN) into the container at runtime.
-# Never commit docker-compose.override.yml -- it is personal and machine-specific.
+# Bind-mounts the project root into /workspace so source edits are visible
+# inside the container without rebuilding. The named volume for repos/ is
+# preserved by the second entry. GH_TOKEN is read from .env via the root mount.
 #
 # Usage:
 #   cp docker-compose.override.yml.example docker-compose.override.yml
 #   docker compose up -d
 #   docker exec -it repo-scaffold-dev poetry run repo-scaffold <command>
+#   docker exec -it repo-scaffold-dev poetry run pytest
 
 services:
   dev:
     volumes:
-      - ./.env:/workspace/.env:ro
+      - .:/workspace                    # live source edits without rebuild
+      - repo-worktrees:/workspace/repos # named volume wins for git worktrees
