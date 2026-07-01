@@ -74,9 +74,10 @@ Example: `repo-scaffold-feat-238-docker-per-repo-containers`.
 
 Multiple agents can run in parallel -- each gets an isolated container.
 
-**If you are already inside a container: do not run any `docker` commands.**
-All docker commands are host-side tools. Inside your container, just work normally:
-edit files, run tests, commit, push. You do not need to manage Docker from in here.
+**If you are already inside a container: do not run any `docker` or `workspace` commands.**
+Both are host-side tools. Inside your container, your branch is already checked out at
+`/{repo-name}`. Just work there: edit files, run tests, commit, push. No worktrees,
+no new containers, no workspace create.
 
 ### Compose-based container (legacy)
 
