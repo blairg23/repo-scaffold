@@ -469,7 +469,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog="repo-scaffold",
         description="Repository operations toolkit for scaffold create/init/apply/delete workflows.",
     )
-    subparsers = parser.add_subparsers(dest="mode", required=True)
+    subparsers = parser.add_subparsers(
+        dest="mode",
+        metavar="{create,delete,init,apply,check,repo,sync,project,import,issue,pr,branch,label,workspace}",
+        required=True,
+    )
 
     create_cmd = subparsers.add_parser(
         "create", help="Create/push remote repo and apply baseline settings"
@@ -570,7 +574,11 @@ def build_parser() -> argparse.ArgumentParser:
     apply_cmd = subparsers.add_parser(
         "apply", help="Apply capabilities to an existing repo"
     )
-    apply_sub = apply_cmd.add_subparsers(dest="apply_command", required=True)
+    apply_sub = apply_cmd.add_subparsers(
+        dest="apply_command",
+        metavar="{templates,ci,dependabot,backlog,rules,settings}",
+        required=True,
+    )
 
     apply_templates = apply_sub.add_parser(
         "templates", parents=[apply_parent], help="Apply GitHub templates"
@@ -695,7 +703,11 @@ def build_parser() -> argparse.ArgumentParser:
         "check",
         help="Check GitHub settings/capabilities for drift",
     )
-    check_sub = check.add_subparsers(dest="check_command", required=True)
+    check_sub = check.add_subparsers(
+        dest="check_command",
+        metavar="{rules,settings}",
+        required=True,
+    )
     check_rules = check_sub.add_parser(
         "rules",
         help="Check merge settings, managed ruleset, and security defaults",
@@ -733,7 +745,11 @@ def build_parser() -> argparse.ArgumentParser:
         "repo",
         help="Manage the local registry of repos repo-scaffold knows about",
     )
-    repo_sub = repo_cmd.add_subparsers(dest="repo_command", required=True)
+    repo_sub = repo_cmd.add_subparsers(
+        dest="repo_command",
+        metavar="{register,list,forget,discover}",
+        required=True,
+    )
     repo_register_cmd = repo_sub.add_parser(
         "register", help="Register a repo in the local registry"
     )
@@ -776,7 +792,11 @@ def build_parser() -> argparse.ArgumentParser:
         "sync",
         help="Check then apply settings/rules across one or more repos",
     )
-    sync_sub = sync_cmd.add_subparsers(dest="sync_command", required=True)
+    sync_sub = sync_cmd.add_subparsers(
+        dest="sync_command",
+        metavar="{rules}",
+        required=True,
+    )
     sync_rules_cmd = sync_sub.add_parser(
         "rules",
         help="Check merge settings/ruleset/security defaults, then apply per-repo on confirm",
@@ -801,7 +821,11 @@ def build_parser() -> argparse.ArgumentParser:
         "project",
         help="Manage GitHub Projects with explicit destructive-op guards",
     )
-    project_sub = project_cmd.add_subparsers(dest="project_command", required=True)
+    project_sub = project_cmd.add_subparsers(
+        dest="project_command",
+        metavar="{list,view,items,sync-metadata,create,setup,setup-statuses,setup-views,edit,delete,item-add,item-status,item-delete,link-repo,undo}",
+        required=True,
+    )
 
     project_list_cmd = project_sub.add_parser("list", help="List projects for an owner")
     project_list_cmd.add_argument(
@@ -1095,7 +1119,11 @@ def build_parser() -> argparse.ArgumentParser:
         "import",
         help="Import markdown artifacts into repo-scaffold formats",
     )
-    import_sub = import_cmd.add_subparsers(dest="import_command", required=True)
+    import_sub = import_cmd.add_subparsers(
+        dest="import_command",
+        metavar="{backlog}",
+        required=True,
+    )
     import_backlog = import_sub.add_parser(
         "backlog",
         parents=[apply_parent],
@@ -1128,7 +1156,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     issue_cmd = subparsers.add_parser("issue", help="Query GitHub issues")
-    issue_sub = issue_cmd.add_subparsers(dest="issue_command", required=True)
+    issue_sub = issue_cmd.add_subparsers(
+        dest="issue_command",
+        metavar="{view,list,create,close,comment,label,assign,update,delete,add-sub-issue,sync-hierarchy,re-parent}",
+        required=True,
+    )
     issue_view_cmd = issue_sub.add_parser(
         "view", help="View details for a single issue"
     )
@@ -1296,7 +1328,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     pr_cmd = subparsers.add_parser("pr", help="Interact with GitHub pull requests")
-    pr_sub = pr_cmd.add_subparsers(dest="pr_command", required=True)
+    pr_sub = pr_cmd.add_subparsers(
+        dest="pr_command",
+        metavar="{list,view,comment,react,create,update,resolve-thread,merge,checks,annotations,rerun,review-threads,check-sop,reviews,list-comments,request-reviewer}",
+        required=True,
+    )
 
     pr_list_cmd = pr_sub.add_parser("list", help="List open pull requests")
     pr_list_cmd.add_argument(
@@ -1473,7 +1509,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     branch_cmd = subparsers.add_parser("branch", help="Manage GitHub branches")
-    branch_sub = branch_cmd.add_subparsers(dest="branch_command", required=True)
+    branch_sub = branch_cmd.add_subparsers(
+        dest="branch_command",
+        metavar="{create,delete}",
+        required=True,
+    )
 
     branch_create_cmd = branch_sub.add_parser("create", help="Create a new branch")
     branch_create_cmd.add_argument("--repo", required=True)
@@ -1487,7 +1527,11 @@ def build_parser() -> argparse.ArgumentParser:
     branch_delete_cmd.add_argument("--name", required=True, help="Branch to delete")
 
     label_cmd = subparsers.add_parser("label", help="Manage repository labels")
-    label_sub = label_cmd.add_subparsers(dest="label_command", required=True)
+    label_sub = label_cmd.add_subparsers(
+        dest="label_command",
+        metavar="{list,create,delete,apply-preset}",
+        required=True,
+    )
 
     label_list_cmd = label_sub.add_parser("list", help="List all labels in a repo")
     label_list_cmd.add_argument("--repo", required=True)
@@ -1515,7 +1559,9 @@ def build_parser() -> argparse.ArgumentParser:
         "workspace", help="Manage per-branch git worktrees under repos/"
     )
     workspace_sub = workspace_cmd.add_subparsers(
-        dest="workspace_command", required=True
+        dest="workspace_command",
+        metavar="{create,list,delete,prune,configure-auth}",
+        required=True,
     )
 
     ws_create = workspace_sub.add_parser(
