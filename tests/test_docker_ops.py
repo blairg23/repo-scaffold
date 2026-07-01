@@ -12,6 +12,7 @@ from repo_scaffold.docker_ops import (
     container_name,
     docker_build_base,
     docker_list,
+    docker_shell,
     docker_spin_down,
     docker_spin_up,
     image_name,
@@ -372,3 +373,103 @@ def test_spin_down_stop_failure() -> None:
 
     assert result.returncode == 1
     assert "Failed to stop/remove" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# docker_shell
+# ---------------------------------------------------------------------------
+
+
+def test_shell_builds_image_when_missing_and_execs(tmp_path: Path) -> None:
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12")
+
+    client = _make_client()
+    # First call (shell checks if image exists) raises; second call (spin_up verifies) succeeds.
+    client.images.get.side_effect = [Exception("not found"), MagicMock()]
+    fake_logs = [{"stream": "done\n"}]
+    client.images.build.return_value = (MagicMock(), iter(fake_logs))
+    client.containers.get.side_effect = Exception("not found")
+    client.containers.run.return_value = MagicMock()
+
+    exec_calls: list[tuple[str, list[str]]] = []
+
+    def fake_execvp(file: str, args: list[str]) -> None:
+        exec_calls.append((file, args))
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client), patch(
+        "repo_scaffold.docker_ops.os.execvp", side_effect=fake_execvp
+    ):
+        docker_shell("owner/myrepo", "main", "tok", tmp_path)
+
+    assert exec_calls == [("docker", ["docker", "exec", "-it", "myrepo-main", "bash"])]
+
+
+def test_shell_skips_build_when_image_exists(tmp_path: Path) -> None:
+    client = _make_client()
+    client.images.get.return_value = MagicMock()
+    client.containers.get.side_effect = Exception("not found")
+    client.containers.run.return_value = MagicMock()
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client), patch(
+        "repo_scaffold.docker_ops.os.execvp"
+    ):
+        docker_shell("owner/myrepo", "main", "tok", tmp_path)
+
+    client.images.build.assert_not_called()
+
+
+def test_shell_rebuild_flag_forces_build(tmp_path: Path) -> None:
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12")
+
+    client = _make_client()
+    # image exists, but rebuild=True bypasses the check; spin_up still needs to find it
+    client.images.get.return_value = MagicMock()
+    fake_logs = [{"stream": "done\n"}]
+    client.images.build.return_value = (MagicMock(), iter(fake_logs))
+    client.containers.get.side_effect = Exception("not found")
+    client.containers.run.return_value = MagicMock()
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client), patch(
+        "repo_scaffold.docker_ops.os.execvp"
+    ):
+        docker_shell("owner/myrepo", "main", "tok", tmp_path, rebuild=True)
+
+    client.images.build.assert_called_once()
+
+
+def test_shell_stops_existing_container_before_spinup(tmp_path: Path) -> None:
+    client = _make_client()
+    client.images.get.return_value = MagicMock()
+    existing = MagicMock()
+    # First containers.get (shell teardown) returns existing; second (spin_up dupe check) raises.
+    client.containers.get.side_effect = [existing, Exception("not found")]
+    client.containers.run.return_value = MagicMock()
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client), patch(
+        "repo_scaffold.docker_ops.os.execvp"
+    ):
+        docker_shell("owner/myrepo", "main", "tok", tmp_path)
+
+    existing.stop.assert_called_once_with(timeout=10)
+    existing.remove.assert_called_once()
+
+
+def test_shell_raises_on_build_failure(tmp_path: Path) -> None:
+    client = _make_client()
+    client.images.get.side_effect = Exception("not found")
+    client.images.build.side_effect = RuntimeError("daemon down")
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client):
+        with pytest.raises(RuntimeError, match="Base image build failed"):
+            docker_shell("owner/myrepo", "main", "tok", tmp_path)
+
+
+def test_shell_raises_on_spinup_failure(tmp_path: Path) -> None:
+    client = _make_client()
+    client.images.get.return_value = MagicMock()
+    client.containers.get.side_effect = Exception("not found")
+    client.containers.run.side_effect = Exception("run failed")
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client):
+        with pytest.raises(RuntimeError, match="Failed to start container"):
+            docker_shell("owner/myrepo", "main", "tok", tmp_path)

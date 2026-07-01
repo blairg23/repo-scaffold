@@ -10,6 +10,7 @@ Each active branch gets its own container started from that image.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -226,6 +227,51 @@ def docker_spin_down(
         return _ok(f"Removed container: {name}")
     except Exception as exc:
         return _err(f"Failed to stop/remove '{name}': {exc}")
+
+
+def docker_shell(
+    repo: str,
+    branch: str,
+    token: str,
+    dockerfile_dir: Path,
+    rebuild: bool = False,
+    env_path: Path | None = None,
+) -> None:
+    """Build image if needed, restart container, and exec into bash.
+
+    Replaces the current process with `docker exec -it <name> bash` -- never
+    returns on success. Raises RuntimeError on any failure before exec.
+    """
+    client = _client()
+    name = container_name(repo, branch)
+    tag = image_name(repo)
+
+    needs_build = rebuild
+    if not needs_build:
+        try:
+            client.images.get(tag)
+        except Exception:
+            needs_build = True
+
+    if needs_build:
+        result = docker_build_base(repo, dockerfile_dir)
+        if result.returncode != 0:
+            raise RuntimeError(f"Base image build failed:\n{result.stderr}")
+        print(result.stdout)
+
+    try:
+        existing = client.containers.get(name)
+        existing.stop(timeout=10)
+        existing.remove()
+    except Exception:
+        pass
+
+    result = docker_spin_up(repo, branch, token, env_path=env_path)
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to start container:\n{result.stderr}")
+    print(result.stdout)
+
+    os.execvp("docker", ["docker", "exec", "-it", name, "bash"])
 
 
 def docker_list(

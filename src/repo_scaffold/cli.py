@@ -1619,6 +1619,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory containing the Dockerfile (default: current directory)",
     )
 
+    dk_shell = docker_sub.add_parser(
+        "shell",
+        help=(
+            "One command: build image if needed, restart container, exec into bash. "
+            "Use --rebuild to force a fresh image build (required after Dockerfile changes)."
+        ),
+    )
+    dk_shell.add_argument("--repo", required=True, help="OWNER/REPO")
+    dk_shell.add_argument("--branch", required=True, help="Branch name")
+    dk_shell.add_argument(
+        "--path",
+        default=".",
+        dest="dockerfile_dir",
+        help="Directory containing the Dockerfile (default: current directory)",
+    )
+    dk_shell.add_argument(
+        "--env-file",
+        default=None,
+        dest="env_file",
+        help="Path to .env file to bind-mount read-only into the container",
+    )
+    dk_shell.add_argument(
+        "--rebuild",
+        action="store_true",
+        default=False,
+        help="Rebuild the base image before starting (use after Dockerfile changes)",
+    )
+
     return parser
 
 
@@ -3460,6 +3488,24 @@ def main(argv: list[str] | None = None) -> int:
                 print(cp.stderr.strip(), file=sys.stderr)
                 return 1
             print(cp.stdout.strip())
+            return 0
+
+        if ns.docker_command == "shell":
+            from .docker_ops import docker_shell
+
+            env_file = Path(ns.env_file) if ns.env_file else None
+            try:
+                docker_shell(
+                    ns.repo,
+                    ns.branch,
+                    token,
+                    Path(ns.dockerfile_dir),
+                    rebuild=ns.rebuild,
+                    env_path=env_file,
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
             return 0
 
     parser.error("Unsupported command.")
