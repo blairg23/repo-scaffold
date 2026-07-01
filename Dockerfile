@@ -16,9 +16,6 @@ ENV POETRY_VIRTUALENVS_PATH=/venv
 COPY pyproject.toml poetry.lock ./
 RUN poetry install --no-root
 
-COPY . .
-RUN poetry install
-
 RUN mkdir -p /workspace/repos
 
 CMD ["bash"]

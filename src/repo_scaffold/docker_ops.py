@@ -81,7 +81,7 @@ def _err(msg: str, code: int = 1) -> subprocess.CompletedProcess[str]:
 _STARTUP_SCRIPT = """\
 #!/bin/bash
 set -e
-REPO_DIR="/work"
+REPO_DIR="/workspace"
 echo "Cloning $REPO branch $BRANCH ..."
 git clone --depth=1 --branch "$BRANCH" \
     "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$REPO_DIR" 2>/dev/null \
