@@ -82,7 +82,7 @@ def _err(msg: str, code: int = 1) -> subprocess.CompletedProcess[str]:
 _STARTUP_SCRIPT = """\
 #!/bin/bash
 set -e
-REPO_DIR="/workspace"
+REPO_DIR="/repo"
 echo "Cloning $REPO branch $BRANCH ..."
 git clone --depth=1 --branch "$BRANCH" \
     "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$REPO_DIR" 2>/dev/null \
@@ -271,7 +271,7 @@ def docker_shell(
         raise RuntimeError(f"Failed to start container:\n{result.stderr}")
     print(result.stdout)
 
-    os.execvp("docker", ["docker", "exec", "-it", name, "bash"])
+    os.execvp("docker", ["docker", "exec", "-it", "-w", "/repo", name, "bash"])
 
 
 def docker_list(

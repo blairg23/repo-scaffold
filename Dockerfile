@@ -15,6 +15,6 @@ WORKDIR /tmp/bootstrap
 COPY pyproject.toml poetry.lock ./
 RUN poetry install --no-root
 
-WORKDIR /workspace
+WORKDIR /repo
 
 CMD ["bash"]
