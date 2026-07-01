@@ -1817,6 +1817,74 @@ def pr_checks(
         return _err("Unexpected response from check-runs API.")
 
 
+def pr_wait(
+    repo: str,
+    pr_number: int,
+    token: str,
+    interval: int = 30,
+    timeout: int = 1800,
+) -> subprocess.CompletedProcess[str]:
+    """Poll PR checks until all pass or any fail.
+
+    Returns:
+        returncode 0  -- all checks green
+        returncode 1  -- one or more checks failed
+        returncode 2  -- timed out before a conclusion
+    """
+    import time
+
+    elapsed = 0
+    while elapsed < timeout:
+        cp = pr_checks(repo, pr_number, token)
+        if cp.returncode != 0:
+            return cp
+
+        try:
+            runs = json.loads(cp.stdout)
+        except (json.JSONDecodeError, ValueError):
+            return _err("Unexpected response from check-runs API.")
+
+        if not runs:
+            print(f"  [{elapsed}s] No checks found yet, waiting...")
+        else:
+            statuses = {r.get("status") for r in runs}
+            conclusions = {
+                r.get("conclusion") for r in runs if r.get("status") == "completed"
+            }
+
+            failed = {
+                c
+                for c in conclusions
+                if c not in (None, "success", "skipped", "neutral")
+            }
+            pending = statuses - {"completed"}
+
+            names = ", ".join(r.get("name", "?") for r in runs)
+            print(
+                f"  [{elapsed}s] {len(runs)} check(s): pending={len(pending)} failed={len(failed)} -- {names}"
+            )
+
+            if failed:
+                return subprocess.CompletedProcess(
+                    args=[],
+                    returncode=1,
+                    stdout="",
+                    stderr=f"Checks failed: {', '.join(str(f) for f in failed)}",
+                )
+            if not pending:
+                return _ok("All checks passed.")
+
+        time.sleep(interval)
+        elapsed += interval
+
+    return subprocess.CompletedProcess(
+        args=[],
+        returncode=2,
+        stdout="",
+        stderr=f"Timed out after {timeout}s waiting for checks to complete.",
+    )
+
+
 def pr_annotations(
     repo: str,
     pr_number: int,
