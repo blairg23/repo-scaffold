@@ -265,3 +265,110 @@ def test_list_filtered_by_repo() -> None:
     assert result.returncode == 0
     assert "repo-scaffold-main" in result.stdout
     assert "other-main" not in result.stdout
+
+
+def test_list_filtered_by_repo_no_matches() -> None:
+    client = _make_client()
+    client.containers.list.return_value = [
+        _fake_container("other-main", "exited", ["other-base:latest"]),
+    ]
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client):
+        result = docker_list(repo="owner/repo-scaffold")
+
+    assert result.returncode == 0
+    assert "No agent containers" in result.stdout
+    assert "repo-scaffold" in result.stdout
+
+
+def test_list_container_no_image_tags() -> None:
+    client = _make_client()
+    c = MagicMock()
+    c.name = "somerepo-main"
+    c.status = "running"
+    c.image.tags = []
+    client.containers.list.return_value = [c]
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client):
+        result = docker_list()
+
+    assert result.returncode == 0
+    assert "somerepo-main" in result.stdout
+
+
+def test_list_sdk_error() -> None:
+    client = _make_client()
+    client.containers.list.side_effect = Exception("daemon error")
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client):
+        result = docker_list()
+
+    assert result.returncode == 1
+    assert "Failed to list containers" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# _client -- daemon connection error path
+# ---------------------------------------------------------------------------
+
+
+def test_client_raises_on_daemon_error() -> None:
+    from repo_scaffold.docker_ops import _client
+
+    mock_docker = MagicMock()
+    mock_docker.from_env.side_effect = Exception("daemon not running")
+    with patch.dict("sys.modules", {"docker": mock_docker}):
+        with pytest.raises(RuntimeError, match="Cannot connect to Docker daemon"):
+            _client()
+
+
+# ---------------------------------------------------------------------------
+# docker_spin_up -- run failure and missing env file
+# ---------------------------------------------------------------------------
+
+
+def test_spin_up_run_failure() -> None:
+    client = _make_client()
+    client.images.get.return_value = MagicMock()
+    client.containers.get.side_effect = Exception("not found")
+    client.containers.run.side_effect = Exception("run failed")
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client):
+        result = docker_spin_up("owner/myrepo", "main", token="tok")
+
+    assert result.returncode == 1
+    assert "docker run failed" in result.stderr
+
+
+def test_spin_up_nonexistent_env_file(tmp_path: Path) -> None:
+    env_file = tmp_path / "missing.env"  # does not exist
+
+    client = _make_client()
+    client.images.get.return_value = MagicMock()
+    client.containers.get.side_effect = Exception("not found")
+    client.containers.run.return_value = MagicMock()
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client):
+        result = docker_spin_up("owner/myrepo", "main", token="tok", env_path=env_file)
+
+    assert result.returncode == 0
+    call_kwargs = client.containers.run.call_args.kwargs
+    assert call_kwargs["volumes"] is None
+
+
+# ---------------------------------------------------------------------------
+# docker_spin_down -- stop/remove failure
+# ---------------------------------------------------------------------------
+
+
+def test_spin_down_stop_failure() -> None:
+    client = _make_client()
+    container = MagicMock()
+    container.stop.side_effect = Exception("stop failed")
+    client.containers.get.return_value = container
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client):
+        result = docker_spin_down("owner/myrepo", "main")
+
+    assert result.returncode == 1
+    assert "Failed to stop/remove" in result.stderr
