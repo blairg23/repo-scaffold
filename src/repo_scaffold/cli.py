@@ -1641,6 +1641,7 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
         "workspace",
         "repo",
         "sync",
+        "docker",
     }:
         return raw
     # Backward-compatible behavior: previous root command maps to init.
