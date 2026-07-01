@@ -350,6 +350,7 @@ Coverage must stay at or above 70%.
 
 ## Standing rules
 
+- **Docs ship with code.** Any PR that adds, changes, or deprecates a feature must update AGENTS.md, CLAUDE.md, and any relevant docs/ files in the same commit. A feature is not done until the docs reflect it. Deprecating a workflow means removing or replacing its documentation immediately -- stale docs cause real agent failures.
 - Never use `gh` CLI -- use repo-scaffold commands or `github_api.py` directly.
 - Never merge or close PRs -- only CODEOWNERS may do that.
 - Never push to a branch whose PR is already merged -- cut a fresh branch from main.
