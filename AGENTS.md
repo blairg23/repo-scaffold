@@ -34,24 +34,39 @@ passed as env vars at runtime -- never baked into the image.
 
 ### Per-repo container workflow (preferred)
 
+One command to get a shell inside an isolated container for any branch:
+
 ```bash
-# One-time: build the base image for a repo
-poetry run repo-scaffold docker build-base --repo OWNER/REPO
+poetry run repo-scaffold docker shell --repo OWNER/REPO --branch feat/NNN-my-feature
+```
 
-# Spin up a container for a branch (clones repo + installs deps on startup)
-poetry run repo-scaffold docker spin-up --repo OWNER/REPO --branch feat/NNN-my-feature
+This builds the base image if needed, tears down any existing container for the branch,
+starts a fresh one (clones the branch, installs deps), and drops you straight into bash.
+The repo is at `/{repo-name}` inside the container (e.g. `/repo-scaffold`).
 
-# Work inside the container
-docker exec -it repo-scaffold-feat-nnn-my-feature bash
+Add `--rebuild` when the Dockerfile changes:
 
-# Watch CI after pushing; exits 0 (green), 1 (red), or 2 (timeout)
-poetry run repo-scaffold pr wait --repo OWNER/REPO --pr-number N
+```bash
+poetry run repo-scaffold docker shell --repo OWNER/REPO --branch feat/NNN-my-feature --rebuild
+```
 
-# Tear down when done
-poetry run repo-scaffold docker spin-down --repo OWNER/REPO --branch feat/NNN-my-feature
+Other commands (rarely needed directly):
 
-# List all agent containers (optionally filtered to one repo)
+```bash
+# Build or rebuild the base image without starting a container
+poetry run repo-scaffold docker build-base --repo OWNER/REPO [--path .]
+
+# Start a container without exec-ing in (for background agent use)
+poetry run repo-scaffold docker spin-up --repo OWNER/REPO --branch BRANCH
+
+# Tear down a container
+poetry run repo-scaffold docker spin-down --repo OWNER/REPO --branch BRANCH
+
+# List all agent containers
 poetry run repo-scaffold docker list [--repo OWNER/REPO]
+
+# Watch CI; exits 0 (green), 1 (red), or 2 (timeout)
+poetry run repo-scaffold pr wait --repo OWNER/REPO --pr-number N
 ```
 
 Container names are derived deterministically: `{repo-slug}-{branch-slug}`.
