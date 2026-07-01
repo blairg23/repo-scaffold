@@ -81,12 +81,13 @@ def _err(msg: str, code: int = 1) -> subprocess.CompletedProcess[str]:
 _STARTUP_SCRIPT = """\
 #!/bin/bash
 set -e
+REPO_DIR="/work"
 echo "Cloning $REPO branch $BRANCH ..."
 git clone --depth=1 --branch "$BRANCH" \
-    "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" /workspace 2>/dev/null \
+    "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$REPO_DIR" 2>/dev/null \
     || git clone --depth=1 \
-        "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" /workspace
-cd /workspace
+        "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$REPO_DIR"
+cd "$REPO_DIR"
 git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH"
 if [ -f pyproject.toml ]; then
     poetry install --quiet
