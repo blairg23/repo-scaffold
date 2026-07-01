@@ -401,7 +401,7 @@ def test_shell_builds_image_when_missing_and_execs(tmp_path: Path) -> None:
     ):
         docker_shell("owner/myrepo", "main", "tok", tmp_path)
 
-    assert exec_calls == [("docker", ["docker", "exec", "-it", "myrepo-main", "bash"])]
+    assert exec_calls == [("docker", ["docker", "exec", "-it", "-w", "/repo", "myrepo-main", "bash"])]
 
 
 def test_shell_skips_build_when_image_exists(tmp_path: Path) -> None:
