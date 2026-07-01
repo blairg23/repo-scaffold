@@ -88,7 +88,10 @@ def test_build_base_success(tmp_path: Path) -> None:
     (tmp_path / "Dockerfile").write_text("FROM python:3.12")
 
     fake_image = MagicMock()
-    fake_logs = [{"stream": "Step 1/1 : FROM python:3.12\n"}, {"stream": " ---> done\n"}]
+    fake_logs = [
+        {"stream": "Step 1/1 : FROM python:3.12\n"},
+        {"stream": " ---> done\n"},
+    ]
 
     client = _make_client()
     client.images.build.return_value = (fake_image, iter(fake_logs))
