@@ -74,6 +74,10 @@ Example: `repo-scaffold-feat-238-docker-per-repo-containers`.
 
 Multiple agents can run in parallel -- each gets an isolated container.
 
+**If you are already inside a container: do not run any `docker` commands.**
+All docker commands are host-side tools. Inside your container, just work normally:
+edit files, run tests, commit, push. You do not need to manage Docker from in here.
+
 ### Compose-based container (legacy)
 
 The Compose stack (`docker-compose.yml` + optional `docker-compose.override.yml`) runs
