@@ -168,40 +168,31 @@ Token lives in `.env` as `GH_TOKEN`. Commands pick it up automatically via `_see
 All GitHub operations (repos, issues, PRs, projects, backlog) are implemented via GH_TOKEN + urllib. No `gh` CLI required.
 
 
-# Workspace Workflow
+# Branch Workflow
 
 ## How to work on branches
 
-All branch work happens inside managed worktrees under `repos/` (gitignored). Never use
-OS temp folders or arbitrary paths.
+Each branch gets its own isolated Docker container. The container clones the branch
+and installs deps on startup. Your code is at `/{repo-name}` inside the container.
 
 ```bash
-# Create a worktree for a branch (clones bare repo on first use)
-poetry run repo-scaffold workspace create --repo OWNER/REPO --branch BRANCH [--from main]
+# Get a shell in a branch container (builds image if needed, replaces any existing container)
+poetry run repo-scaffold docker shell --repo OWNER/REPO --branch BRANCH
 
-# List all active worktrees
-poetry run repo-scaffold workspace list [--repo OWNER/REPO]
-
-# Remove a worktree when a PR is merged
-poetry run repo-scaffold workspace delete --repo OWNER/REPO --branch BRANCH
-
-# Remove worktrees for branches that no longer exist on origin
-poetry run repo-scaffold workspace prune --repo OWNER/REPO
+# Add --rebuild if the Dockerfile changed
+poetry run repo-scaffold docker shell --repo OWNER/REPO --branch BRANCH --rebuild
 ```
 
-Layout: `repos/{repo-name}/{branch-slug}/`
+All editing, testing, committing, and pushing happens inside the container.
+Do not use `workspace` commands -- they are obsolete.
 
-## Agent rules for workspace work
+## Agent rules
 
-- **No approval requests inside worktrees.** Do the work, use whatever tool is fastest,
-  push a PR. Do not ask permission for file edits, git commands, or test runs inside a
-  worktree. The PR is the gate.
-- **Only the repo owner merges PRs.** Never call `pr merge`. Push the branch, open the PR,
-  fix all review comments, then stop. Merging and closing are the owner's job.
-- **Clean up after merge.** Once you observe a PR has merged, run `workspace delete` to
-  remove the local worktree.
-- **Fix CI and review comments immediately.** When a review agent or CI flags something,
-  fix it in the same worktree and push. Do not ask whether to fix it.
+- **No approval requests.** Do the work, push a PR. The PR is the gate.
+- **Only the repo owner merges PRs.** Never call `pr merge`.
+- **Fix CI and review comments immediately.** Push the fix, don't ask.
+- **Never run `docker` or `workspace` commands from inside a container.**
+  You are already in the right place. Just work.
 
 ---
 
