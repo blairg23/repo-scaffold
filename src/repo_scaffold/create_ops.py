@@ -12,6 +12,8 @@ from urllib.parse import quote
 
 from .auth_tokens import is_placeholder_token, resolve_gh_token
 from .github_api import (
+    branch_create as _github_branch_create,
+    pr_create as _github_pr_create,
     repo_create as _github_repo_create,
     rest as _github_rest,
     token_from_repo as _token_from_repo,
@@ -478,11 +480,102 @@ def _minimal_dependabot_yml(languages: list[str] | None) -> str:
     return "version: 2\nupdates:\n" + "\n".join(entries) + "\n"
 
 
+_PR_REQUIRED_MARKERS = (
+    "changes must be made through a pull request",
+    "repository rule violations",
+)
+
+
+def _create_dependabot_yml_via_pr(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    default_branch: str,
+    content: str,
+    out: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> bool:
+    """Fall back to a branch + PR when direct write to the default branch is
+    blocked by branch protection. Returns True if a PR was opened."""
+    token = (
+        _token_from_repo(repo_dir)
+        or env.get("GH_TOKEN")
+        or env.get("GITHUB_TOKEN")
+        or ""
+    )
+    branch_name = "chore/add-dependabot-yml"
+
+    branch_cp = _github_branch_create(repo, branch_name, token, base=default_branch)
+    already_exists = "already exists" in (branch_cp.stderr or "").lower()
+    if branch_cp.returncode not in (0, 201) and not already_exists:
+        warn(
+            f"Warning: could not create branch {branch_name}: "
+            f"{branch_cp.stderr.strip()}"
+        )
+        return False
+
+    encoded = base64.b64encode(content.encode()).decode()
+    file_cp = _github_rest(
+        "PUT",
+        f"/repos/{repo}/contents/{_DEPENDABOT_YML_PATH}",
+        token,
+        {
+            "message": "chore: add dependabot version updates config",
+            "content": encoded,
+            "branch": branch_name,
+        },
+    )
+    if file_cp.returncode not in (0, 201):
+        warn(
+            f"Warning: could not create {_DEPENDABOT_YML_PATH} on {branch_name}: "
+            f"{file_cp.stderr.strip()}"
+        )
+        return False
+
+    pr_body = (
+        "## 🧾 Title\n"
+        "Add Dependabot version updates config\n\n"
+        "## 🧠 Description\n"
+        "This branch is protected and requires a PR for changes to the default "
+        "branch, so `repo-scaffold apply rules` opened this PR automatically "
+        f"instead of committing directly to `{default_branch}`.\n\n"
+        "## 🎯 Purpose\n"
+        f"Adds `{_DEPENDABOT_YML_PATH}` so Dependabot checks for version updates "
+        "on a schedule."
+    )
+    pr_cp = _github_pr_create(
+        repo,
+        "chore: add dependabot version updates config",
+        pr_body,
+        branch_name,
+        default_branch,
+        token,
+    )
+    if pr_cp.returncode not in (0, 201):
+        warn(
+            f"Warning: could not open PR for {_DEPENDABOT_YML_PATH}: {pr_cp.stderr.strip()}"
+        )
+        return False
+
+    pr_url = ""
+    try:
+        pr_url = json.loads(pr_cp.stdout).get("html_url", "")
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    out(
+        f"Branch protection requires a PR; opened one for {_DEPENDABOT_YML_PATH}"
+        + (f": {pr_url}" if pr_url else ".")
+    )
+    return True
+
+
 def _ensure_dependabot_version_updates(
     *,
     repo_dir: Path,
     env: dict[str, str],
     repo: str,
+    default_branch: str,
     languages: list[str] | None,
     out: Callable[[str], None],
     warn: Callable[[str], None],
@@ -516,6 +609,17 @@ def _ensure_dependabot_version_updates(
     feature_err = (
         create_cp.stderr.strip() or create_cp.stdout.strip() or "unknown error"
     )
+    if any(marker in feature_err.lower() for marker in _PR_REQUIRED_MARKERS):
+        if _create_dependabot_yml_via_pr(
+            repo_dir=repo_dir,
+            env=env,
+            repo=repo,
+            default_branch=default_branch,
+            content=content,
+            out=out,
+            warn=warn,
+        ):
+            return
     warn(f"Warning: could not create {_DEPENDABOT_YML_PATH}: {feature_err}")
 
 
@@ -1237,6 +1341,7 @@ def _apply_settings(
         repo_dir=repo_dir,
         env=env,
         repo=repo,
+        default_branch=default_branch,
         languages=languages,
         out=out,
         warn=warn,
