@@ -1472,6 +1472,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="GitHub username to request (repeatable)",
     )
 
+    pr_wait_cmd = pr_sub.add_parser(
+        "wait", help="Block until all PR checks pass or any fail (exit 0/1/2)"
+    )
+    pr_wait_cmd.add_argument("--repo", required=True)
+    pr_wait_cmd.add_argument("--pr-number", required=True, type=int, dest="pr_number")
+    pr_wait_cmd.add_argument(
+        "--interval",
+        type=int,
+        default=30,
+        help="Seconds between polls (default: 30)",
+    )
+    pr_wait_cmd.add_argument(
+        "--timeout",
+        type=int,
+        default=1800,
+        help="Max seconds to wait before giving up (default: 1800)",
+    )
+
     branch_cmd = subparsers.add_parser("branch", help="Manage GitHub branches")
     branch_sub = branch_cmd.add_subparsers(dest="branch_command", required=True)
 
@@ -1563,6 +1581,72 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a git working tree (default: current directory)",
     )
 
+    docker_cmd = subparsers.add_parser(
+        "docker",
+        help="Manage per-repo Docker containers for branch-level agent isolation",
+    )
+    docker_sub = docker_cmd.add_subparsers(dest="docker_command", required=True)
+
+    dk_spin_up = docker_sub.add_parser(
+        "spin-up", help="Start a container for a repo/branch"
+    )
+    dk_spin_up.add_argument("--repo", required=True, help="OWNER/REPO")
+    dk_spin_up.add_argument("--branch", required=True, help="Branch name")
+    dk_spin_up.add_argument(
+        "--env-file",
+        default=None,
+        dest="env_file",
+        help="Path to .env file to bind-mount read-only into the container",
+    )
+
+    dk_spin_down = docker_sub.add_parser(
+        "spin-down", help="Stop and remove the container for a repo/branch"
+    )
+    dk_spin_down.add_argument("--repo", required=True, help="OWNER/REPO")
+    dk_spin_down.add_argument("--branch", required=True, help="Branch name")
+
+    dk_list = docker_sub.add_parser("list", help="List running agent containers")
+    dk_list.add_argument("--repo", default=None, help="Filter by repo name (optional)")
+
+    dk_build_base = docker_sub.add_parser(
+        "build-base", help="Build or rebuild the base Docker image for a repo"
+    )
+    dk_build_base.add_argument("--repo", required=True, help="OWNER/REPO")
+    dk_build_base.add_argument(
+        "--path",
+        default=".",
+        dest="dockerfile_dir",
+        help="Directory containing the Dockerfile (default: current directory)",
+    )
+
+    dk_shell = docker_sub.add_parser(
+        "shell",
+        help=(
+            "One command: build image if needed, restart container, exec into bash. "
+            "Use --rebuild to force a fresh image build (required after Dockerfile changes)."
+        ),
+    )
+    dk_shell.add_argument("--repo", required=True, help="OWNER/REPO")
+    dk_shell.add_argument("--branch", required=True, help="Branch name")
+    dk_shell.add_argument(
+        "--path",
+        default=".",
+        dest="dockerfile_dir",
+        help="Directory containing the Dockerfile (default: current directory)",
+    )
+    dk_shell.add_argument(
+        "--env-file",
+        default=None,
+        dest="env_file",
+        help="Path to .env file to bind-mount read-only into the container",
+    )
+    dk_shell.add_argument(
+        "--rebuild",
+        action="store_true",
+        default=False,
+        help="Rebuild the base image before starting (use after Dockerfile changes)",
+    )
+
     return parser
 
 
@@ -1585,6 +1669,7 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
         "workspace",
         "repo",
         "sync",
+        "docker",
     }:
         return raw
     # Backward-compatible behavior: previous root command maps to init.
@@ -3197,6 +3282,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Reviewers requested on PR #{ns.pr_number}: {', '.join(requested)}")
             return 0
 
+        if ns.pr_command == "wait":
+            from .github_api import pr_wait
+
+            cp = pr_wait(
+                target_repo,
+                ns.pr_number,
+                token,
+                interval=ns.interval,
+                timeout=ns.timeout,
+            )
+            if cp.returncode == 0:
+                print(cp.stdout.strip())
+                return 0
+            print(cp.stderr.strip(), file=sys.stderr)
+            return cp.returncode
+
     if ns.mode == "branch":
         import json as _json
 
@@ -3283,6 +3384,14 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
     if ns.mode == "workspace":
+        import warnings
+
+        warnings.warn(
+            "The 'workspace' command group is deprecated. "
+            "Use 'repo-scaffold docker spin-up/spin-down/list' instead.",
+            DeprecationWarning,
+            stacklevel=1,
+        )
         from .workspace_ops import (
             workspace_configure_auth,
             workspace_create,
@@ -3336,6 +3445,67 @@ def main(argv: list[str] | None = None) -> int:
                 print(cp.stderr.strip(), file=sys.stderr)
                 return 1
             print(cp.stdout.strip())
+            return 0
+
+    if ns.mode == "docker":
+        from .docker_ops import (
+            docker_build_base,
+            docker_list,
+            docker_spin_down,
+            docker_spin_up,
+        )
+
+        token = token_from_repo(Path.cwd()) or ""
+
+        if ns.docker_command == "spin-up":
+            env_file = Path(ns.env_file) if ns.env_file else None
+            cp = docker_spin_up(ns.repo, ns.branch, token, env_path=env_file)
+            if cp.returncode != 0:
+                print(cp.stderr.strip(), file=sys.stderr)
+                return 1
+            print(cp.stdout.strip())
+            return 0
+
+        if ns.docker_command == "spin-down":
+            cp = docker_spin_down(ns.repo, ns.branch)
+            if cp.returncode != 0:
+                print(cp.stderr.strip(), file=sys.stderr)
+                return 1
+            print(cp.stdout.strip())
+            return 0
+
+        if ns.docker_command == "list":
+            cp = docker_list(repo=ns.repo)
+            if cp.returncode != 0:
+                print(cp.stderr.strip(), file=sys.stderr)
+                return 1
+            print(cp.stdout.strip())
+            return 0
+
+        if ns.docker_command == "build-base":
+            cp = docker_build_base(ns.repo, Path(ns.dockerfile_dir))
+            if cp.returncode != 0:
+                print(cp.stderr.strip(), file=sys.stderr)
+                return 1
+            print(cp.stdout.strip())
+            return 0
+
+        if ns.docker_command == "shell":
+            from .docker_ops import docker_shell
+
+            env_file = Path(ns.env_file) if ns.env_file else None
+            try:
+                docker_shell(
+                    ns.repo,
+                    ns.branch,
+                    token,
+                    Path(ns.dockerfile_dir),
+                    rebuild=ns.rebuild,
+                    env_path=env_file,
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
             return 0
 
     parser.error("Unsupported command.")

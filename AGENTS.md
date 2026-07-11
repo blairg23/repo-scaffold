@@ -28,39 +28,72 @@ cp .env.example .env
 
 ## Docker dev environment
 
-A Docker dev container provides a clean Linux environment for all tool execution,
-avoiding Windows/WSL venv conflicts. Credentials are bind-mounted at runtime -- never
-baked into the image.
+Each active branch gets its own container (`{repo-name}-{branch-slug}`). All containers
+share a base image built once from the Dockerfile in the repo root. Credentials are
+passed as env vars at runtime -- never baked into the image.
 
-**Setup (one time):**
+### Per-repo container workflow (preferred)
+
+One command to get a shell inside an isolated container for any branch:
+
 ```bash
-cp docker-compose.override.yml.example docker-compose.override.yml
-# docker-compose.override.yml is gitignored; edit if needed
-docker compose build
+poetry run repo-scaffold docker shell --repo OWNER/REPO --branch feat/NNN-my-feature
 ```
 
-**Start the container:**
+This builds the base image if needed, tears down any existing container for the branch,
+starts a fresh one (clones the branch, installs deps), and drops you straight into bash.
+The repo is at `/{repo-name}` inside the container (e.g. `/repo-scaffold`).
+
+Add `--rebuild` when the Dockerfile changes:
+
 ```bash
-docker compose up -d
+poetry run repo-scaffold docker shell --repo OWNER/REPO --branch feat/NNN-my-feature --rebuild
 ```
 
-**Run commands inside the container:**
+Other commands (rarely needed directly):
+
 ```bash
-docker exec -it repo-scaffold-dev poetry run repo-scaffold <command>
-docker exec -it repo-scaffold-dev poetry run tox -e precommit
-docker exec -it repo-scaffold-dev poetry run pytest
+# Build or rebuild the base image without starting a container
+poetry run repo-scaffold docker build-base --repo OWNER/REPO [--path .]
+
+# Start a container without exec-ing in (for background agent use)
+poetry run repo-scaffold docker spin-up --repo OWNER/REPO --branch BRANCH
+
+# Tear down a container
+poetry run repo-scaffold docker spin-down --repo OWNER/REPO --branch BRANCH
+
+# List all agent containers
+poetry run repo-scaffold docker list [--repo OWNER/REPO]
+
+# Watch CI; exits 0 (green), 1 (red), or 2 (timeout)
+poetry run repo-scaffold pr wait --repo OWNER/REPO --pr-number N
 ```
 
-**Stop the container:**
+Container names are derived deterministically: `{repo-slug}-{branch-slug}`.
+Example: `repo-scaffold-feat-238-docker-per-repo-containers`.
+
+Multiple agents can run in parallel -- each gets an isolated container.
+
+**If you are already inside a container: do not run any `docker` or `workspace` commands.**
+Both are host-side tools. Inside your container, your branch is already checked out at
+`/{repo-name}`. Just work there: edit files, run tests, commit, push. No worktrees,
+no new containers, no workspace create.
+
+### Compose-based container (legacy)
+
+The Compose stack (`docker-compose.yml` + optional `docker-compose.override.yml`) runs
+a single long-lived container for the repo root. Prefer the per-repo container workflow
+above for branch work; the Compose stack is useful for quick interactive exploration.
+
 ```bash
-docker compose down
+docker compose build       # build the image
+docker compose up -d       # start
+docker compose down        # stop
+docker exec -it repo-scaffold-dev bash
 ```
 
-Repo worktrees are stored in the named volume `repo-worktrees` at `/workspace/repos`
-inside the container, persisting across restarts. The entire project root is bind-mounted
-read-write at `/workspace`, so `.env` is readable and writable (required for `repo discover`
-to save `GH_TOKEN`). Source edits on the host are visible inside the container immediately
--- no rebuild needed.
+The entire project root is bind-mounted read-write at `/workspace`, so `.env` is
+readable and writable (required for `repo discover` to save `GH_TOKEN`).
 
 ---
 
@@ -89,9 +122,22 @@ poetry run repo-scaffold pr update  --repo OWNER/REPO --pr-number N [--title "TI
 poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N --body "TEXT" [--reply-to COMMENT_ID]
 poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_ID
 poetry run repo-scaffold pr checks  --repo OWNER/REPO --pr-number N [--json]
+poetry run repo-scaffold pr wait    --repo OWNER/REPO --pr-number N [--interval 30] [--timeout 1800]
 ```
 
+`pr wait` polls until all checks pass (exit 0), any check fails (exit 1), or the timeout
+is reached (exit 2, default 30 min). Use it to block an agent loop on CI.
+
 > Never call `pr merge` -- only CODEOWNERS may merge. See CLAUDE.md.
+
+### Docker containers
+
+```bash
+poetry run repo-scaffold docker build-base --repo OWNER/REPO [--path .]
+poetry run repo-scaffold docker spin-up    --repo OWNER/REPO --branch BRANCH [--env-file .env]
+poetry run repo-scaffold docker spin-down  --repo OWNER/REPO --branch BRANCH
+poetry run repo-scaffold docker list       [--repo OWNER/REPO] [--json]
+```
 
 ### Branches
 
@@ -155,6 +201,7 @@ poetry run repo-scaffold check rules --repo OWNER/REPO
 | `src/repo_scaffold/cli.py` | Argparse entry point -- all subcommands |
 | `src/repo_scaffold/generator.py` | Scaffold file generation (CI, templates, SPEC.md, etc.) |
 | `src/repo_scaffold/github_api.py` | All GitHub API calls (urllib, no CLI) |
+| `src/repo_scaffold/docker_ops.py` | Per-repo Docker container lifecycle (spin-up/down/list/build-base) |
 | `src/repo_scaffold/backlog_ops.py` | Issue, milestone, label, project operations |
 | `src/repo_scaffold/create_ops.py` | Repo creation, settings, git init |
 | `src/repo_scaffold/project_ops.py` | GitHub Projects v2 management |
@@ -303,6 +350,7 @@ Coverage must stay at or above 70%.
 
 ## Standing rules
 
+- **Docs ship with code.** Any PR that adds, changes, or deprecates a feature must update AGENTS.md, CLAUDE.md, and any relevant docs/ files in the same commit. A feature is not done until the docs reflect it. Deprecating a workflow means removing or replacing its documentation immediately -- stale docs cause real agent failures.
 - Never use `gh` CLI -- use repo-scaffold commands or `github_api.py` directly.
 - Never merge or close PRs -- only CODEOWNERS may do that.
 - Never push to a branch whose PR is already merged -- cut a fresh branch from main.

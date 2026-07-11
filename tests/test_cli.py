@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -3869,3 +3870,154 @@ def test_pr_check_sop_json_output_non_compliant_exits_nonzero(
     out = capsys.readouterr().out
     parsed = json.loads(out)
     assert parsed[0]["compliant"] is False
+
+
+# ---------------------------------------------------------------------------
+# docker subcommands
+# ---------------------------------------------------------------------------
+
+
+def _docker_ok(stdout: str = "ok") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
+
+
+def _docker_err(stderr: str = "err") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=stderr)
+
+
+def test_docker_build_base_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        "repo_scaffold.docker_ops.docker_build_base",
+        lambda repo, path: _docker_ok("Built repo-scaffold-base:latest"),
+    )
+
+    rc = main(["docker", "build-base", "--repo", "owner/repo-scaffold"])
+    assert rc == 0
+    assert "Built" in capsys.readouterr().out
+
+
+def test_docker_build_base_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        "repo_scaffold.docker_ops.docker_build_base",
+        lambda repo, path: _docker_err("No Dockerfile found"),
+    )
+
+    rc = main(["docker", "build-base", "--repo", "owner/repo-scaffold"])
+    assert rc == 1
+    assert "No Dockerfile" in capsys.readouterr().err
+
+
+def test_docker_spin_up_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        "repo_scaffold.docker_ops.docker_spin_up",
+        lambda repo, branch, token, env_path=None: _docker_ok(
+            "Started container: owner-main"
+        ),
+    )
+
+    rc = main(["docker", "spin-up", "--repo", "owner/myrepo", "--branch", "main"])
+    assert rc == 0
+    assert "Started" in capsys.readouterr().out
+
+
+def test_docker_spin_up_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        "repo_scaffold.docker_ops.docker_spin_up",
+        lambda repo, branch, token, env_path=None: _docker_err("already exists"),
+    )
+
+    rc = main(["docker", "spin-up", "--repo", "owner/myrepo", "--branch", "main"])
+    assert rc == 1
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_docker_spin_down_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        "repo_scaffold.docker_ops.docker_spin_down",
+        lambda repo, branch: _docker_ok("Removed container: owner-main"),
+    )
+
+    rc = main(["docker", "spin-down", "--repo", "owner/myrepo", "--branch", "main"])
+    assert rc == 0
+    assert "Removed" in capsys.readouterr().out
+
+
+def test_docker_spin_down_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        "repo_scaffold.docker_ops.docker_spin_down",
+        lambda repo, branch: _docker_err("Container not found"),
+    )
+
+    rc = main(["docker", "spin-down", "--repo", "owner/myrepo", "--branch", "main"])
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_docker_list_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        "repo_scaffold.docker_ops.docker_list",
+        lambda repo=None: _docker_ok("running  myrepo-main"),
+    )
+
+    rc = main(["docker", "list"])
+    assert rc == 0
+    assert "myrepo-main" in capsys.readouterr().out
+
+
+def test_docker_list_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        "repo_scaffold.docker_ops.docker_list",
+        lambda repo=None: _docker_err("Failed to list containers"),
+    )
+
+    rc = main(["docker", "list"])
+    assert rc == 1
+    assert "Failed to list" in capsys.readouterr().err

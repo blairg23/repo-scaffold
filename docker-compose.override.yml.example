@@ -14,3 +14,4 @@ services:
     volumes:
       - .:/workspace                    # live source edits + .env readable/writable
       - repo-worktrees:/workspace/repos # named volume wins for git worktrees
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker socket passthrough for docker commands
