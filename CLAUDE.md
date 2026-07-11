@@ -106,6 +106,11 @@ poetry run repo-scaffold create --repo OWNER/REPO --visibility public --path /pa
 
 poetry run repo-scaffold check rules --repo OWNER/REPO
 
+# Apply/sync repo settings, ruleset, and security features. If .github/dependabot.yml
+# can't be committed directly because the ruleset already requires PRs, this opens a
+# branch + PR for it instead of just warning -- check for and merge that PR.
+poetry run repo-scaffold apply rules --repo OWNER/REPO --apply
+
 # Archive a repo (read-only; reversible via the GitHub UI). Prompts for confirmation
 # unless --yes is passed; refuses in a non-interactive shell without --yes.
 poetry run repo-scaffold repo archive --repo OWNER/REPO [--yes]

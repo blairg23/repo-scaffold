@@ -13,6 +13,7 @@ from urllib.parse import quote
 from .auth_tokens import is_placeholder_token, resolve_gh_token
 from .github_api import (
     branch_create as _github_branch_create,
+    branch_get_sha as _github_branch_get_sha,
     pr_create as _github_pr_create,
     repo_create as _github_repo_create,
     rest as _github_rest,
@@ -514,6 +515,32 @@ def _create_dependabot_yml_via_pr(
             f"{branch_cp.stderr.strip()}"
         )
         return False
+
+    if already_exists:
+        # A leftover branch from a previous run (or an unrelated ref that happens
+        # to share this name) could carry stale or foreign commits, and updating
+        # an existing dependabot.yml on it would need a sha we don't have. Force
+        # the ref back to the current default-branch tip so this run always
+        # starts from a clean, known state instead of reusing whatever is there.
+        base_sha = _github_branch_get_sha(repo, default_branch, token)
+        if not base_sha:
+            warn(
+                f"Warning: could not resolve {default_branch} SHA to reset "
+                f"stale branch {branch_name}."
+            )
+            return False
+        reset_cp = _github_rest(
+            "PATCH",
+            f"/repos/{repo}/git/refs/heads/{branch_name}",
+            token,
+            {"sha": base_sha, "force": True},
+        )
+        if reset_cp.returncode not in (0, 200):
+            warn(
+                f"Warning: could not reset stale branch {branch_name}: "
+                f"{reset_cp.stderr.strip()}"
+            )
+            return False
 
     encoded = base64.b64encode(content.encode()).decode()
     file_cp = _github_rest(

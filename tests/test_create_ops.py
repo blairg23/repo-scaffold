@@ -2191,6 +2191,205 @@ def test_ensure_dependabot_version_updates_falls_back_to_pr_when_protected(
     assert not any(line.startswith("WARN:") for line in out_lines)
 
 
+def test_ensure_dependabot_version_updates_resets_stale_fallback_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A leftover chore/add-dependabot-yml branch is force-reset to the current
+    default-branch tip rather than reused as-is, so it can't carry over stale or
+    foreign commits."""
+    out_lines: list[str] = []
+
+    def _fake_api(
+        *,
+        method: str,
+        endpoint: str,
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        if method == "GET":
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="HTTP 404"
+            )
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=409,
+            stdout="",
+            stderr="Changes must be made through a pull request.",
+        )
+
+    def _fake_branch_create(
+        repo: str, name: str, token: str, base: str = "main"
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=[], returncode=422, stdout="", stderr="Reference already exists"
+        )
+
+    def _fake_branch_get_sha(repo: str, branch: str, token: str) -> str | None:
+        assert branch == "main"
+        return "deadbeef"
+
+    rest_calls: list[dict[str, object]] = []
+
+    def _fake_github_rest(
+        method: str, endpoint: str, token: str, data: object = None
+    ) -> subprocess.CompletedProcess[str]:
+        rest_calls.append({"method": method, "endpoint": endpoint, "data": data})
+        # PATCH (ref reset) returns 200, PUT (file create) returns 201 -- match
+        # real GitHub API status codes so the two-step flow is exercised properly.
+        code = 200 if method == "PATCH" else 201
+        return subprocess.CompletedProcess(
+            args=[], returncode=code, stdout="{}", stderr=""
+        )
+
+    def _fake_pr_create(
+        repo: str, title: str, body: str, head: str, base: str, token: str
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=201,
+            stdout='{"html_url": "https://github.com/acme/repo/pull/100"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(create_ops, "_api", _fake_api)
+    monkeypatch.setattr(create_ops, "_github_branch_create", _fake_branch_create)
+    monkeypatch.setattr(create_ops, "_github_branch_get_sha", _fake_branch_get_sha)
+    monkeypatch.setattr(create_ops, "_github_rest", _fake_github_rest)
+    monkeypatch.setattr(create_ops, "_github_pr_create", _fake_pr_create)
+    monkeypatch.setattr(create_ops, "_token_from_repo", lambda _: "tok")
+
+    create_ops._ensure_dependabot_version_updates(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+        languages=["python"],
+        out=out_lines.append,
+        warn=lambda msg: out_lines.append(f"WARN:{msg}"),
+    )
+
+    assert rest_calls[0]["method"] == "PATCH"
+    assert (
+        rest_calls[0]["endpoint"]
+        == "/repos/acme/repo/git/refs/heads/chore/add-dependabot-yml"
+    )
+    assert rest_calls[0]["data"] == {"sha": "deadbeef", "force": True}
+    assert rest_calls[1]["method"] == "PUT"
+    assert not any(line.startswith("WARN:") for line in out_lines)
+
+
+def test_ensure_dependabot_version_updates_warns_when_stale_branch_reset_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out_lines: list[str] = []
+
+    def _fake_api(
+        *,
+        method: str,
+        endpoint: str,
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        if method == "GET":
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="HTTP 404"
+            )
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=409,
+            stdout="",
+            stderr="Changes must be made through a pull request.",
+        )
+
+    def _fake_branch_create(
+        repo: str, name: str, token: str, base: str = "main"
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=[], returncode=422, stdout="", stderr="Reference already exists"
+        )
+
+    def _fake_branch_get_sha(repo: str, branch: str, token: str) -> str | None:
+        return None
+
+    monkeypatch.setattr(create_ops, "_api", _fake_api)
+    monkeypatch.setattr(create_ops, "_github_branch_create", _fake_branch_create)
+    monkeypatch.setattr(create_ops, "_github_branch_get_sha", _fake_branch_get_sha)
+    monkeypatch.setattr(create_ops, "_token_from_repo", lambda _: "tok")
+
+    create_ops._ensure_dependabot_version_updates(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+        languages=["python"],
+        out=out_lines.append,
+        warn=lambda msg: out_lines.append(f"WARN:{msg}"),
+    )
+
+    assert any(
+        "WARN:" in line and "could not resolve main SHA to reset" in line
+        for line in out_lines
+    )
+
+
+def test_ensure_dependabot_version_updates_warns_when_stale_branch_patch_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out_lines: list[str] = []
+
+    def _fake_api(
+        *,
+        method: str,
+        endpoint: str,
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        if method == "GET":
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="HTTP 404"
+            )
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=409,
+            stdout="",
+            stderr="Changes must be made through a pull request.",
+        )
+
+    def _fake_branch_create(
+        repo: str, name: str, token: str, base: str = "main"
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=[], returncode=422, stdout="", stderr="Reference already exists"
+        )
+
+    def _fake_branch_get_sha(repo: str, branch: str, token: str) -> str | None:
+        return "deadbeef"
+
+    def _fake_github_rest(
+        method: str, endpoint: str, token: str, data: object = None
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=[], returncode=403, stdout="", stderr="protected ref"
+        )
+
+    monkeypatch.setattr(create_ops, "_api", _fake_api)
+    monkeypatch.setattr(create_ops, "_github_branch_create", _fake_branch_create)
+    monkeypatch.setattr(create_ops, "_github_branch_get_sha", _fake_branch_get_sha)
+    monkeypatch.setattr(create_ops, "_github_rest", _fake_github_rest)
+    monkeypatch.setattr(create_ops, "_token_from_repo", lambda _: "tok")
+
+    create_ops._ensure_dependabot_version_updates(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+        languages=["python"],
+        out=out_lines.append,
+        warn=lambda msg: out_lines.append(f"WARN:{msg}"),
+    )
+
+    assert any(
+        "WARN:" in line and "could not reset stale branch" in line for line in out_lines
+    )
+
+
 def test_ensure_dependabot_version_updates_warns_when_pr_fallback_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
