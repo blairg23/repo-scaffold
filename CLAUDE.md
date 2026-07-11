@@ -105,6 +105,10 @@ poetry run repo-scaffold apply templates --path . --name NAME --owner OWNER
 poetry run repo-scaffold create --repo OWNER/REPO --visibility public --path /path/to/code
 
 poetry run repo-scaffold check rules --repo OWNER/REPO
+
+# Archive a repo (read-only; reversible via the GitHub UI). Prompts for confirmation
+# unless --yes is passed; refuses in a non-interactive shell without --yes.
+poetry run repo-scaffold repo archive --repo OWNER/REPO [--yes]
 ```
 
 ## PR Conventions

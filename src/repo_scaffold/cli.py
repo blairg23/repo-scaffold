@@ -51,6 +51,7 @@ from .github_api import (
     pr_reviews,
     pr_update,
     pr_view,
+    repo_archive,
     token_from_repo,
 )
 from .backlog_import import build_backlog_import_file
@@ -770,6 +771,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes",
         action="store_true",
         help="Skip confirmation before registering",
+    )
+    repo_archive_cmd = repo_sub.add_parser(
+        "archive",
+        help="Archive a GitHub repository (read-only; reversible via the GitHub UI)",
+    )
+    repo_archive_cmd.add_argument(
+        "--repo", required=True, help="GitHub repo (owner/repo)"
+    )
+    repo_archive_cmd.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the confirmation prompt",
     )
 
     sync_cmd = subparsers.add_parser(
@@ -2170,6 +2183,35 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Error: repo not registered: {ns.repo}", file=sys.stderr)
             return 2
         print(f"Removed {ns.repo} from the registry.")
+        return 0
+
+    if ns.mode == "repo" and ns.repo_command == "archive":
+        if not ns.yes:
+            if not sys.stdin.isatty():
+                print(
+                    "Non-interactive shell detected and --yes not set; refusing to archive.",
+                    file=sys.stderr,
+                )
+                return 2
+            reply = (
+                input(
+                    f"Archive {ns.repo}? This makes it read-only (reversible via the GitHub UI). [y/N] "
+                )
+                .strip()
+                .lower()
+            )
+            if reply not in {"y", "yes"}:
+                print("Aborted.")
+                return 0
+        token = token_from_repo(Path.cwd())
+        if not token:
+            print("Error: no GH_TOKEN found.", file=sys.stderr)
+            return 2
+        cp = repo_archive(ns.repo, token)
+        if cp.returncode not in (0, 200):
+            print(f"Error: {cp.stderr.strip()}", file=sys.stderr)
+            return 1
+        print(f"Archived {ns.repo}.")
         return 0
 
     if ns.mode == "repo" and ns.repo_command == "discover":

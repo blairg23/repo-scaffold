@@ -316,6 +316,42 @@ def test_repo_create_user() -> None:
 
 
 # ---------------------------------------------------------------------------
+# repo_archive
+# ---------------------------------------------------------------------------
+
+
+def test_repo_archive_sends_patch_with_archived_true() -> None:
+    repo_data = json.dumps({"full_name": "alice/myrepo", "archived": True})
+    captured: dict[str, object] = {}
+
+    def _fake_urlopen(req: urllib.request.Request) -> MagicMock:
+        captured["method"] = req.get_method()
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode())
+        return _mock_resp(200, repo_data)
+
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+        cp = github_api.repo_archive("alice/myrepo", "token")
+
+    assert cp.returncode == 0
+    assert json.loads(cp.stdout)["archived"] is True
+    assert captured["method"] == "PATCH"
+    assert captured["url"] == "https://api.github.com/repos/alice/myrepo"
+    assert captured["body"] == {"archived": True}
+
+
+def test_repo_archive_returns_error_on_failure() -> None:
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=_http_error(404, '{"message":"Not Found"}'),
+    ):
+        cp = github_api.repo_archive("alice/ghost-repo", "token")
+
+    assert cp.returncode == 404
+    assert "Not Found" in cp.stderr
+
+
+# ---------------------------------------------------------------------------
 # validate_token / get_authenticated_login
 # ---------------------------------------------------------------------------
 
