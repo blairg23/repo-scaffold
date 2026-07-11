@@ -3217,6 +3217,46 @@ def test_repo_forget_missing_repo_errors(
     assert "not registered" in stderr
 
 
+def test_repo_archive_with_yes_flag_skips_prompt(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import subprocess
+
+    monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        "repo_scaffold.cli.repo_archive",
+        lambda repo, token: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout='{"archived": true}', stderr=""
+        ),
+    )
+    rc = main(["repo", "archive", "--repo", "acme/repo", "--yes"])
+    assert rc == 0
+    assert "Archived acme/repo." in capsys.readouterr().out
+
+
+def test_repo_archive_refuses_without_yes_in_non_interactive_shell(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        "repo_scaffold.cli.sys.stdin", SimpleNamespace(isatty=lambda: False)
+    )
+    rc = main(["repo", "archive", "--repo", "acme/repo"])
+    assert rc == 2
+    assert "refusing to archive" in capsys.readouterr().err
+
+
+def test_repo_archive_prompts_and_aborts_on_no(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        "repo_scaffold.cli.sys.stdin", SimpleNamespace(isatty=lambda: True)
+    )
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    rc = main(["repo", "archive", "--repo", "acme/repo"])
+    assert rc == 0
+    assert "Aborted." in capsys.readouterr().out
+
+
 def test_apply_rules_with_repos_flag_uses_registry_paths(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -882,6 +882,11 @@ def repo_create(
     return rest("POST", endpoint, token, payload)
 
 
+def repo_archive(repo: str, token: str) -> subprocess.CompletedProcess[str]:
+    """Archive a GitHub repo via REST API, making it read-only."""
+    return rest("PATCH", f"/repos/{repo}", token, {"archived": True})
+
+
 def _is_org(owner: str, token: str) -> bool:
     cp = rest("GET", f"/users/{owner}", token)
     if cp.returncode != 0:
