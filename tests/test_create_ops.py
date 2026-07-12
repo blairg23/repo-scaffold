@@ -197,6 +197,25 @@ def test_default_branch_ruleset_payload_deduplicates_go_gin_context() -> None:
     assert contexts == ["check-sop", "validate-pr", "go"]
 
 
+def test_default_branch_ruleset_payload_python_expands_to_matrix_contexts() -> None:
+    """Python's CI job is a lint/type/coverage matrix, so the required check
+    must be each matrixed check-run name -- a bare "python" context can never
+    be satisfied by any actual check GitHub reports."""
+    payload = json.loads(
+        create_ops._default_branch_ruleset_payload(languages=["python"])
+    )
+    rule = next(r for r in payload["rules"] if r["type"] == "required_status_checks")
+    contexts = [c["context"] for c in rule["parameters"]["required_status_checks"]]
+    assert contexts == [
+        "check-sop",
+        "validate-pr",
+        "python (lint)",
+        "python (type)",
+        "python (coverage)",
+    ]
+    assert "python" not in contexts
+
+
 def test_apply_repository_settings_forwards_languages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -454,6 +473,35 @@ def test_compare_ruleset_required_status_checks_all_contexts_present_no_drift() 
 
 
 def test_compare_ruleset_always_required_plus_language_contexts() -> None:
+    # Python's CI job is a lint/type/coverage matrix, so GitHub reports three
+    # separate check-run names -- a bare "python" context never appears and
+    # can never be satisfied. All three matrix leg contexts must be present.
+    ruleset = _clean_baseline_ruleset(
+        extra_rules=[
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "required_status_checks": [
+                        {"context": "check-sop"},
+                        {"context": "validate-pr"},
+                        {"context": "python (lint)"},
+                        {"context": "python (type)"},
+                        {"context": "python (coverage)"},
+                    ],
+                    "strict_required_status_checks_policy": False,
+                },
+            }
+        ]
+    )
+    drifts = create_ops._compare_ruleset_against_baseline(
+        [ruleset], default_branch="main", languages=["python"]
+    )
+    assert not any("required_status_checks" in d for d in drifts)
+
+
+def test_compare_ruleset_bare_python_context_is_insufficient() -> None:
+    """A bare "python" required context can never be satisfied by the matrixed
+    CI job, so it should still be reported as drift even when present."""
     ruleset = _clean_baseline_ruleset(
         extra_rules=[
             {
@@ -472,7 +520,12 @@ def test_compare_ruleset_always_required_plus_language_contexts() -> None:
     drifts = create_ops._compare_ruleset_against_baseline(
         [ruleset], default_branch="main", languages=["python"]
     )
-    assert not any("required_status_checks" in d for d in drifts)
+    missing_drift = next(
+        d for d in drifts if "required_status_checks missing contexts" in d
+    )
+    assert "python (lint)" in missing_drift
+    assert "python (type)" in missing_drift
+    assert "python (coverage)" in missing_drift
 
 
 def test_repo_metadata_and_ruleset_loaders_cover_success_and_error_paths(

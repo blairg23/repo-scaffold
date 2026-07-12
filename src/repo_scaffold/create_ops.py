@@ -89,11 +89,14 @@ def _repo_patch_payload() -> str:
     )
 
 
-_LANGUAGE_CI_CONTEXT: dict[str, str] = {
-    "react": "react",
-    "python": "python",
-    "go": "go",
-    "gin": "go",
+_LANGUAGE_CI_CONTEXT: dict[str, list[str]] = {
+    "react": ["react"],
+    # The python CI job runs as a lint/type/coverage matrix, so GitHub reports
+    # three separate check-run names -- never a bare "python" -- for each
+    # matrix leg. A bare "python" required context can never be satisfied.
+    "python": ["python (lint)", "python (type)", "python (coverage)"],
+    "go": ["go"],
+    "gin": ["go"],
 }
 
 _ALWAYS_REQUIRED_CONTEXTS: list[str] = ["check-sop", "validate-pr"]
@@ -159,13 +162,10 @@ def _default_branch_ruleset_payload(
 
     contexts = list(_ALWAYS_REQUIRED_CONTEXTS)
     if languages:
-        for ctx in dict.fromkeys(
-            _LANGUAGE_CI_CONTEXT[lang]
-            for lang in languages
-            if lang in _LANGUAGE_CI_CONTEXT
-        ):
-            if ctx not in contexts:
-                contexts.append(ctx)
+        for lang in dict.fromkeys(languages):
+            for ctx in _LANGUAGE_CI_CONTEXT.get(lang, []):
+                if ctx not in contexts:
+                    contexts.append(ctx)
     rules.append(
         {
             "type": "required_status_checks",
@@ -927,13 +927,10 @@ def _compare_ruleset_against_baseline(
 
     expected_contexts = list(_ALWAYS_REQUIRED_CONTEXTS)
     if languages:
-        for ctx in dict.fromkeys(
-            _LANGUAGE_CI_CONTEXT[lang]
-            for lang in languages
-            if lang in _LANGUAGE_CI_CONTEXT
-        ):
-            if ctx not in expected_contexts:
-                expected_contexts.append(ctx)
+        for lang in dict.fromkeys(languages):
+            for ctx in _LANGUAGE_CI_CONTEXT.get(lang, []):
+                if ctx not in expected_contexts:
+                    expected_contexts.append(ctx)
 
     status_checks_rule = rule_map.get("required_status_checks")
     if not isinstance(status_checks_rule, dict):
