@@ -1639,13 +1639,18 @@ def test_pr_check_sop_api_error_propagates() -> None:
     assert cp.returncode != 0
 
 
-def test_pr_check_sop_reply_same_author_not_compliant() -> None:
+def test_pr_check_sop_same_author_reply_still_counts() -> None:
+    """Matches validate-pr-sop.yml's actual enforcement exactly: any additional
+    comment counts as a reply, regardless of author. A self-review thread
+    (reviewer and replier sharing a GitHub login, e.g. the repo owner reviewing
+    their own PR) must not be misreported as missing a reply when one was
+    genuinely posted."""
     thread = _make_thread(
         "PRRT_8",
         is_resolved=True,
         num_comments=2,
         first_has_thumbs_up=True,
-        reply_author="reviewer",  # same author as thread opener -- not a valid SOP reply
+        reply_author="reviewer",  # same author as thread opener -- still a valid reply
     )
     with patch.object(
         github_api, "graphql", return_value=github_api._ok(_sop_resp([thread]))
@@ -1653,8 +1658,8 @@ def test_pr_check_sop_reply_same_author_not_compliant() -> None:
         cp = github_api.pr_check_sop("acme", "repo", 8, "tok")
     assert cp.returncode == 0
     report = json.loads(cp.stdout)
-    assert report[0]["has_reply"] is False
-    assert "reply" in report[0]["missing"]
+    assert report[0]["has_reply"] is True
+    assert report[0]["compliant"] is True
 
 
 def test_pr_check_sop_paginates_all_threads() -> None:

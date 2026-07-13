@@ -1663,15 +1663,14 @@ def pr_check_sop(
         comments = thread.get("comments", {}).get("nodes", [])
         first_comment = comments[0] if comments else {}
         first_comment_id = first_comment.get("databaseId")
-        first_author = first_comment.get("author", {}).get("login", "")
         reactions = first_comment.get("reactions", {}).get("nodes", [])
         has_plus_one = any(r.get("content") == "THUMBS_UP" for r in reactions)
 
-        # A valid SOP reply must come from a different author than the thread opener.
-        # This distinguishes an agent fix-reply from the reviewer adding follow-up comments.
-        has_reply = any(
-            c.get("author", {}).get("login", "") != first_author for c in comments[1:]
-        )
+        # Matches validate-pr-sop.yml's actual enforcement logic exactly: any
+        # additional comment counts as a reply, regardless of author. A same-author
+        # check would misreport self-review threads (reviewer and repo owner sharing
+        # a GitHub login) as missing a reply even when one was genuinely posted.
+        has_reply = len(comments) > 1
 
         missing = []
         if not has_reply:
