@@ -16,7 +16,7 @@ python = ">=3.10,<4.0"
 # Docker SDK: communicates with the Docker daemon via socket/named pipe.
 # Preferred over raw urllib here because Docker's transport layer differs per OS
 # (Unix socket on Linux/Mac, named pipe on Windows) -- the SDK abstracts this cleanly.
-docker = ">=7.1.0"
+docker = ">=7.2.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=9.1.1"
