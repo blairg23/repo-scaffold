@@ -2220,6 +2220,7 @@ def main(argv: list[str] | None = None) -> int:
                     dry_run=preview_only,
                     out=print,
                     warn=lambda line: print(line, file=sys.stderr),
+                    languages=resolve_languages(repo_dir),
                 )
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
@@ -2406,6 +2407,7 @@ def main(argv: list[str] | None = None) -> int:
                     repo_dir=repo_dir,
                     repo=target_repo,
                     out=print,
+                    languages=list(resolve_languages(repo_dir)),
                 )
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
@@ -2437,6 +2439,7 @@ def main(argv: list[str] | None = None) -> int:
                     dry_run=False,
                     out=print,
                     warn=lambda line: print(line, file=sys.stderr),
+                    languages=resolve_languages(repo_dir),
                 )
                 applied += 1
             except RuntimeError as exc:
