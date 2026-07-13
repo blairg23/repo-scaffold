@@ -21,7 +21,7 @@ docker = ">=7.1.0"
 [tool.poetry.group.dev.dependencies]
 pytest = ">=9.1.1"
 pre-commit = ">=4.6.0"
-tox = ">=4.20.0"
+tox = ">=4.56.4"
 
 [tool.poetry.scripts]
 repo-scaffold = "repo_scaffold.cli:main"
