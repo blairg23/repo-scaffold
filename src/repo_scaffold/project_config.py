@@ -191,6 +191,47 @@ def resolve_languages(repo_dir: Path) -> list[str]:
     return list(detect_languages_from_repo(repo_dir))
 
 
+def local_dir_matches_repo(repo_dir: Path, repo: str) -> bool:
+    """Best-effort check that repo_dir is actually a local clone of owner/repo,
+    by looking for `repo` in the directory's .git/config remote URLs."""
+    git_config = repo_dir / ".git" / "config"
+    if not git_config.exists():
+        return False
+    try:
+        text = git_config.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return repo.lower() in text.lower()
+
+
+def resolve_languages_for_repo(
+    repo_dir: Path,
+    repo: str,
+    *,
+    warn: Callable[[str], None] | None = None,
+) -> list[str]:
+    """Like resolve_languages, but refuses file-based detection unless repo_dir
+    is verifiably a clone of `repo` -- otherwise a bare `--repo` invocation with
+    no matching local clone would silently detect languages from whatever
+    unrelated directory the command happened to be run in."""
+    config = load_config(repo_dir)
+    if config.languages:
+        return config.languages
+
+    if not local_dir_matches_repo(repo_dir, repo):
+        if warn is not None:
+            warn(
+                f"warning: {repo_dir} does not look like a local clone of {repo}; "
+                "skipping local language detection (register the repo with "
+                "'repo register', or pass --path/--languages explicitly)"
+            )
+        return []
+
+    from .generator import detect_languages_from_repo
+
+    return list(detect_languages_from_repo(repo_dir))
+
+
 def prompt_config(
     current: ProjectConfig,
     prompt_fn: Callable[[str], str],

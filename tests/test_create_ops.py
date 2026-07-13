@@ -159,10 +159,12 @@ def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
     assert copilot_code_review_rule["parameters"]["review_on_push"] is True
 
 
-def test_default_branch_ruleset_payload_always_includes_required_status_checks() -> (
+def test_default_branch_ruleset_payload_includes_required_status_checks_with_languages() -> (
     None
 ):
-    payload = json.loads(create_ops._default_branch_ruleset_payload())
+    payload = json.loads(
+        create_ops._default_branch_ruleset_payload(languages=["python"])
+    )
     rule = next(
         (r for r in payload["rules"] if r["type"] == "required_status_checks"), None
     )
@@ -171,6 +173,24 @@ def test_default_branch_ruleset_payload_always_includes_required_status_checks()
     assert "check-sop" in contexts
     assert "validate-pr" in contexts
     assert rule["parameters"]["strict_required_status_checks_policy"] is False
+
+
+def test_default_branch_ruleset_payload_omits_required_status_checks_with_no_languages() -> (
+    None
+):
+    """A repo with no detected/declared languages has no CI producing check-sop,
+    validate-pr, or language-specific check-run names -- requiring them would
+    permanently block every PR on checks that can never run."""
+    payload = json.loads(create_ops._default_branch_ruleset_payload(languages=None))
+    rule_types = [r["type"] for r in payload["rules"]]
+    assert "required_status_checks" not in rule_types
+
+    payload_empty_list = json.loads(
+        create_ops._default_branch_ruleset_payload(languages=[])
+    )
+    assert "required_status_checks" not in [
+        r["type"] for r in payload_empty_list["rules"]
+    ]
 
 
 def test_default_branch_ruleset_payload_with_react_adds_required_status_checks() -> (
@@ -345,6 +365,7 @@ def test_compare_ruleset_against_baseline_reports_multiple_drifts() -> None:
             },
         ],
         default_branch="main",
+        languages=["python"],
     )
 
     assert "multiple managed default-branch rulesets found" in drifts
@@ -422,8 +443,21 @@ def test_compare_ruleset_missing_required_status_checks_reports_drift() -> None:
     drifts = create_ops._compare_ruleset_against_baseline(
         [_clean_baseline_ruleset()],
         default_branch="main",
+        languages=["python"],
     )
     assert "missing rule: required_status_checks" in drifts
+
+
+def test_compare_ruleset_no_languages_skips_required_status_checks() -> None:
+    """A repo with no detected/declared languages has no CI, so the ruleset
+    correctly omits required_status_checks -- that must not be reported as
+    drift."""
+    drifts = create_ops._compare_ruleset_against_baseline(
+        [_clean_baseline_ruleset()],
+        default_branch="main",
+        languages=None,
+    )
+    assert "missing rule: required_status_checks" not in drifts
 
 
 def test_compare_ruleset_required_status_checks_missing_always_required_contexts() -> (
@@ -441,7 +475,7 @@ def test_compare_ruleset_required_status_checks_missing_always_required_contexts
         ]
     )
     drifts = create_ops._compare_ruleset_against_baseline(
-        [ruleset], default_branch="main"
+        [ruleset], default_branch="main", languages=["python"]
     )
     assert any("required_status_checks missing contexts" in d for d in drifts)
     missing_drift = next(
@@ -467,7 +501,7 @@ def test_compare_ruleset_required_status_checks_all_contexts_present_no_drift() 
         ]
     )
     drifts = create_ops._compare_ruleset_against_baseline(
-        [ruleset], default_branch="main"
+        [ruleset], default_branch="main", languages=["unrecognized-lang"]
     )
     assert not any("required_status_checks" in d for d in drifts)
 
