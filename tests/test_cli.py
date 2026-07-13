@@ -1219,7 +1219,7 @@ def test_apply_rules_resolves_repo_from_dotenv(
     called: dict[str, object] = {}
 
     def _fake_apply_repository_settings(
-        *, repo_dir: Path, repo: str, dry_run: bool, out, warn
+        *, repo_dir: Path, repo: str, dry_run: bool, out, warn, languages=None
     ):
         called["repo_dir"] = repo_dir
         called["repo"] = repo
@@ -1246,7 +1246,7 @@ def test_apply_rules_dry_run_does_not_execute(
     called: dict[str, object] = {}
 
     def _fake_apply_repository_settings(
-        *, repo_dir: Path, repo: str, dry_run: bool, out, warn
+        *, repo_dir: Path, repo: str, dry_run: bool, out, warn, languages=None
     ):
         called["repo"] = repo
         called["dry_run"] = dry_run
@@ -3272,7 +3272,7 @@ def test_apply_rules_with_repos_flag_uses_registry_paths(
 
     calls: list[dict[str, object]] = []
 
-    def _fake_apply(*, repo_dir, repo, dry_run, out, warn):
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn, languages=None):
         calls.append({"repo_dir": repo_dir, "repo": repo})
 
     monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
@@ -3341,7 +3341,7 @@ def test_sync_rules_applies_only_confirmed_repos(
         ],
     )
 
-    def _fake_check(*, repo_dir, repo, out):
+    def _fake_check(*, repo_dir, repo, out, languages=None):
         failed = 1 if repo == "acme/drifted" else 0
         return SettingsCheckSummary(
             repo=repo, passed=7, failed=failed, skipped=0, drifts=()
@@ -3349,7 +3349,7 @@ def test_sync_rules_applies_only_confirmed_repos(
 
     applied: list[str] = []
 
-    def _fake_apply(*, repo_dir, repo, dry_run, out, warn):
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn, languages=None):
         applied.append(repo)
 
     monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
@@ -3373,7 +3373,7 @@ def test_sync_rules_no_drift_skips_apply(
         lambda: [RegistryEntry(repo="acme/clean", local_path="/local/clean")],
     )
 
-    def _fake_check(*, repo_dir, repo, out):
+    def _fake_check(*, repo_dir, repo, out, languages=None):
         return SettingsCheckSummary(repo=repo, passed=8, failed=0, skipped=0, drifts=())
 
     apply_called = False
@@ -3402,10 +3402,10 @@ def test_sync_rules_returns_nonzero_when_apply_fails(
         lambda: [RegistryEntry(repo="acme/drifted", local_path="/local/drifted")],
     )
 
-    def _fake_check(*, repo_dir, repo, out):
+    def _fake_check(*, repo_dir, repo, out, languages=None):
         return SettingsCheckSummary(repo=repo, passed=6, failed=1, skipped=0, drifts=())
 
-    def _fake_apply(*, repo_dir, repo, dry_run, out, warn):
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn, languages=None):
         raise RuntimeError("apply failed")
 
     monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
@@ -3426,7 +3426,7 @@ def test_sync_rules_returns_nonzero_when_check_fails(
         lambda: [RegistryEntry(repo="acme/broken", local_path="/local/broken")],
     )
 
-    def _fake_check(*, repo_dir, repo, out):
+    def _fake_check(*, repo_dir, repo, out, languages=None):
         raise RuntimeError("check failed")
 
     monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
@@ -3455,6 +3455,61 @@ def test_check_settings_uses_resolved_languages(
     assert captured["languages"] == ["python", "react"]
     stdout = capsys.readouterr().out
     assert "languages: python, react" in stdout
+
+
+def test_apply_rules_uses_resolved_languages(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """apply rules must auto-detect languages so the ruleset it writes actually
+    matches what check rules/check settings expect -- otherwise apply immediately
+    drifts against its own output."""
+    monkeypatch.setattr(
+        "repo_scaffold.cli.resolve_languages", lambda _repo_dir: ["python"]
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn, languages=None):
+        captured["languages"] = languages
+
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
+
+    rc = main(["apply", "rules", "--repo", "acme/repo", "--apply"])
+    assert rc == 0
+    assert captured["languages"] == ["python"]
+
+
+def test_sync_rules_uses_resolved_languages(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/drifted", local_path="/local/drifted")],
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.resolve_languages", lambda _repo_dir: ["python"]
+    )
+
+    check_languages: dict[str, object] = {}
+    apply_languages: dict[str, object] = {}
+
+    def _fake_check(*, repo_dir, repo, out, languages=None):
+        check_languages["languages"] = languages
+        return SettingsCheckSummary(repo=repo, passed=6, failed=1, skipped=0, drifts=())
+
+    def _fake_apply(*, repo_dir, repo, dry_run, out, warn, languages=None):
+        apply_languages["languages"] = languages
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_settings", _fake_check)
+    monkeypatch.setattr("repo_scaffold.cli.apply_repository_settings", _fake_apply)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    rc = main(["sync", "rules", "--all"])
+    assert rc == 0
+    assert check_languages["languages"] == ["python"]
+    assert apply_languages["languages"] == ["python"]
 
 
 def test_check_settings_languages_flag_overrides_config(
