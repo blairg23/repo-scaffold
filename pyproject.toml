@@ -20,7 +20,7 @@ docker = ">=7.1.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=9.0.3"
-pre-commit = ">=3.8.0"
+pre-commit = ">=4.6.0"
 tox = ">=4.20.0"
 
 [tool.poetry.scripts]
