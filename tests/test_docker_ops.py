@@ -475,3 +475,140 @@ def test_shell_raises_on_spinup_failure(tmp_path: Path) -> None:
     with patch("repo_scaffold.docker_ops._client", return_value=client):
         with pytest.raises(RuntimeError, match="Failed to start container"):
             docker_shell("owner/myrepo", "main", "tok", tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Windows Docker Desktop auto-start
+# ---------------------------------------------------------------------------
+
+
+def test_is_docker_unreachable_pipe_error() -> None:
+    from repo_scaffold.docker_ops import _is_docker_unreachable
+
+    exc = Exception("open //./pipe/dockerDesktopLinuxEngine: not found")
+    assert _is_docker_unreachable(exc) is True
+
+
+def test_is_docker_unreachable_connection_refused() -> None:
+    from repo_scaffold.docker_ops import _is_docker_unreachable
+
+    assert _is_docker_unreachable(Exception("Connection refused")) is True
+
+
+def test_is_docker_unreachable_unrelated_error() -> None:
+    from repo_scaffold.docker_ops import _is_docker_unreachable
+
+    assert _is_docker_unreachable(Exception("permission denied")) is False
+
+
+def test_find_docker_desktop_exe_found() -> None:
+    from repo_scaffold.docker_ops import (
+        _DOCKER_DESKTOP_CANDIDATE_PATHS,
+        _find_docker_desktop_exe,
+    )
+
+    with patch("repo_scaffold.docker_ops.Path.exists", return_value=True):
+        assert _find_docker_desktop_exe() == _DOCKER_DESKTOP_CANDIDATE_PATHS[0]
+
+
+def test_find_docker_desktop_exe_not_found() -> None:
+    from repo_scaffold.docker_ops import _find_docker_desktop_exe
+
+    with patch("repo_scaffold.docker_ops.Path.exists", return_value=False):
+        assert _find_docker_desktop_exe() is None
+
+
+def test_auto_start_noop_on_non_windows() -> None:
+    from repo_scaffold.docker_ops import _try_auto_start_docker_desktop
+
+    with patch("repo_scaffold.docker_ops.platform.system", return_value="Linux"):
+        assert _try_auto_start_docker_desktop() is False
+
+
+def test_auto_start_noop_when_exe_missing() -> None:
+    from repo_scaffold.docker_ops import _try_auto_start_docker_desktop
+
+    with patch(
+        "repo_scaffold.docker_ops.platform.system", return_value="Windows"
+    ), patch("repo_scaffold.docker_ops._find_docker_desktop_exe", return_value=None):
+        assert _try_auto_start_docker_desktop() is False
+
+
+def test_auto_start_returns_false_when_popen_fails() -> None:
+    from repo_scaffold.docker_ops import _try_auto_start_docker_desktop
+
+    with patch(
+        "repo_scaffold.docker_ops.platform.system", return_value="Windows"
+    ), patch(
+        "repo_scaffold.docker_ops._find_docker_desktop_exe", return_value="C:\\fake.exe"
+    ), patch(
+        "repo_scaffold.docker_ops.subprocess.Popen", side_effect=OSError("nope")
+    ):
+        assert _try_auto_start_docker_desktop() is False
+
+
+def test_auto_start_launches_and_waits() -> None:
+    from repo_scaffold.docker_ops import _try_auto_start_docker_desktop
+
+    with patch(
+        "repo_scaffold.docker_ops.platform.system", return_value="Windows"
+    ), patch(
+        "repo_scaffold.docker_ops._find_docker_desktop_exe", return_value="C:\\fake.exe"
+    ), patch(
+        "repo_scaffold.docker_ops.subprocess.Popen"
+    ), patch(
+        "repo_scaffold.docker_ops._wait_for_docker_ready", return_value=True
+    ) as wait_mock:
+        assert _try_auto_start_docker_desktop() is True
+        wait_mock.assert_called_once()
+
+
+def test_wait_for_docker_ready_success() -> None:
+    from repo_scaffold.docker_ops import _wait_for_docker_ready
+
+    mock_docker = MagicMock()
+    with patch.dict("sys.modules", {"docker": mock_docker}), patch(
+        "repo_scaffold.docker_ops.time.sleep"
+    ):
+        assert _wait_for_docker_ready(timeout=5) is True
+
+
+def test_wait_for_docker_ready_times_out() -> None:
+    from repo_scaffold.docker_ops import _wait_for_docker_ready
+
+    mock_docker = MagicMock()
+    mock_docker.from_env.side_effect = Exception("still down")
+    with patch.dict("sys.modules", {"docker": mock_docker}), patch(
+        "repo_scaffold.docker_ops.time.sleep"
+    ), patch("repo_scaffold.docker_ops.time.monotonic", side_effect=[0, 1, 100]):
+        assert _wait_for_docker_ready(timeout=5) is False
+
+
+def test_client_auto_starts_and_recovers() -> None:
+    from repo_scaffold.docker_ops import _client
+
+    mock_docker = MagicMock()
+    mock_docker.from_env.side_effect = [
+        Exception("open //./pipe/dockerDesktopLinuxEngine: not found"),
+        MagicMock(),
+    ]
+    with patch.dict("sys.modules", {"docker": mock_docker}), patch(
+        "repo_scaffold.docker_ops._try_auto_start_docker_desktop", return_value=True
+    ):
+        _client()
+
+    assert mock_docker.from_env.call_count == 2
+
+
+def test_client_raises_with_auto_start_context_when_recovery_fails() -> None:
+    from repo_scaffold.docker_ops import _client
+
+    mock_docker = MagicMock()
+    mock_docker.from_env.side_effect = Exception(
+        "open //./pipe/dockerDesktopLinuxEngine: not found"
+    )
+    with patch.dict("sys.modules", {"docker": mock_docker}), patch(
+        "repo_scaffold.docker_ops._try_auto_start_docker_desktop", return_value=False
+    ):
+        with pytest.raises(RuntimeError, match="Auto-start was attempted"):
+            _client()
