@@ -183,6 +183,8 @@ All GitHub operations (repos, issues, PRs, projects, backlog) are implemented vi
 
 Each branch gets its own isolated Docker container. The container clones the branch
 and installs deps on startup. Your code is at `/{repo-name}` inside the container.
+On Windows, Docker Desktop is auto-started if it isn't already running -- no manual
+start step needed before `docker shell`.
 
 ```bash
 # Get a shell in a branch container (builds image if needed, replaces any existing container)

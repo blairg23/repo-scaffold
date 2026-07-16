@@ -82,9 +82,15 @@ docker exec -it repo-scaffold-dev poetry run pytest -q                   # tests
 - Multiple agents can `docker exec` into the same running container concurrently -- all
   persistent state lives on the host or in the named volume, not in the container layer.
 
-**Windows note:** Docker Desktop for Windows must be running. WSL integration must be
-enabled for your distro (Docker Desktop → Resources → WSL Integration) to use `docker`
-commands from a WSL terminal.
+**Windows note:** Docker Desktop for Windows must already be running for this
+Compose-based flow (raw `docker compose`/`docker exec`, not run through `repo-scaffold`).
+WSL integration must be enabled for your distro (Docker Desktop → Resources → WSL
+Integration) to use `docker` commands from a WSL terminal.
+
+The preferred per-repo container workflow (`repo-scaffold docker shell`/`spin-up`/
+`build-base`, see [AGENTS.md](AGENTS.md#docker-dev-environment)) auto-starts Docker
+Desktop on Windows if it isn't already running and waits for the daemon before
+proceeding -- this manual-start requirement is specific to the Compose flow above.
 
 ## Commands
 

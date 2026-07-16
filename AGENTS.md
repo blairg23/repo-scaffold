@@ -32,6 +32,13 @@ Each active branch gets its own container (`{repo-name}-{branch-slug}`). All con
 share a base image built once from the Dockerfile in the repo root. Credentials are
 passed as env vars at runtime -- never baked into the image.
 
+**Windows:** `repo-scaffold docker shell`/`spin-up`/`build-base` auto-start Docker
+Desktop if it isn't already running (launches it, then polls the daemon for up to 90s
+before proceeding) and fail with a clear error if it can't come up in time. No manual
+"start Docker Desktop first" step is needed for these commands. This does not apply to
+the Compose-based flow in the [README](README.md#docker-dev-environment), which still
+requires Docker Desktop to already be running.
+
 ### Per-repo container workflow (preferred)
 
 One command to get a shell inside an isolated container for any branch:

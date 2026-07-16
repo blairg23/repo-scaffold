@@ -600,6 +600,23 @@ def test_client_auto_starts_and_recovers() -> None:
     assert mock_docker.from_env.call_count == 2
 
 
+def test_client_auto_starts_but_retry_still_fails() -> None:
+    from repo_scaffold.docker_ops import _client
+
+    mock_docker = MagicMock()
+    mock_docker.from_env.side_effect = [
+        Exception("open //./pipe/dockerDesktopLinuxEngine: not found"),
+        Exception("still unreachable after auto-start"),
+    ]
+    with patch.dict("sys.modules", {"docker": mock_docker}), patch(
+        "repo_scaffold.docker_ops._try_auto_start_docker_desktop", return_value=True
+    ):
+        with pytest.raises(RuntimeError, match="still unreachable after auto-start"):
+            _client()
+
+    assert mock_docker.from_env.call_count == 2
+
+
 def test_client_raises_with_auto_start_context_when_recovery_fails() -> None:
     from repo_scaffold.docker_ops import _client
 
