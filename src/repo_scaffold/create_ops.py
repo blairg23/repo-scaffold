@@ -160,21 +160,21 @@ def _default_branch_ruleset_payload(
         }
     )
 
+    contexts = list(_ALWAYS_REQUIRED_CONTEXTS)
     if languages:
-        contexts = list(_ALWAYS_REQUIRED_CONTEXTS)
         for lang in dict.fromkeys(languages):
             for ctx in _LANGUAGE_CI_CONTEXT.get(lang, []):
                 if ctx not in contexts:
                     contexts.append(ctx)
-        rules.append(
-            {
-                "type": "required_status_checks",
-                "parameters": {
-                    "required_status_checks": [{"context": ctx} for ctx in contexts],
-                    "strict_required_status_checks_policy": False,
-                },
-            }
-        )
+    rules.append(
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "required_status_checks": [{"context": ctx} for ctx in contexts],
+                "strict_required_status_checks_policy": False,
+            },
+        }
+    )
     return json.dumps(
         {
             "name": _SETTINGS_RULESET_NAME,
@@ -925,32 +925,30 @@ def _compare_ruleset_against_baseline(
                         f"copilot_code_review.{key} expected {expected!r} got {actual!r}"
                     )
 
+    expected_contexts = list(_ALWAYS_REQUIRED_CONTEXTS)
     if languages:
-        expected_contexts = list(_ALWAYS_REQUIRED_CONTEXTS)
         for lang in dict.fromkeys(languages):
             for ctx in _LANGUAGE_CI_CONTEXT.get(lang, []):
                 if ctx not in expected_contexts:
                     expected_contexts.append(ctx)
 
-        status_checks_rule = rule_map.get("required_status_checks")
-        if not isinstance(status_checks_rule, dict):
-            drifts.append("missing rule: required_status_checks")
-        else:
-            status_parameters = status_checks_rule.get("parameters")
-            actual_contexts = (
-                [
-                    item.get("context")
-                    for item in status_parameters.get("required_status_checks", [])
-                    if isinstance(item, dict)
-                ]
-                if isinstance(status_parameters, dict)
-                else []
-            )
-            missing = [c for c in expected_contexts if c not in actual_contexts]
-            if missing:
-                drifts.append(
-                    "required_status_checks missing contexts: " f"{missing!r}"
-                )
+    status_checks_rule = rule_map.get("required_status_checks")
+    if not isinstance(status_checks_rule, dict):
+        drifts.append("missing rule: required_status_checks")
+    else:
+        status_parameters = status_checks_rule.get("parameters")
+        actual_contexts = (
+            [
+                item.get("context")
+                for item in status_parameters.get("required_status_checks", [])
+                if isinstance(item, dict)
+            ]
+            if isinstance(status_parameters, dict)
+            else []
+        )
+        missing = [c for c in expected_contexts if c not in actual_contexts]
+        if missing:
+            drifts.append("required_status_checks missing contexts: " f"{missing!r}")
 
     return drifts
 

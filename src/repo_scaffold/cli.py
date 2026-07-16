@@ -2254,6 +2254,11 @@ def main(argv: list[str] | None = None) -> int:
                     repo_dir=repo_dir,
                     repo=target_repo,
                     out=print,
+                    languages=resolve_languages_for_repo(
+                        repo_dir,
+                        target_repo,
+                        warn=lambda line: print(line, file=sys.stderr),
+                    ),
                 )
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)

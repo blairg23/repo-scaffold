@@ -1327,7 +1327,9 @@ def test_check_rules_resolves_repo_from_dotenv(
 
     called: dict[str, object] = {}
 
-    def _fake_check_repository_settings(*, repo_dir: Path, repo: str, out):
+    def _fake_check_repository_settings(
+        *, repo_dir: Path, repo: str, out, languages=None
+    ):
         called["repo_dir"] = repo_dir
         called["repo"] = repo
         out(f"check repository settings: {repo}")
@@ -1356,7 +1358,9 @@ def test_check_rules_resolves_repo_from_dotenv(
 def test_check_rules_returns_nonzero_when_drift_found(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def _fake_check_repository_settings(*, repo_dir: Path, repo: str, out):
+    def _fake_check_repository_settings(
+        *, repo_dir: Path, repo: str, out, languages=None
+    ):
         out("DRIFT merge settings: allow_merge_commit expected False got True")
         return SettingsCheckSummary(
             repo=repo,
@@ -3307,7 +3311,7 @@ def test_check_rules_with_all_flag_iterates_registry(
         lambda: [RegistryEntry(repo="acme/a", local_path="/local/a")],
     )
 
-    def _fake_check(*, repo_dir, repo, out):
+    def _fake_check(*, repo_dir, repo, out, languages=None):
         out(f"check repository settings: {repo}")
         return SettingsCheckSummary(repo=repo, passed=8, failed=0, skipped=0, drifts=())
 
