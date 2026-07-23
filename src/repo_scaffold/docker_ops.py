@@ -11,8 +11,10 @@ Each active branch gets its own container started from that image.
 from __future__ import annotations
 
 import os
+import platform
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,17 +50,83 @@ def image_name(repo: str) -> str:
 # Docker client (lazy import so missing SDK gives a clear error at call time)
 # ---------------------------------------------------------------------------
 
+# Windows-only: Docker Desktop is not running as a service, so a stopped
+# daemon needs the GUI app launched before its API socket comes up.
+_DOCKER_DESKTOP_CANDIDATE_PATHS = [
+    r"C:\Program Files\Docker\Docker\Docker Desktop.exe",
+    r"C:\ProgramData\DockerDesktop\Docker Desktop.exe",
+]
+_DOCKER_DESKTOP_START_TIMEOUT_SECONDS = 90
+_DOCKER_DESKTOP_POLL_INTERVAL_SECONDS = 5
+
+
+def _is_docker_unreachable(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "pipe" in text or "connectionrefused" in text or "connection refused" in text
+
+
+def _find_docker_desktop_exe() -> str | None:
+    for candidate in _DOCKER_DESKTOP_CANDIDATE_PATHS:
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
+def _wait_for_docker_ready(timeout: float) -> bool:
+    import docker  # type: ignore[import]
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            docker.from_env().ping()
+            return True
+        except Exception:
+            time.sleep(_DOCKER_DESKTOP_POLL_INTERVAL_SECONDS)
+    return False
+
+
+def _try_auto_start_docker_desktop() -> bool:
+    """Best-effort: launch Docker Desktop on Windows and wait for the daemon.
+
+    Returns True if the daemon became reachable, False otherwise. Never
+    raises -- callers fall back to the original connection error on failure.
+    """
+    if platform.system() != "Windows":
+        return False
+
+    exe = _find_docker_desktop_exe()
+    if exe is None:
+        return False
+
+    try:
+        subprocess.Popen([exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        return False
+
+    return _wait_for_docker_ready(_DOCKER_DESKTOP_START_TIMEOUT_SECONDS)
+
 
 def _client():  # type: ignore[return]
     try:
         import docker  # type: ignore[import]
-
-        return docker.from_env()
     except ImportError:
         raise RuntimeError("The 'docker' package is required: poetry add docker")
+
+    try:
+        return docker.from_env()
     except Exception as exc:
+        if not _is_docker_unreachable(exc):
+            raise RuntimeError(f"Cannot connect to Docker daemon: {exc}")
+
+        if _try_auto_start_docker_desktop():
+            try:
+                return docker.from_env()
+            except Exception as retry_exc:
+                exc = retry_exc
+
         raise RuntimeError(
-            f"Cannot connect to Docker daemon -- is Docker running? ({exc})"
+            "Cannot connect to Docker daemon -- is Docker running? "
+            f"Auto-start was attempted and did not bring it up in time. ({exc})"
         )
 
 
