@@ -74,7 +74,18 @@ _DOCKER_DESKTOP_POLL_INTERVAL_SECONDS = 5
 
 def _is_docker_unreachable(exc: Exception) -> bool:
     text = str(exc).lower()
-    return "pipe" in text or "connectionrefused" in text or "connection refused" in text
+    # "pipe" / "connection refused" cover Windows (named pipe) and an actively
+    # rejected socket connection. On macOS a stopped Docker Desktop typically
+    # presents as the socket *file* being absent instead -- a FileNotFoundError
+    # for the default docker.sock path/symlink, not a connection-level error --
+    # so that needs its own check or auto-start never triggers there.
+    return (
+        "pipe" in text
+        or "connectionrefused" in text
+        or "connection refused" in text
+        or "no such file or directory" in text
+        or "docker.sock" in text
+    )
 
 
 def _find_docker_desktop_windows_exe() -> str | None:

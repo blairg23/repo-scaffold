@@ -502,6 +502,23 @@ def test_is_docker_unreachable_unrelated_error() -> None:
     assert _is_docker_unreachable(Exception("permission denied")) is False
 
 
+def test_is_docker_unreachable_macos_missing_socket() -> None:
+    from repo_scaffold.docker_ops import _is_docker_unreachable
+
+    exc = Exception(
+        "Error while fetching server API version: "
+        "FileNotFoundError(2, 'No such file or directory')"
+    )
+    assert _is_docker_unreachable(exc) is True
+
+
+def test_is_docker_unreachable_docker_sock_mention() -> None:
+    from repo_scaffold.docker_ops import _is_docker_unreachable
+
+    exc = Exception("[Errno 2] No such file or directory: '/var/run/docker.sock'")
+    assert _is_docker_unreachable(exc) is True
+
+
 def test_find_docker_desktop_windows_exe_found() -> None:
     from repo_scaffold.docker_ops import (
         _DOCKER_DESKTOP_WINDOWS_CANDIDATE_PATHS,
