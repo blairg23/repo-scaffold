@@ -89,8 +89,10 @@ Integration) to use `docker` commands from a WSL terminal.
 
 The preferred per-repo container workflow (`repo-scaffold docker shell`/`spin-up`/
 `build-base`, see [AGENTS.md](AGENTS.md#docker-dev-environment)) auto-starts Docker
-Desktop on Windows if it isn't already running and waits for the daemon before
+Desktop on Windows/macOS if it isn't already running and waits for the daemon before
 proceeding -- this manual-start requirement is specific to the Compose flow above.
+On Linux there's no auto-start either way (Docker is normally a systemd service
+there, not an app).
 
 ## Commands
 
