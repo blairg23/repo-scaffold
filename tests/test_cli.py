@@ -1327,7 +1327,9 @@ def test_check_rules_resolves_repo_from_dotenv(
 
     called: dict[str, object] = {}
 
-    def _fake_check_repository_settings(*, repo_dir: Path, repo: str, out):
+    def _fake_check_repository_settings(
+        *, repo_dir: Path, repo: str, out, languages=None
+    ):
         called["repo_dir"] = repo_dir
         called["repo"] = repo
         out(f"check repository settings: {repo}")
@@ -1356,7 +1358,9 @@ def test_check_rules_resolves_repo_from_dotenv(
 def test_check_rules_returns_nonzero_when_drift_found(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def _fake_check_repository_settings(*, repo_dir: Path, repo: str, out):
+    def _fake_check_repository_settings(
+        *, repo_dir: Path, repo: str, out, languages=None
+    ):
         out("DRIFT merge settings: allow_merge_commit expected False got True")
         return SettingsCheckSummary(
             repo=repo,
@@ -3307,7 +3311,7 @@ def test_check_rules_with_all_flag_iterates_registry(
         lambda: [RegistryEntry(repo="acme/a", local_path="/local/a")],
     )
 
-    def _fake_check(*, repo_dir, repo, out):
+    def _fake_check(*, repo_dir, repo, out, languages=None):
         out(f"check repository settings: {repo}")
         return SettingsCheckSummary(repo=repo, passed=8, failed=0, skipped=0, drifts=())
 
@@ -3439,7 +3443,8 @@ def test_check_settings_uses_resolved_languages(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(
-        "repo_scaffold.cli.resolve_languages", lambda _repo_dir: ["python", "react"]
+        "repo_scaffold.cli.resolve_languages_for_repo",
+        lambda _repo_dir, _repo, **_kwargs: ["python", "react"],
     )
 
     captured: dict[str, object] = {}
@@ -3464,7 +3469,8 @@ def test_apply_rules_uses_resolved_languages(
     matches what check rules/check settings expect -- otherwise apply immediately
     drifts against its own output."""
     monkeypatch.setattr(
-        "repo_scaffold.cli.resolve_languages", lambda _repo_dir: ["python"]
+        "repo_scaffold.cli.resolve_languages_for_repo",
+        lambda _repo_dir, _repo, **_kwargs: ["python"],
     )
 
     captured: dict[str, object] = {}
@@ -3489,7 +3495,8 @@ def test_sync_rules_uses_resolved_languages(
         lambda: [RegistryEntry(repo="acme/drifted", local_path="/local/drifted")],
     )
     monkeypatch.setattr(
-        "repo_scaffold.cli.resolve_languages", lambda _repo_dir: ["python"]
+        "repo_scaffold.cli.resolve_languages_for_repo",
+        lambda _repo_dir, _repo, **_kwargs: ["python"],
     )
 
     check_languages: dict[str, object] = {}
@@ -3515,7 +3522,10 @@ def test_sync_rules_uses_resolved_languages(
 def test_check_settings_languages_flag_overrides_config(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr("repo_scaffold.cli.resolve_languages", lambda _repo_dir: ["go"])
+    monkeypatch.setattr(
+        "repo_scaffold.cli.resolve_languages_for_repo",
+        lambda _repo_dir, _repo, **_kwargs: ["go"],
+    )
 
     captured: dict[str, object] = {}
 

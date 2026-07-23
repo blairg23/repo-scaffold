@@ -75,7 +75,7 @@ from .generator import (
     parse_language_csv,
 )
 from .overwrite_policy import ApplySummary, OverwritePolicy, apply_files
-from .project_config import resolve_languages
+from .project_config import resolve_languages_for_repo
 from .discover_ops import (
     discover_repos,
     parse_repo_selection,
@@ -2220,7 +2220,11 @@ def main(argv: list[str] | None = None) -> int:
                     dry_run=preview_only,
                     out=print,
                     warn=lambda line: print(line, file=sys.stderr),
-                    languages=resolve_languages(repo_dir),
+                    languages=resolve_languages_for_repo(
+                        repo_dir,
+                        target_repo,
+                        warn=lambda line: print(line, file=sys.stderr),
+                    ),
                 )
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
@@ -2250,6 +2254,11 @@ def main(argv: list[str] | None = None) -> int:
                     repo_dir=repo_dir,
                     repo=target_repo,
                     out=print,
+                    languages=resolve_languages_for_repo(
+                        repo_dir,
+                        target_repo,
+                        warn=lambda line: print(line, file=sys.stderr),
+                    ),
                 )
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
@@ -2270,7 +2279,13 @@ def main(argv: list[str] | None = None) -> int:
         langs = (
             _parse_languages_or_die(parser, ns.languages)
             if ns.languages
-            else tuple(resolve_languages(Path.cwd()))
+            else tuple(
+                resolve_languages_for_repo(
+                    Path.cwd(),
+                    ns.repo,
+                    warn=lambda line: print(line, file=sys.stderr),
+                )
+            )
         )
         try:
             settings_summary: SettingsCheckSummary = check_repository_settings(
@@ -2407,7 +2422,13 @@ def main(argv: list[str] | None = None) -> int:
                     repo_dir=repo_dir,
                     repo=target_repo,
                     out=print,
-                    languages=list(resolve_languages(repo_dir)),
+                    languages=list(
+                        resolve_languages_for_repo(
+                            repo_dir,
+                            target_repo,
+                            warn=lambda line: print(line, file=sys.stderr),
+                        )
+                    ),
                 )
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
@@ -2439,7 +2460,11 @@ def main(argv: list[str] | None = None) -> int:
                     dry_run=False,
                     out=print,
                     warn=lambda line: print(line, file=sys.stderr),
-                    languages=resolve_languages(repo_dir),
+                    languages=resolve_languages_for_repo(
+                        repo_dir,
+                        target_repo,
+                        warn=lambda line: print(line, file=sys.stderr),
+                    ),
                 )
                 applied += 1
             except RuntimeError as exc:

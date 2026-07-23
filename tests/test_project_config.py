@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 from repo_scaffold.project_config import (
     CONFIG_FILENAME,
     DEFAULT_WORKFLOW_MAPPINGS,
@@ -13,8 +12,10 @@ from repo_scaffold.project_config import (
     default_config,
     find_config_file,
     load_config,
+    local_dir_matches_repo,
     prompt_config,
     resolve_languages,
+    resolve_languages_for_repo,
     save_config,
 )
 
@@ -176,3 +177,63 @@ def test_resolve_languages_prefers_declared_config(tmp_path: Path) -> None:
 def test_resolve_languages_falls_back_to_detection(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[tool.poetry]\n", encoding="utf-8")
     assert resolve_languages(tmp_path) == ["python"]
+
+
+def _write_git_config(repo_dir: Path, remote_url: str) -> None:
+    git_dir = repo_dir / ".git"
+    git_dir.mkdir(parents=True, exist_ok=True)
+    (git_dir / "config").write_text(
+        f'[remote "origin"]\n\turl = {remote_url}\n', encoding="utf-8"
+    )
+
+
+def test_local_dir_matches_repo_no_git_config(tmp_path: Path) -> None:
+    assert local_dir_matches_repo(tmp_path, "acme/widgets") is False
+
+
+def test_local_dir_matches_repo_matching_remote(tmp_path: Path) -> None:
+    _write_git_config(tmp_path, "https://github.com/acme/widgets.git")
+    assert local_dir_matches_repo(tmp_path, "acme/widgets") is True
+
+
+def test_local_dir_matches_repo_non_matching_remote(tmp_path: Path) -> None:
+    _write_git_config(tmp_path, "https://github.com/other/unrelated.git")
+    assert local_dir_matches_repo(tmp_path, "acme/widgets") is False
+
+
+def test_local_dir_matches_repo_unreadable_config(tmp_path: Path) -> None:
+    # A directory where a file is expected makes read_text() raise OSError.
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").mkdir()
+    assert local_dir_matches_repo(tmp_path, "acme/widgets") is False
+
+
+def test_resolve_languages_for_repo_prefers_declared_config(tmp_path: Path) -> None:
+    cfg = default_config()
+    cfg.languages = ["go"]
+    save_config(cfg, tmp_path / CONFIG_FILENAME)
+    assert resolve_languages_for_repo(tmp_path, "acme/widgets") == ["go"]
+
+
+def test_resolve_languages_for_repo_warns_and_returns_empty_for_unrelated_dir(
+    tmp_path: Path,
+) -> None:
+    warnings: list[str] = []
+    result = resolve_languages_for_repo(tmp_path, "acme/widgets", warn=warnings.append)
+    assert result == []
+    assert len(warnings) == 1
+    assert "acme/widgets" in warnings[0]
+
+
+def test_resolve_languages_for_repo_silent_without_warn_callback(
+    tmp_path: Path,
+) -> None:
+    assert resolve_languages_for_repo(tmp_path, "acme/widgets") == []
+
+
+def test_resolve_languages_for_repo_detects_from_matching_clone(
+    tmp_path: Path,
+) -> None:
+    _write_git_config(tmp_path, "https://github.com/acme/widgets.git")
+    (tmp_path / "pyproject.toml").write_text("[tool.poetry]\n", encoding="utf-8")
+    assert resolve_languages_for_repo(tmp_path, "acme/widgets") == ["python"]

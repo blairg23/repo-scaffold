@@ -159,10 +159,12 @@ def test_default_branch_ruleset_payload_uses_zero_review_baseline() -> None:
     assert copilot_code_review_rule["parameters"]["review_on_push"] is True
 
 
-def test_default_branch_ruleset_payload_always_includes_required_status_checks() -> (
+def test_default_branch_ruleset_payload_includes_required_status_checks_with_languages() -> (
     None
 ):
-    payload = json.loads(create_ops._default_branch_ruleset_payload())
+    payload = json.loads(
+        create_ops._default_branch_ruleset_payload(languages=["python"])
+    )
     rule = next(
         (r for r in payload["rules"] if r["type"] == "required_status_checks"), None
     )
@@ -171,6 +173,31 @@ def test_default_branch_ruleset_payload_always_includes_required_status_checks()
     assert "check-sop" in contexts
     assert "validate-pr" in contexts
     assert rule["parameters"]["strict_required_status_checks_policy"] is False
+
+
+def test_default_branch_ruleset_payload_keeps_baseline_contexts_with_no_languages() -> (
+    None
+):
+    """check-sop and validate-pr come from validate-pr.yml/validate-pr-sop.yml,
+    which repo-scaffold's own `init` generates unconditionally regardless of
+    language -- so an unknown/empty language set must still require those
+    baseline contexts. Only the language-specific CI contexts are optional."""
+    payload = json.loads(create_ops._default_branch_ruleset_payload(languages=None))
+    rule_types = [r["type"] for r in payload["rules"]]
+    assert "required_status_checks" in rule_types
+
+    status_rule = next(
+        r for r in payload["rules"] if r["type"] == "required_status_checks"
+    )
+    contexts = [
+        c["context"] for c in status_rule["parameters"]["required_status_checks"]
+    ]
+    assert contexts == list(create_ops._ALWAYS_REQUIRED_CONTEXTS)
+
+    payload_empty_list = json.loads(
+        create_ops._default_branch_ruleset_payload(languages=[])
+    )
+    assert "required_status_checks" in [r["type"] for r in payload_empty_list["rules"]]
 
 
 def test_default_branch_ruleset_payload_with_react_adds_required_status_checks() -> (
@@ -345,6 +372,7 @@ def test_compare_ruleset_against_baseline_reports_multiple_drifts() -> None:
             },
         ],
         default_branch="main",
+        languages=["python"],
     )
 
     assert "multiple managed default-branch rulesets found" in drifts
@@ -422,8 +450,45 @@ def test_compare_ruleset_missing_required_status_checks_reports_drift() -> None:
     drifts = create_ops._compare_ruleset_against_baseline(
         [_clean_baseline_ruleset()],
         default_branch="main",
+        languages=["python"],
     )
     assert "missing rule: required_status_checks" in drifts
+
+
+def test_compare_ruleset_no_languages_still_requires_baseline_contexts() -> None:
+    """check-sop and validate-pr run unconditionally (validate-pr.yml and
+    validate-pr-sop.yml are generated regardless of language), so a ruleset
+    missing required_status_checks is real drift even with no languages
+    detected -- only the language-specific contexts are optional."""
+    drifts = create_ops._compare_ruleset_against_baseline(
+        [_clean_baseline_ruleset()],
+        default_branch="main",
+        languages=None,
+    )
+    assert "missing rule: required_status_checks" in drifts
+
+
+def test_compare_ruleset_no_languages_satisfied_by_baseline_contexts_only() -> None:
+    """With no languages detected, a ruleset that already has the baseline
+    check-sop/validate-pr contexts (and nothing language-specific) is clean --
+    no drift."""
+    ruleset = _clean_baseline_ruleset(
+        extra_rules=[
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "required_status_checks": [
+                        {"context": ctx} for ctx in create_ops._ALWAYS_REQUIRED_CONTEXTS
+                    ],
+                    "strict_required_status_checks_policy": False,
+                },
+            }
+        ]
+    )
+    drifts = create_ops._compare_ruleset_against_baseline(
+        [ruleset], default_branch="main", languages=None
+    )
+    assert not any("required_status_checks" in d for d in drifts)
 
 
 def test_compare_ruleset_required_status_checks_missing_always_required_contexts() -> (
@@ -441,7 +506,7 @@ def test_compare_ruleset_required_status_checks_missing_always_required_contexts
         ]
     )
     drifts = create_ops._compare_ruleset_against_baseline(
-        [ruleset], default_branch="main"
+        [ruleset], default_branch="main", languages=["python"]
     )
     assert any("required_status_checks missing contexts" in d for d in drifts)
     missing_drift = next(
@@ -467,7 +532,7 @@ def test_compare_ruleset_required_status_checks_all_contexts_present_no_drift() 
         ]
     )
     drifts = create_ops._compare_ruleset_against_baseline(
-        [ruleset], default_branch="main"
+        [ruleset], default_branch="main", languages=["unrecognized-lang"]
     )
     assert not any("required_status_checks" in d for d in drifts)
 
