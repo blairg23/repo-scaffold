@@ -502,6 +502,30 @@ def test_is_docker_unreachable_unrelated_error() -> None:
     assert _is_docker_unreachable(Exception("permission denied")) is False
 
 
+def test_is_docker_unreachable_windows_createfile_error() -> None:
+    from repo_scaffold.docker_ops import _is_docker_unreachable
+
+    exc = Exception(
+        "Error while fetching server API version: "
+        "(2, 'CreateFile', 'The system cannot find the file specified.')"
+    )
+    assert _is_docker_unreachable(exc) is True
+
+
+def test_is_docker_unreachable_windows_createfile_access_denied_not_matched() -> None:
+    """A CreateFile failure that isn't "file not found" (e.g. a pipe
+    permissions problem) must not be misdiagnosed as a stopped daemon --
+    restarting Docker Desktop won't fix an access-denied error, and treating
+    it as unreachable just burns the full auto-start timeout."""
+    from repo_scaffold.docker_ops import _is_docker_unreachable
+
+    exc = Exception(
+        "Error while fetching server API version: "
+        "(5, 'CreateFile', 'Access is denied.')"
+    )
+    assert _is_docker_unreachable(exc) is False
+
+
 def test_is_docker_unreachable_macos_missing_socket() -> None:
     from repo_scaffold.docker_ops import _is_docker_unreachable
 

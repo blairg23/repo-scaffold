@@ -79,12 +79,20 @@ def _is_docker_unreachable(exc: Exception) -> bool:
     # presents as the socket *file* being absent instead -- a FileNotFoundError
     # for the default docker.sock path/symlink, not a connection-level error --
     # so that needs its own check or auto-start never triggers there.
+    #
+    # The exact "cannot find the file specified" phrasing (not a bare
+    # "createfile" match) is required: pywin32's win32file.CreateFile() also
+    # raises for unrelated failures like access-denied pipe permissions, and a
+    # broad match would misdiagnose those as a stopped daemon, burning the
+    # full auto-start timeout on a problem restarting Docker Desktop can't fix.
+    # e.g.: "(2, 'CreateFile', 'The system cannot find the file specified.')"
     return (
         "pipe" in text
         or "connectionrefused" in text
         or "connection refused" in text
         or "no such file or directory" in text
         or "docker.sock" in text
+        or "the system cannot find the file specified" in text
     )
 
 
