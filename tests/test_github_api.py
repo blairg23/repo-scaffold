@@ -707,6 +707,27 @@ def test_branch_delete_success() -> None:
     assert cp.returncode == 0
 
 
+def test_branch_rename_success() -> None:
+    resp = {"name": "feat/83-foo", "commit": {"sha": "abc123"}}
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(201, json.dumps(resp))
+    ) as mock_urlopen:
+        cp = github_api.branch_rename("owner/repo", "feat/foo", "feat/83-foo", "tok")
+    assert cp.returncode == 0
+    request = mock_urlopen.call_args[0][0]
+    assert request.full_url.endswith("/repos/owner/repo/branches/feat/foo/rename")
+    assert json.loads(request.data)["new_name"] == "feat/83-foo"
+
+
+def test_branch_rename_not_found() -> None:
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=_http_error(404, "Branch not found"),
+    ):
+        cp = github_api.branch_rename("owner/repo", "does-not-exist", "new-name", "tok")
+    assert cp.returncode != 0
+
+
 def test_pr_merge_success() -> None:
     resp = {"sha": "abc", "merged": True, "message": "Pull Request successfully merged"}
     with patch(

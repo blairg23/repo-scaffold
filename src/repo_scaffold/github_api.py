@@ -1771,6 +1771,23 @@ def branch_delete(
     return rest("DELETE", f"/repos/{repo}/git/refs/heads/{name}", token)
 
 
+def branch_rename(
+    repo: str,
+    name: str,
+    new_name: str,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Rename a branch via GitHub's dedicated rename endpoint.
+
+    Unlike deleting a branch and pushing a new one under a different name,
+    this keeps any open PRs (and their review threads) pointed at the branch
+    correctly -- GitHub updates the PR's head ref automatically.
+    """
+    return rest(
+        "POST", f"/repos/{repo}/branches/{name}/rename", token, {"new_name": new_name}
+    )
+
+
 def pr_merge(
     repo: str,
     pr_number: int,

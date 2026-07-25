@@ -2876,6 +2876,36 @@ def test_branch_delete(tmp_path, monkeypatch, capsys) -> None:
     assert rc == 0
 
 
+def test_branch_rename(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.branch_rename",
+        lambda repo, name, new_name, token: subprocess.CompletedProcess(
+            args=[], returncode=201, stdout="", stderr=""
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(
+        [
+            "branch",
+            "rename",
+            "--repo",
+            "acme/repo",
+            "--name",
+            "feat/foo",
+            "--new-name",
+            "feat/83-foo",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "feat/foo" in out
+    assert "feat/83-foo" in out
+
+
 def test_label_list(tmp_path, monkeypatch, capsys) -> None:
     import json
     import subprocess
