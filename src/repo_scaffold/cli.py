@@ -19,6 +19,7 @@ from .backlog_ops import (
 from .github_api import (
     branch_create,
     branch_delete,
+    branch_rename,
     issue_add_sub_issue,
     issue_node_id,
     issue_remove_sub_issue,
@@ -1542,7 +1543,7 @@ def build_parser() -> argparse.ArgumentParser:
     branch_cmd = subparsers.add_parser("branch", help="Manage GitHub branches")
     branch_sub = branch_cmd.add_subparsers(
         dest="branch_command",
-        metavar="{create,delete}",
+        metavar="{create,delete,rename}",
         required=True,
     )
 
@@ -1556,6 +1557,14 @@ def build_parser() -> argparse.ArgumentParser:
     branch_delete_cmd = branch_sub.add_parser("delete", help="Delete a branch")
     branch_delete_cmd.add_argument("--repo", required=True)
     branch_delete_cmd.add_argument("--name", required=True, help="Branch to delete")
+
+    branch_rename_cmd = branch_sub.add_parser(
+        "rename",
+        help="Rename a branch. WARNING: an open PR against it may close instead of following the rename -- check after running",
+    )
+    branch_rename_cmd.add_argument("--repo", required=True)
+    branch_rename_cmd.add_argument("--name", required=True, help="Current branch name")
+    branch_rename_cmd.add_argument("--new-name", required=True, help="New branch name")
 
     label_cmd = subparsers.add_parser("label", help="Manage repository labels")
     label_sub = label_cmd.add_subparsers(
@@ -3441,6 +3450,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(cp.stderr.strip() or "Failed deleting branch.", file=sys.stderr)
                 return 1
             print(f"Branch deleted: {ns.name}")
+            return 0
+
+        if ns.branch_command == "rename":
+            cp = branch_rename(target_repo, ns.name, ns.new_name, token)
+            if cp.returncode not in (0, 201):
+                print(cp.stderr.strip() or "Failed renaming branch.", file=sys.stderr)
+                return 1
+            print(f"Branch renamed: {ns.name} -> {ns.new_name}")
+            print("If a PR was open against this branch, check its state now -- it may")
+            print("have closed instead of following the rename. See branch_rename()'s")
+            print("docstring for details.")
             return 0
 
     if ns.mode == "label":

@@ -1734,7 +1734,8 @@ def pr_update(
 
 def branch_get_sha(repo: str, branch: str, token: str) -> str | None:
     """Return the HEAD SHA of a branch, or None if not found."""
-    cp = rest("GET", f"/repos/{repo}/git/refs/heads/{branch}", token)
+    encoded = urllib.parse.quote(branch, safe="/")
+    cp = rest("GET", f"/repos/{repo}/git/refs/heads/{encoded}", token)
     if cp.returncode != 0:
         return None
     try:
@@ -1768,7 +1769,38 @@ def branch_delete(
     name: str,
     token: str,
 ) -> subprocess.CompletedProcess[str]:
-    return rest("DELETE", f"/repos/{repo}/git/refs/heads/{name}", token)
+    encoded = urllib.parse.quote(name, safe="/")
+    return rest("DELETE", f"/repos/{repo}/git/refs/heads/{encoded}", token)
+
+
+def branch_rename(
+    repo: str,
+    name: str,
+    new_name: str,
+    token: str,
+) -> subprocess.CompletedProcess[str]:
+    """Rename a branch via GitHub's dedicated rename endpoint.
+
+    WARNING: despite GitHub's docs describing this endpoint as PR-preserving,
+    observed behavior against a real repo with an open PR was that renaming
+    the PR's head branch closed the PR (unmerged) instead of updating its
+    head ref. Verified on a branch with no PR attached before this was
+    known, which is why the gap wasn't caught earlier -- see
+    blairg23/toolshed#85/#89/#93 for what happened. Root cause (repo
+    ruleset interaction vs. universal API behavior) not yet confirmed.
+
+    Treat any branch passed here as being AT RISK of having its open PR
+    closed. If continuity matters, close/reopen risk aside, prefer opening
+    a fresh PR from the renamed branch and linking the old one, rather than
+    assuming the existing PR survives.
+    """
+    encoded = urllib.parse.quote(name, safe="/")
+    return rest(
+        "POST",
+        f"/repos/{repo}/branches/{encoded}/rename",
+        token,
+        {"new_name": new_name},
+    )
 
 
 def pr_merge(
