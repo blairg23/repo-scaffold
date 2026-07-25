@@ -1559,7 +1559,8 @@ def build_parser() -> argparse.ArgumentParser:
     branch_delete_cmd.add_argument("--name", required=True, help="Branch to delete")
 
     branch_rename_cmd = branch_sub.add_parser(
-        "rename", help="Rename a branch, keeping any open PRs pointed at it"
+        "rename",
+        help="Rename a branch. WARNING: an open PR against it may close instead of following the rename -- check after running",
     )
     branch_rename_cmd.add_argument("--repo", required=True)
     branch_rename_cmd.add_argument("--name", required=True, help="Current branch name")
@@ -3457,6 +3458,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(cp.stderr.strip() or "Failed renaming branch.", file=sys.stderr)
                 return 1
             print(f"Branch renamed: {ns.name} -> {ns.new_name}")
+            print("If a PR was open against this branch, check its state now -- it may")
+            print("have closed instead of following the rename. See branch_rename()'s")
+            print("docstring for details.")
             return 0
 
     if ns.mode == "label":

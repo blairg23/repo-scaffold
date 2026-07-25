@@ -1779,9 +1779,18 @@ def branch_rename(
 ) -> subprocess.CompletedProcess[str]:
     """Rename a branch via GitHub's dedicated rename endpoint.
 
-    Unlike deleting a branch and pushing a new one under a different name,
-    this keeps any open PRs (and their review threads) pointed at the branch
-    correctly -- GitHub updates the PR's head ref automatically.
+    WARNING: despite GitHub's docs describing this endpoint as PR-preserving,
+    observed behavior against a real repo with an open PR was that renaming
+    the PR's head branch closed the PR (unmerged) instead of updating its
+    head ref. Verified on a branch with no PR attached before this was
+    known, which is why the gap wasn't caught earlier -- see
+    blairg23/toolshed#85/#89/#93 for what happened. Root cause (repo
+    ruleset interaction vs. universal API behavior) not yet confirmed.
+
+    Treat any branch passed here as being AT RISK of having its open PR
+    closed. If continuity matters, close/reopen risk aside, prefer opening
+    a fresh PR from the renamed branch and linking the old one, rather than
+    assuming the existing PR survives.
     """
     return rest(
         "POST", f"/repos/{repo}/branches/{name}/rename", token, {"new_name": new_name}
