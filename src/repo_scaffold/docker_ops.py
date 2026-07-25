@@ -50,11 +50,23 @@ def image_name(repo: str) -> str:
 # Docker client (lazy import so missing SDK gives a clear error at call time)
 # ---------------------------------------------------------------------------
 
-# Windows-only: Docker Desktop is not running as a service, so a stopped
-# daemon needs the GUI app launched before its API socket comes up.
-_DOCKER_DESKTOP_CANDIDATE_PATHS = [
+# Windows and macOS only: Docker Desktop on both platforms is a background GUI
+# app, not a system service, so a stopped daemon needs the app launched before
+# its API socket comes up.
+#
+# Linux is intentionally excluded. Docker there normally runs as a systemd
+# service, and starting a stopped one means `systemctl start docker` (or
+# `service docker start`) -- a real privilege-escalation step, not just
+# launching a user-space app. Most Linux dev/CI environments already have
+# dockerd running as a service. Auto-`sudo`-ing on a user's behalf is a
+# materially different risk than opening an app, so this stays out of scope
+# here (see #270).
+_DOCKER_DESKTOP_WINDOWS_CANDIDATE_PATHS = [
     r"C:\Program Files\Docker\Docker\Docker Desktop.exe",
     r"C:\ProgramData\DockerDesktop\Docker Desktop.exe",
+]
+_DOCKER_DESKTOP_MACOS_APP_PATHS = [
+    "/Applications/Docker.app",
 ]
 _DOCKER_DESKTOP_START_TIMEOUT_SECONDS = 90
 _DOCKER_DESKTOP_POLL_INTERVAL_SECONDS = 5
@@ -62,11 +74,29 @@ _DOCKER_DESKTOP_POLL_INTERVAL_SECONDS = 5
 
 def _is_docker_unreachable(exc: Exception) -> bool:
     text = str(exc).lower()
-    return "pipe" in text or "connectionrefused" in text or "connection refused" in text
+    # "pipe" / "connection refused" cover Windows (named pipe) and an actively
+    # rejected socket connection. On macOS a stopped Docker Desktop typically
+    # presents as the socket *file* being absent instead -- a FileNotFoundError
+    # for the default docker.sock path/symlink, not a connection-level error --
+    # so that needs its own check or auto-start never triggers there.
+    return (
+        "pipe" in text
+        or "connectionrefused" in text
+        or "connection refused" in text
+        or "no such file or directory" in text
+        or "docker.sock" in text
+    )
 
 
-def _find_docker_desktop_exe() -> str | None:
-    for candidate in _DOCKER_DESKTOP_CANDIDATE_PATHS:
+def _find_docker_desktop_windows_exe() -> str | None:
+    for candidate in _DOCKER_DESKTOP_WINDOWS_CANDIDATE_PATHS:
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
+def _find_docker_desktop_macos_app() -> str | None:
+    for candidate in _DOCKER_DESKTOP_MACOS_APP_PATHS:
         if Path(candidate).exists():
             return candidate
     return None
@@ -85,21 +115,36 @@ def _wait_for_docker_ready(timeout: float) -> bool:
     return False
 
 
+def _docker_desktop_launch_args() -> list[str] | None:
+    """Return the subprocess args to launch Docker Desktop, or None if this
+    platform isn't supported or the app isn't installed at a known location."""
+    system = platform.system()
+
+    if system == "Windows":
+        exe = _find_docker_desktop_windows_exe()
+        return None if exe is None else [exe]
+
+    if system == "Darwin":
+        app = _find_docker_desktop_macos_app()
+        return None if app is None else ["open", "-a", "Docker"]
+
+    return None
+
+
 def _try_auto_start_docker_desktop() -> bool:
-    """Best-effort: launch Docker Desktop on Windows and wait for the daemon.
-
-    Returns True if the daemon became reachable, False otherwise. Never
-    raises -- callers fall back to the original connection error on failure.
-    """
-    if platform.system() != "Windows":
-        return False
-
-    exe = _find_docker_desktop_exe()
-    if exe is None:
+    """Best-effort: launch Docker Desktop on Windows/macOS and wait for the
+    daemon. Returns True if the daemon became reachable, False otherwise.
+    Never raises -- callers fall back to the original connection error on
+    failure. No-op on Linux and any platform without a known install path
+    (see the module-level comment above for why Linux is excluded)."""
+    launch_args = _docker_desktop_launch_args()
+    if launch_args is None:
         return False
 
     try:
-        subprocess.Popen([exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(
+            launch_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
     except Exception:
         return False
 

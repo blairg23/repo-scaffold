@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -501,36 +502,131 @@ def test_is_docker_unreachable_unrelated_error() -> None:
     assert _is_docker_unreachable(Exception("permission denied")) is False
 
 
-def test_find_docker_desktop_exe_found() -> None:
+def test_is_docker_unreachable_macos_missing_socket() -> None:
+    from repo_scaffold.docker_ops import _is_docker_unreachable
+
+    exc = Exception(
+        "Error while fetching server API version: "
+        "FileNotFoundError(2, 'No such file or directory')"
+    )
+    assert _is_docker_unreachable(exc) is True
+
+
+def test_is_docker_unreachable_docker_sock_mention() -> None:
+    from repo_scaffold.docker_ops import _is_docker_unreachable
+
+    exc = Exception("[Errno 2] No such file or directory: '/var/run/docker.sock'")
+    assert _is_docker_unreachable(exc) is True
+
+
+def test_find_docker_desktop_windows_exe_found() -> None:
     from repo_scaffold.docker_ops import (
-        _DOCKER_DESKTOP_CANDIDATE_PATHS,
-        _find_docker_desktop_exe,
+        _DOCKER_DESKTOP_WINDOWS_CANDIDATE_PATHS,
+        _find_docker_desktop_windows_exe,
     )
 
     with patch("repo_scaffold.docker_ops.Path.exists", return_value=True):
-        assert _find_docker_desktop_exe() == _DOCKER_DESKTOP_CANDIDATE_PATHS[0]
+        assert (
+            _find_docker_desktop_windows_exe()
+            == _DOCKER_DESKTOP_WINDOWS_CANDIDATE_PATHS[0]
+        )
 
 
-def test_find_docker_desktop_exe_not_found() -> None:
-    from repo_scaffold.docker_ops import _find_docker_desktop_exe
+def test_find_docker_desktop_windows_exe_not_found() -> None:
+    from repo_scaffold.docker_ops import _find_docker_desktop_windows_exe
 
     with patch("repo_scaffold.docker_ops.Path.exists", return_value=False):
-        assert _find_docker_desktop_exe() is None
+        assert _find_docker_desktop_windows_exe() is None
 
 
-def test_auto_start_noop_on_non_windows() -> None:
-    from repo_scaffold.docker_ops import _try_auto_start_docker_desktop
+def test_find_docker_desktop_macos_app_found() -> None:
+    from repo_scaffold.docker_ops import (
+        _DOCKER_DESKTOP_MACOS_APP_PATHS,
+        _find_docker_desktop_macos_app,
+    )
+
+    with patch("repo_scaffold.docker_ops.Path.exists", return_value=True):
+        assert _find_docker_desktop_macos_app() == _DOCKER_DESKTOP_MACOS_APP_PATHS[0]
+
+
+def test_find_docker_desktop_macos_app_not_found() -> None:
+    from repo_scaffold.docker_ops import _find_docker_desktop_macos_app
+
+    with patch("repo_scaffold.docker_ops.Path.exists", return_value=False):
+        assert _find_docker_desktop_macos_app() is None
+
+
+def test_launch_args_windows_found() -> None:
+    from repo_scaffold.docker_ops import _docker_desktop_launch_args
+
+    with patch(
+        "repo_scaffold.docker_ops.platform.system", return_value="Windows"
+    ), patch(
+        "repo_scaffold.docker_ops._find_docker_desktop_windows_exe",
+        return_value="C:\\fake.exe",
+    ):
+        assert _docker_desktop_launch_args() == ["C:\\fake.exe"]
+
+
+def test_launch_args_windows_not_found() -> None:
+    from repo_scaffold.docker_ops import _docker_desktop_launch_args
+
+    with patch(
+        "repo_scaffold.docker_ops.platform.system", return_value="Windows"
+    ), patch(
+        "repo_scaffold.docker_ops._find_docker_desktop_windows_exe", return_value=None
+    ):
+        assert _docker_desktop_launch_args() is None
+
+
+def test_launch_args_macos_found() -> None:
+    from repo_scaffold.docker_ops import _docker_desktop_launch_args
+
+    with patch(
+        "repo_scaffold.docker_ops.platform.system", return_value="Darwin"
+    ), patch(
+        "repo_scaffold.docker_ops._find_docker_desktop_macos_app",
+        return_value="/Applications/Docker.app",
+    ):
+        assert _docker_desktop_launch_args() == ["open", "-a", "Docker"]
+
+
+def test_launch_args_macos_not_found() -> None:
+    from repo_scaffold.docker_ops import _docker_desktop_launch_args
+
+    with patch(
+        "repo_scaffold.docker_ops.platform.system", return_value="Darwin"
+    ), patch(
+        "repo_scaffold.docker_ops._find_docker_desktop_macos_app", return_value=None
+    ):
+        assert _docker_desktop_launch_args() is None
+
+
+def test_launch_args_linux_unsupported() -> None:
+    from repo_scaffold.docker_ops import _docker_desktop_launch_args
 
     with patch("repo_scaffold.docker_ops.platform.system", return_value="Linux"):
+        assert _docker_desktop_launch_args() is None
+
+
+def test_auto_start_noop_on_linux_never_calls_popen() -> None:
+    from repo_scaffold.docker_ops import _try_auto_start_docker_desktop
+
+    with patch("repo_scaffold.docker_ops.platform.system", return_value="Linux"), patch(
+        "repo_scaffold.docker_ops.subprocess.Popen"
+    ) as popen_mock:
         assert _try_auto_start_docker_desktop() is False
+        popen_mock.assert_not_called()
 
 
-def test_auto_start_noop_when_exe_missing() -> None:
+def test_auto_start_noop_when_windows_exe_missing() -> None:
     from repo_scaffold.docker_ops import _try_auto_start_docker_desktop
 
     with patch(
         "repo_scaffold.docker_ops.platform.system", return_value="Windows"
-    ), patch("repo_scaffold.docker_ops._find_docker_desktop_exe", return_value=None):
+    ), patch(
+        "repo_scaffold.docker_ops._find_docker_desktop_windows_exe", return_value=None
+    ):
         assert _try_auto_start_docker_desktop() is False
 
 
@@ -540,26 +636,53 @@ def test_auto_start_returns_false_when_popen_fails() -> None:
     with patch(
         "repo_scaffold.docker_ops.platform.system", return_value="Windows"
     ), patch(
-        "repo_scaffold.docker_ops._find_docker_desktop_exe", return_value="C:\\fake.exe"
+        "repo_scaffold.docker_ops._find_docker_desktop_windows_exe",
+        return_value="C:\\fake.exe",
     ), patch(
         "repo_scaffold.docker_ops.subprocess.Popen", side_effect=OSError("nope")
     ):
         assert _try_auto_start_docker_desktop() is False
 
 
-def test_auto_start_launches_and_waits() -> None:
+def test_auto_start_launches_and_waits_on_windows() -> None:
     from repo_scaffold.docker_ops import _try_auto_start_docker_desktop
 
     with patch(
         "repo_scaffold.docker_ops.platform.system", return_value="Windows"
     ), patch(
-        "repo_scaffold.docker_ops._find_docker_desktop_exe", return_value="C:\\fake.exe"
+        "repo_scaffold.docker_ops._find_docker_desktop_windows_exe",
+        return_value="C:\\fake.exe",
     ), patch(
         "repo_scaffold.docker_ops.subprocess.Popen"
-    ), patch(
+    ) as popen_mock, patch(
         "repo_scaffold.docker_ops._wait_for_docker_ready", return_value=True
     ) as wait_mock:
         assert _try_auto_start_docker_desktop() is True
+        popen_mock.assert_called_once_with(
+            ["C:\\fake.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        wait_mock.assert_called_once()
+
+
+def test_auto_start_launches_and_waits_on_macos() -> None:
+    from repo_scaffold.docker_ops import _try_auto_start_docker_desktop
+
+    with patch(
+        "repo_scaffold.docker_ops.platform.system", return_value="Darwin"
+    ), patch(
+        "repo_scaffold.docker_ops._find_docker_desktop_macos_app",
+        return_value="/Applications/Docker.app",
+    ), patch(
+        "repo_scaffold.docker_ops.subprocess.Popen"
+    ) as popen_mock, patch(
+        "repo_scaffold.docker_ops._wait_for_docker_ready", return_value=True
+    ) as wait_mock:
+        assert _try_auto_start_docker_desktop() is True
+        popen_mock.assert_called_once_with(
+            ["open", "-a", "Docker"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         wait_mock.assert_called_once()
 
 
