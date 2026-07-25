@@ -707,6 +707,37 @@ def test_branch_delete_success() -> None:
     assert cp.returncode == 0
 
 
+def test_branch_delete_encodes_special_characters_in_name() -> None:
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(204, b"")
+    ) as mock_urlopen:
+        cp = github_api.branch_delete("owner/repo", "feat/#274", "tok")
+    assert cp.returncode == 0
+    request = mock_urlopen.call_args[0][0]
+    # "#" must be percent-encoded -- urllib treats an unencoded "#" as the
+    # start of a URL fragment, silently truncating everything after it.
+    assert request.full_url.endswith("/repos/owner/repo/git/refs/heads/feat/%23274")
+
+
+def test_branch_get_sha_success() -> None:
+    resp = {"object": {"sha": "abc123"}}
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(resp))
+    ):
+        sha = github_api.branch_get_sha("owner/repo", "feat/foo", "tok")
+    assert sha == "abc123"
+
+
+def test_branch_get_sha_encodes_special_characters_in_name() -> None:
+    resp = {"object": {"sha": "abc123"}}
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(200, json.dumps(resp))
+    ) as mock_urlopen:
+        github_api.branch_get_sha("owner/repo", "feat/#274", "tok")
+    request = mock_urlopen.call_args[0][0]
+    assert request.full_url.endswith("/repos/owner/repo/git/refs/heads/feat/%23274")
+
+
 def test_branch_rename_success() -> None:
     resp = {"name": "feat/83-foo", "commit": {"sha": "abc123"}}
     with patch(
@@ -717,6 +748,24 @@ def test_branch_rename_success() -> None:
     request = mock_urlopen.call_args[0][0]
     assert request.full_url.endswith("/repos/owner/repo/branches/feat/foo/rename")
     assert json.loads(request.data)["new_name"] == "feat/83-foo"
+
+
+def test_branch_rename_encodes_special_characters_in_name() -> None:
+    resp = {"name": "feat/274-fixed", "commit": {"sha": "abc123"}}
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_resp(201, json.dumps(resp))
+    ) as mock_urlopen:
+        cp = github_api.branch_rename(
+            "owner/repo", "feat/#274", "feat/274-fixed", "tok"
+        )
+    assert cp.returncode == 0
+    request = mock_urlopen.call_args[0][0]
+    # Without encoding, urllib would send only ".../branches/feat/rename" --
+    # everything from "#" onward is treated as a fragment, not sent to the
+    # server, and the rename silently targets the wrong (or a nonexistent)
+    # branch.
+    assert request.full_url.endswith("/repos/owner/repo/branches/feat/%23274/rename")
+    assert json.loads(request.data)["new_name"] == "feat/274-fixed"
 
 
 def test_branch_rename_not_found() -> None:

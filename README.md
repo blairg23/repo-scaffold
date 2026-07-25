@@ -296,11 +296,15 @@ poetry run repo-scaffold pr checks --repo OWNER/REPO --pr-number N [--json]
 
 ### `branch`
 
-Create and delete GitHub branches via the API.
+Create, delete, and rename GitHub branches via the API.
 
 ```bash
 poetry run repo-scaffold branch create --repo OWNER/REPO --name BRANCH [--from main]
 poetry run repo-scaffold branch delete --repo OWNER/REPO --name BRANCH
+
+# WARNING: an open PR against the branch may close instead of following the
+# rename; check the PR after running this.
+poetry run repo-scaffold branch rename --repo OWNER/REPO --name BRANCH --new-name NEW_BRANCH
 ```
 
 ---

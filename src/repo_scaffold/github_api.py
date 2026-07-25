@@ -1734,7 +1734,8 @@ def pr_update(
 
 def branch_get_sha(repo: str, branch: str, token: str) -> str | None:
     """Return the HEAD SHA of a branch, or None if not found."""
-    cp = rest("GET", f"/repos/{repo}/git/refs/heads/{branch}", token)
+    encoded = urllib.parse.quote(branch, safe="/")
+    cp = rest("GET", f"/repos/{repo}/git/refs/heads/{encoded}", token)
     if cp.returncode != 0:
         return None
     try:
@@ -1768,7 +1769,8 @@ def branch_delete(
     name: str,
     token: str,
 ) -> subprocess.CompletedProcess[str]:
-    return rest("DELETE", f"/repos/{repo}/git/refs/heads/{name}", token)
+    encoded = urllib.parse.quote(name, safe="/")
+    return rest("DELETE", f"/repos/{repo}/git/refs/heads/{encoded}", token)
 
 
 def branch_rename(
@@ -1792,8 +1794,12 @@ def branch_rename(
     a fresh PR from the renamed branch and linking the old one, rather than
     assuming the existing PR survives.
     """
+    encoded = urllib.parse.quote(name, safe="/")
     return rest(
-        "POST", f"/repos/{repo}/branches/{name}/rename", token, {"new_name": new_name}
+        "POST",
+        f"/repos/{repo}/branches/{encoded}/rename",
+        token,
+        {"new_name": new_name},
     )
 
 

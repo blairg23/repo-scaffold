@@ -151,6 +151,10 @@ poetry run repo-scaffold docker list       [--repo OWNER/REPO] [--json]
 ```bash
 poetry run repo-scaffold branch create --repo OWNER/REPO --name BRANCH [--from main]
 poetry run repo-scaffold branch delete --repo OWNER/REPO --name BRANCH
+
+# Rename -- WARNING: an open PR against the branch may close instead of
+# following the rename; check the PR after running this.
+poetry run repo-scaffold branch rename --repo OWNER/REPO --name BRANCH --new-name NEW_BRANCH
 ```
 
 ### Projects
