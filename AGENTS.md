@@ -326,6 +326,16 @@ be checked manually.
 
 ---
 
+## Execution SOP
+
+Deciding to execute means, in this order: **create a ticket -> work the ticket -> open a PR -> link both.**
+
+- No implementation work starts without an issue to trace it to. If one doesn't exist, file it first (after searching open AND closed issues for overlap, per Standing rules).
+- The PR that implements a ticket must reference it in both places: the PR title ends with `(#NNN)`, and the PR body links it via `Closes #NNN` (or `Related Issues / Epics` in the target repo's own template).
+- This holds even for small or "obvious" fixes -- there is no size threshold below which the ticket step is skipped.
+
+---
+
 ## Review thread SOP
 
 For every review thread on a PR you are working on, complete ALL four steps in order:
@@ -401,7 +411,7 @@ poetry run repo-scaffold issue label --repo OWNER/REPO --issue-number N --add ep
 poetry run repo-scaffold issue sync-hierarchy --repo OWNER/REPO --apply
 ```
 
-This file is the canonical agent reference. All other docs (CLAUDE.md, docs/WORKFLOW.md, .claude/prompt.md) defer to it for branch naming, PR conventions, and review SOP.
+This file is the canonical agent reference. All other docs (CLAUDE.md, docs/WORKFLOW.md, .claude/prompt.md) defer to it for branch naming, PR conventions, execution SOP, and review SOP.
 
 See [CLAUDE.md](CLAUDE.md) for portability and agnosticism requirements.
 See [examples/README.md](examples/README.md) for backlog and ticket format examples.
