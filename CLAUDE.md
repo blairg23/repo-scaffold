@@ -115,6 +115,13 @@ poetry run repo-scaffold check rules --repo OWNER/REPO
 # branch + PR for it instead of just warning -- check for and merge that PR.
 poetry run repo-scaffold apply rules --repo OWNER/REPO --apply
 
+# Check issue/PR templates for drift against repo-scaffold's current templates
+poetry run repo-scaffold check templates --repo OWNER/REPO [--repos a,b | --all]
+
+# Open a branch + PR per drifted repo with updated templates -- never commits directly
+# to the default branch. Ticket-less by design, like Dependabot (see AGENTS.md Execution SOP).
+poetry run repo-scaffold sync templates --repo OWNER/REPO [--repos a,b | --all] [--yes]
+
 # Archive a repo (read-only; reversible via the GitHub UI). Prompts for confirmation
 # unless --yes is passed; refuses in a non-interactive shell without --yes.
 poetry run repo-scaffold repo archive --repo OWNER/REPO [--yes]

@@ -209,6 +209,14 @@ poetry run repo-scaffold check rules --repo OWNER/REPO
 # PRs, this opens a branch + PR for it instead of just warning -- check for and merge that PR.
 poetry run repo-scaffold apply rules --repo OWNER/REPO --apply
 
+# Check issue/PR templates for drift against repo-scaffold's current templates
+poetry run repo-scaffold check templates --repo OWNER/REPO [--repos a,b | --all]
+
+# For every drifted repo, open a branch + PR with the updated templates -- never commits
+# to the default branch directly, the same way Dependabot always opens a PR rather than
+# pushing to main. These PRs are intentionally ticket-less (see Execution SOP).
+poetry run repo-scaffold sync templates --repo OWNER/REPO [--repos a,b | --all] [--yes]
+
 # Archive a repo (read-only; reversible via the GitHub UI)
 # Prompts for confirmation unless --yes is passed; refuses in a non-interactive shell without --yes.
 poetry run repo-scaffold repo archive --repo OWNER/REPO [--yes]
@@ -333,6 +341,7 @@ Deciding to execute means, in this order: **create a ticket -> work the ticket -
 - No implementation work starts without an issue to trace it to. If one doesn't exist, file it first (after searching open AND closed issues for overlap, per Standing rules).
 - The PR that implements a ticket must reference it in both places: the PR title ends with `(#NNN)`, and the PR body links it via `Closes #NNN` (or `Related Issues / Epics` in the target repo's own template).
 - This holds even for small or "obvious" fixes -- there is no size threshold below which the ticket step is skipped.
+- **Exception: automated maintenance PRs opened directly by repo-scaffold's own tooling** (e.g. `sync templates`, the dependabot.yml PR fallback in `apply rules`) are exempt. These are fully mechanical -- the change is entirely determined by repo-scaffold's own canonical source, no judgment call is being tracked -- the same way Dependabot itself never files a ticket before opening a PR. Agent-driven work is never exempt; this applies only to repo-scaffold's own bot-like automation.
 
 ---
 

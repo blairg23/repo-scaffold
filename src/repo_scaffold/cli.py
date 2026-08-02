@@ -60,6 +60,7 @@ from .create_ops import (
     CreateSummary,
     SettingsCheckSummary,
     TemplatesCheckSummary,
+    TemplatesSyncResult,
     apply_repository_settings,
     check_repository_settings,
     check_repository_templates,
@@ -2331,16 +2332,22 @@ def main(argv: list[str] | None = None) -> int:
             print(targets_error, file=sys.stderr)
             return 2
         total_drifted = 0
+        errors = 0
         for target_repo, repo_dir in targets:
-            templates_summary: TemplatesCheckSummary = check_repository_templates(
-                repo_dir=repo_dir,
-                repo=target_repo,
-                out=print,
-            )
+            try:
+                templates_summary: TemplatesCheckSummary = check_repository_templates(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    out=print,
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                errors += 1
+                continue
             status = "DRIFT" if templates_summary.drifted_files else "PASS"
             print(f"{status}  {target_repo}")
             total_drifted += len(templates_summary.drifted_files)
-        return 1 if total_drifted > 0 else 0
+        return 1 if (total_drifted > 0 or errors) else 0
 
     if ns.mode == "check" and ns.check_command == "settings":
         langs = (
@@ -2551,23 +2558,29 @@ def main(argv: list[str] | None = None) -> int:
             print(targets_error, file=sys.stderr)
             return 2
 
-        drifted_targets: list[tuple[str, Path, TemplatesCheckSummary]] = []
+        drifted_targets: list[tuple[str, Path]] = []
+        errors = 0
         for target_repo, repo_dir in targets:
-            templates_summary = check_repository_templates(
-                repo_dir=repo_dir, repo=target_repo, out=print
-            )
+            try:
+                templates_summary = check_repository_templates(
+                    repo_dir=repo_dir, repo=target_repo, out=print
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                errors += 1
+                continue
             print(f"  {target_repo}: {len(templates_summary.drifted_files)} drifted")
             if templates_summary.drifted_files:
-                drifted_targets.append((target_repo, repo_dir, templates_summary))
+                drifted_targets.append((target_repo, repo_dir))
 
         if not drifted_targets:
             print("")
             print("No drift found. Nothing to sync.")
-            return 0
+            return 1 if errors else 0
 
         print("")
         opened = 0
-        for target_repo, repo_dir, _summary in drifted_targets:
+        for target_repo, repo_dir in drifted_targets:
             if not ns.yes:
                 answer = (
                     input(f"Open sync PR for {target_repo}? [y/N] ").strip().lower()
@@ -2575,20 +2588,26 @@ def main(argv: list[str] | None = None) -> int:
                 if answer != "y":
                     print(f"Skipped {target_repo}.")
                     continue
-            sync_repository_templates(
-                repo_dir=repo_dir,
-                repo=target_repo,
-                out=print,
-                warn=lambda line: print(line, file=sys.stderr),
-            )
-            opened += 1
+            try:
+                sync_result: TemplatesSyncResult = sync_repository_templates(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    out=print,
+                    warn=lambda line: print(line, file=sys.stderr),
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                errors += 1
+                continue
+            if sync_result.pr_url is not None:
+                opened += 1
 
         print("")
         print("Summary:")
         print(f"  repos checked: {len(targets)}")
         print(f"  repos drifted: {len(drifted_targets)}")
         print(f"  sync PRs opened: {opened}")
-        return 0
+        return 1 if errors else 0
 
     if ns.mode == "project":
         repo_dir = Path(ns.path)

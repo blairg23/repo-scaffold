@@ -20,7 +20,6 @@ from .github_api import (
     rest as _github_rest,
     token_from_repo as _token_from_repo,
 )
-from .overwrite_policy import OverwritePolicy, apply_files
 
 
 @dataclass(frozen=True)
@@ -45,6 +44,12 @@ class SettingsCheckSummary:
 class TemplatesCheckSummary:
     repo: str
     drifted_files: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class TemplatesSyncResult:
+    summary: TemplatesCheckSummary
+    pr_url: str | None
 
 
 _API_VERSION = "2026-03-10"
@@ -661,49 +666,68 @@ def _ensure_dependabot_version_updates(
 _TEMPLATES_SYNC_BRANCH = "chore/sync-templates"
 
 
+def _normalize_template_content(content: str) -> str:
+    return content.rstrip("\n") + "\n"
+
+
+def _fetch_remote_default_branch(
+    *, repo_dir: Path, env: dict[str, str], repo: str
+) -> str:
+    repo_info = _get_repo_info(repo_dir=repo_dir, env=env, repo=repo)
+    return str(repo_info.get("default_branch") or "main")
+
+
+def _fetch_remote_template_content(
+    *, repo: str, rel_path: str, ref: str, token: str
+) -> str | None:
+    """Fetch a file's content from the given ref via the contents API.
+    Returns None if the file doesn't exist on that ref (or the response
+    can't be decoded), which is treated as drift (would be a CREATE)."""
+    get_cp = _github_rest("GET", f"/repos/{repo}/contents/{rel_path}?ref={ref}", token)
+    if get_cp.returncode not in (0, 200):
+        return None
+    try:
+        payload = json.loads(get_cp.stdout)
+        encoded = str(payload.get("content", "")).replace("\n", "")
+        return base64.b64decode(encoded).decode("utf-8")
+    except (json.JSONDecodeError, AttributeError, UnicodeDecodeError, ValueError):
+        return None
+
+
 def _check_templates(
     *,
     repo_dir: Path,
+    env: dict[str, str],
     repo: str,
+    default_branch: str,
     out: Callable[[str], None],
 ) -> TemplatesCheckSummary:
+    """Compare repo-scaffold's current canonical templates against the
+    target repository's remote default branch -- not the local working
+    tree, which may be stale, on another branch, or carry local edits."""
     owner, _, name = repo.partition("/")
-    resolved_repo_dir = repo_dir.resolve()
-    files = build_template_files(
-        resolved_repo_dir, owner=owner or None, name=name or None
+    files = build_template_files(repo_dir, owner=owner or None, name=name or None)
+    token = (
+        _token_from_repo(repo_dir)
+        or env.get("GH_TOKEN")
+        or env.get("GITHUB_TOKEN")
+        or ""
     )
 
     statuses: dict[str, str] = {}
+    for file in files:
+        rel_path = file.path.relative_to(repo_dir).as_posix()
+        desired = _normalize_template_content(file.content)
+        remote = _fetch_remote_template_content(
+            repo=repo, rel_path=rel_path, ref=default_branch, token=token
+        )
+        statuses[rel_path] = "PASS" if remote == desired else "DRIFT"
 
-    def _capture(line: str) -> None:
-        parts = line.split(None, 1)
-        if len(parts) != 2:
-            return
-        status, rest = parts
-        raw_display = rest.split(" (", 1)[0].strip()
-        try:
-            display = (
-                Path(raw_display).resolve().relative_to(resolved_repo_dir).as_posix()
-            )
-        except ValueError:
-            display = raw_display
-        if status in ("OVERWRITE", "CREATE"):
-            statuses[display] = "DRIFT"
-        elif status == "SKIP":
-            statuses[display] = "PASS"
-
-    apply_files(
-        files,
-        OverwritePolicy(dry_run=True, yes=True),
-        is_tty=False,
-        out=_capture,
-    )
-
-    for display in sorted(statuses):
-        out(f"{statuses[display]:5} template: {display}")
+    for rel_path in sorted(statuses):
+        out(f"{statuses[rel_path]:5} template: {rel_path}")
 
     drifted = tuple(
-        display for display in sorted(statuses) if statuses[display] == "DRIFT"
+        rel_path for rel_path in sorted(statuses) if statuses[rel_path] == "DRIFT"
     )
     return TemplatesCheckSummary(repo=repo, drifted_files=drifted)
 
@@ -835,10 +859,13 @@ def _sync_templates(
     repo: str,
     out: Callable[[str], None],
     warn: Callable[[str], None],
-) -> TemplatesCheckSummary:
-    summary = _check_templates(repo_dir=repo_dir, repo=repo, out=out)
+) -> TemplatesSyncResult:
+    default_branch = _fetch_remote_default_branch(repo_dir=repo_dir, env=env, repo=repo)
+    summary = _check_templates(
+        repo_dir=repo_dir, env=env, repo=repo, default_branch=default_branch, out=out
+    )
     if not summary.drifted_files:
-        return summary
+        return TemplatesSyncResult(summary=summary, pr_url=None)
 
     owner, _, name = repo.partition("/")
     files = build_template_files(repo_dir, owner=owner or None, name=name or None)
@@ -849,10 +876,7 @@ def _sync_templates(
         if rel_path in by_path
     ]
 
-    repo_info = _get_repo_info(repo_dir=repo_dir, env=env, repo=repo)
-    default_branch = str(repo_info.get("default_branch") or "main")
-
-    _open_templates_sync_pr(
+    pr_url = _open_templates_sync_pr(
         repo_dir=repo_dir,
         env=env,
         repo=repo,
@@ -861,7 +885,7 @@ def _sync_templates(
         out=out,
         warn=warn,
     )
-    return summary
+    return TemplatesSyncResult(summary=summary, pr_url=pr_url)
 
 
 def check_repository_templates(
@@ -873,7 +897,11 @@ def check_repository_templates(
     _ensure_tools()
     env = _build_env(repo_dir)
     _ensure_gh_auth(repo_dir, env)
-    return _check_templates(repo_dir=repo_dir.resolve(), repo=repo, out=out)
+    resolved = repo_dir.resolve()
+    default_branch = _fetch_remote_default_branch(repo_dir=resolved, env=env, repo=repo)
+    return _check_templates(
+        repo_dir=resolved, env=env, repo=repo, default_branch=default_branch, out=out
+    )
 
 
 def sync_repository_templates(
@@ -882,7 +910,7 @@ def sync_repository_templates(
     repo: str,
     out: Callable[[str], None] = print,
     warn: Callable[[str], None] | None = None,
-) -> TemplatesCheckSummary:
+) -> TemplatesSyncResult:
     _ensure_tools()
     env = _build_env(repo_dir)
     _ensure_gh_auth(repo_dir, env)
