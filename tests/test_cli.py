@@ -4156,3 +4156,124 @@ def test_docker_list_failure(
     rc = main(["docker", "list"])
     assert rc == 1
     assert "Failed to list" in capsys.readouterr().err
+
+
+def test_check_templates_with_all_flag_iterates_registry(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+    from repo_scaffold.create_ops import TemplatesCheckSummary
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [
+            RegistryEntry(repo="acme/drifted", local_path="/local/drifted"),
+            RegistryEntry(repo="acme/clean", local_path="/local/clean"),
+        ],
+    )
+
+    def _fake_check(*, repo_dir, repo, out):
+        drifted = (
+            (".github/pull_request_template.md",) if repo == "acme/drifted" else ()
+        )
+        return TemplatesCheckSummary(repo=repo, drifted_files=drifted)
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_templates", _fake_check)
+
+    rc = main(["check", "templates", "--all"])
+    assert rc == 1
+    stdout = capsys.readouterr().out
+    assert "DRIFT  acme/drifted" in stdout
+    assert "PASS  acme/clean" in stdout
+
+
+def test_check_templates_returns_zero_when_no_drift(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+    from repo_scaffold.create_ops import TemplatesCheckSummary
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/clean", local_path="/local/clean")],
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.check_repository_templates",
+        lambda *, repo_dir, repo, out: TemplatesCheckSummary(
+            repo=repo, drifted_files=()
+        ),
+    )
+
+    rc = main(["check", "templates", "--all"])
+    assert rc == 0
+
+
+def test_sync_templates_opens_pr_only_for_confirmed_drifted_repos(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+    from repo_scaffold.create_ops import TemplatesCheckSummary
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [
+            RegistryEntry(repo="acme/drifted", local_path="/local/drifted"),
+            RegistryEntry(repo="acme/clean", local_path="/local/clean"),
+        ],
+    )
+
+    def _fake_check(*, repo_dir, repo, out):
+        drifted = (
+            (".github/pull_request_template.md",) if repo == "acme/drifted" else ()
+        )
+        return TemplatesCheckSummary(repo=repo, drifted_files=drifted)
+
+    synced: list[str] = []
+
+    def _fake_sync(*, repo_dir, repo, out, warn=None):
+        synced.append(repo)
+        return TemplatesCheckSummary(
+            repo=repo, drifted_files=(".github/pull_request_template.md",)
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_templates", _fake_check)
+    monkeypatch.setattr("repo_scaffold.cli.sync_repository_templates", _fake_sync)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    rc = main(["sync", "templates", "--all"])
+    assert rc == 0
+    assert synced == ["acme/drifted"]
+    stdout = capsys.readouterr().out
+    assert "sync PRs opened: 1" in stdout
+
+
+def test_sync_templates_no_drift_skips_pr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+    from repo_scaffold.create_ops import TemplatesCheckSummary
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/clean", local_path="/local/clean")],
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.check_repository_templates",
+        lambda *, repo_dir, repo, out: TemplatesCheckSummary(
+            repo=repo, drifted_files=()
+        ),
+    )
+
+    sync_called = False
+
+    def _fake_sync(**_kwargs):
+        nonlocal sync_called
+        sync_called = True
+
+    monkeypatch.setattr("repo_scaffold.cli.sync_repository_templates", _fake_sync)
+
+    rc = main(["sync", "templates", "--all"])
+    assert rc == 0
+    assert sync_called is False
+    stdout = capsys.readouterr().out
+    assert "No drift found" in stdout

@@ -59,10 +59,13 @@ from .backlog_import import build_backlog_import_file
 from .create_ops import (
     CreateSummary,
     SettingsCheckSummary,
+    TemplatesCheckSummary,
     apply_repository_settings,
     check_repository_settings,
+    check_repository_templates,
     create_repository,
     sync_repository_ruleset,
+    sync_repository_templates,
 )
 from .delete_ops import DeleteSummary, delete_repositories
 from .generator import (
@@ -707,7 +710,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check_sub = check.add_subparsers(
         dest="check_command",
-        metavar="{rules,settings}",
+        metavar="{rules,templates,settings}",
         required=True,
     )
     check_rules = check_sub.add_parser(
@@ -719,6 +722,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--repos", help="Comma-separated registered repos (owner/repo,owner/repo)"
     )
     check_rules.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_repos",
+        help="Target every repo in the local registry",
+    )
+
+    check_templates_cmd = check_sub.add_parser(
+        "templates",
+        help="Check issue/PR templates for drift against repo-scaffold's current templates",
+    )
+    check_templates_cmd.add_argument("--repo", help="Target GitHub repo (owner/repo)")
+    check_templates_cmd.add_argument(
+        "--repos", help="Comma-separated registered repos (owner/repo,owner/repo)"
+    )
+    check_templates_cmd.add_argument(
         "--all",
         action="store_true",
         dest="all_repos",
@@ -808,7 +826,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync_sub = sync_cmd.add_subparsers(
         dest="sync_command",
-        metavar="{rules}",
+        metavar="{rules,templates}",
         required=True,
     )
     sync_rules_cmd = sync_sub.add_parser(
@@ -829,6 +847,29 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes",
         action="store_true",
         help="Skip the per-repo confirmation prompt and apply all drifted repos",
+    )
+
+    sync_templates_cmd = sync_sub.add_parser(
+        "templates",
+        help=(
+            "Check issue/PR templates for drift, then open a PR per drifted repo "
+            "with the updated templates (never commits to the default branch directly)"
+        ),
+    )
+    sync_templates_cmd.add_argument("--repo", help="Target GitHub repo (owner/repo)")
+    sync_templates_cmd.add_argument(
+        "--repos", help="Comma-separated registered repos (owner/repo,owner/repo)"
+    )
+    sync_templates_cmd.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_repos",
+        help="Target every repo in the local registry",
+    )
+    sync_templates_cmd.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the per-repo confirmation prompt and open PRs for all drifted repos",
     )
 
     project_cmd = subparsers.add_parser(
@@ -2284,6 +2325,23 @@ def main(argv: list[str] | None = None) -> int:
             total_failed += check_summary.failed
         return 1 if total_failed > 0 else 0
 
+    if ns.mode == "check" and ns.check_command == "templates":
+        targets, targets_error = _resolve_repo_targets(ns)
+        if targets_error:
+            print(targets_error, file=sys.stderr)
+            return 2
+        total_drifted = 0
+        for target_repo, repo_dir in targets:
+            templates_summary: TemplatesCheckSummary = check_repository_templates(
+                repo_dir=repo_dir,
+                repo=target_repo,
+                out=print,
+            )
+            status = "DRIFT" if templates_summary.drifted_files else "PASS"
+            print(f"{status}  {target_repo}")
+            total_drifted += len(templates_summary.drifted_files)
+        return 1 if total_drifted > 0 else 0
+
     if ns.mode == "check" and ns.check_command == "settings":
         langs = (
             _parse_languages_or_die(parser, ns.languages)
@@ -2486,6 +2544,51 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  repos drifted: {len(drifted)}")
         print(f"  repos applied: {applied}")
         return 1 if errors else 0
+
+    if ns.mode == "sync" and ns.sync_command == "templates":
+        targets, targets_error = _resolve_repo_targets(ns)
+        if targets_error:
+            print(targets_error, file=sys.stderr)
+            return 2
+
+        drifted_targets: list[tuple[str, Path, TemplatesCheckSummary]] = []
+        for target_repo, repo_dir in targets:
+            templates_summary = check_repository_templates(
+                repo_dir=repo_dir, repo=target_repo, out=print
+            )
+            print(f"  {target_repo}: {len(templates_summary.drifted_files)} drifted")
+            if templates_summary.drifted_files:
+                drifted_targets.append((target_repo, repo_dir, templates_summary))
+
+        if not drifted_targets:
+            print("")
+            print("No drift found. Nothing to sync.")
+            return 0
+
+        print("")
+        opened = 0
+        for target_repo, repo_dir, _summary in drifted_targets:
+            if not ns.yes:
+                answer = (
+                    input(f"Open sync PR for {target_repo}? [y/N] ").strip().lower()
+                )
+                if answer != "y":
+                    print(f"Skipped {target_repo}.")
+                    continue
+            sync_repository_templates(
+                repo_dir=repo_dir,
+                repo=target_repo,
+                out=print,
+                warn=lambda line: print(line, file=sys.stderr),
+            )
+            opened += 1
+
+        print("")
+        print("Summary:")
+        print(f"  repos checked: {len(targets)}")
+        print(f"  repos drifted: {len(drifted_targets)}")
+        print(f"  sync PRs opened: {opened}")
+        return 0
 
     if ns.mode == "project":
         repo_dir = Path(ns.path)

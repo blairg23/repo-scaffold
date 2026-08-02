@@ -2748,3 +2748,191 @@ def test_ensure_dependabot_version_updates_pr_fallback_handles_malformed_respons
 
     assert any("opened one for .github/dependabot.yml." in line for line in out_lines)
     assert not any(line.startswith("WARN:") for line in out_lines)
+
+
+def test_check_templates_reports_drift_for_stale_template(tmp_path: Path) -> None:
+    github_dir = tmp_path / ".github"
+    github_dir.mkdir()
+    (github_dir / "pull_request_template.md").write_text(
+        "stale jira-style content\n", encoding="utf-8"
+    )
+
+    out_lines: list[str] = []
+    summary = create_ops._check_templates(
+        repo_dir=tmp_path, repo="acme/repo", out=out_lines.append
+    )
+
+    assert ".github/pull_request_template.md" in summary.drifted_files
+    assert any(
+        line.startswith("DRIFT") and "pull_request_template.md" in line
+        for line in out_lines
+    )
+
+
+def test_check_templates_passes_when_up_to_date(tmp_path: Path) -> None:
+    from repo_scaffold.generator import build_template_files
+    from repo_scaffold.overwrite_policy import OverwritePolicy, apply_files
+
+    files = build_template_files(tmp_path, owner="acme", name="repo")
+    apply_files(files, OverwritePolicy(yes=True), is_tty=False, out=lambda _l: None)
+
+    out_lines: list[str] = []
+    summary = create_ops._check_templates(
+        repo_dir=tmp_path, repo="acme/repo", out=out_lines.append
+    )
+
+    assert summary.drifted_files == ()
+    assert all(line.startswith("PASS") for line in out_lines if line.strip())
+
+
+def test_open_templates_sync_pr_writes_files_and_opens_pr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    branch_calls: list[tuple[str, str, str]] = []
+    get_calls: list[str] = []
+    put_calls: list[dict[str, object]] = []
+    pr_calls: list[tuple[str, str, str, str, str]] = []
+
+    def _fake_branch_create(
+        repo: str, name: str, token: str, base: str = "main"
+    ) -> subprocess.CompletedProcess[str]:
+        branch_calls.append((repo, name, base))
+        return subprocess.CompletedProcess(
+            args=[], returncode=201, stdout="{}", stderr=""
+        )
+
+    def _fake_github_rest(
+        method: str, endpoint: str, token: str, data: object = None
+    ) -> subprocess.CompletedProcess[str]:
+        if method == "GET":
+            get_calls.append(endpoint)
+            return subprocess.CompletedProcess(
+                args=[], returncode=200, stdout='{"sha": "abc123"}', stderr=""
+            )
+        put_calls.append({"method": method, "endpoint": endpoint, "data": data})
+        return subprocess.CompletedProcess(
+            args=[], returncode=201, stdout="{}", stderr=""
+        )
+
+    def _fake_pr_create(
+        repo: str, title: str, body: str, head: str, base: str, token: str
+    ) -> subprocess.CompletedProcess[str]:
+        pr_calls.append((repo, title, head, base, body))
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=201,
+            stdout='{"html_url": "https://github.com/acme/repo/pull/42"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(create_ops, "_github_branch_create", _fake_branch_create)
+    monkeypatch.setattr(create_ops, "_github_rest", _fake_github_rest)
+    monkeypatch.setattr(create_ops, "_github_pr_create", _fake_pr_create)
+    monkeypatch.setattr(create_ops, "_token_from_repo", lambda _: "tok")
+
+    out_lines: list[str] = []
+    result = create_ops._open_templates_sync_pr(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+        files=[(".github/pull_request_template.md", "new content\n")],
+        out=out_lines.append,
+        warn=lambda msg: out_lines.append(f"WARN:{msg}"),
+    )
+
+    assert result == "https://github.com/acme/repo/pull/42"
+    assert branch_calls == [("acme/repo", "chore/sync-templates", "main")]
+    assert (
+        put_calls[0]["endpoint"]
+        == "/repos/acme/repo/contents/.github/pull_request_template.md"
+    )
+    assert put_calls[0]["data"]["sha"] == "abc123"
+    assert pr_calls[0][2] == "chore/sync-templates"
+    assert pr_calls[0][3] == "main"
+
+
+def test_open_templates_sync_pr_resets_stale_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_branch_create(
+        repo: str, name: str, token: str, base: str = "main"
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=[], returncode=422, stdout="", stderr="Reference already exists"
+        )
+
+    def _fake_branch_get_sha(repo: str, branch: str, token: str) -> str:
+        return "def456"
+
+    reset_calls: list[dict[str, object]] = []
+
+    def _fake_github_rest(
+        method: str, endpoint: str, token: str, data: object = None
+    ) -> subprocess.CompletedProcess[str]:
+        if method == "PATCH":
+            reset_calls.append({"endpoint": endpoint, "data": data})
+            return subprocess.CompletedProcess(
+                args=[], returncode=200, stdout="{}", stderr=""
+            )
+        if method == "GET":
+            return subprocess.CompletedProcess(
+                args=[], returncode=200, stdout='{"sha": "abc"}', stderr=""
+            )
+        return subprocess.CompletedProcess(
+            args=[], returncode=201, stdout="{}", stderr=""
+        )
+
+    def _fake_pr_create(
+        repo: str, title: str, body: str, head: str, base: str, token: str
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=[], returncode=201, stdout='{"html_url": "https://x/pr/1"}', stderr=""
+        )
+
+    monkeypatch.setattr(create_ops, "_github_branch_create", _fake_branch_create)
+    monkeypatch.setattr(create_ops, "_github_branch_get_sha", _fake_branch_get_sha)
+    monkeypatch.setattr(create_ops, "_github_rest", _fake_github_rest)
+    monkeypatch.setattr(create_ops, "_github_pr_create", _fake_pr_create)
+    monkeypatch.setattr(create_ops, "_token_from_repo", lambda _: "tok")
+
+    result = create_ops._open_templates_sync_pr(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+        files=[(".github/pull_request_template.md", "content\n")],
+        out=lambda _l: None,
+        warn=lambda _l: None,
+    )
+
+    assert result == "https://x/pr/1"
+    assert (
+        reset_calls[0]["endpoint"]
+        == "/repos/acme/repo/git/refs/heads/chore/sync-templates"
+    )
+    assert reset_calls[0]["data"] == {"sha": "def456", "force": True}
+
+
+def test_sync_templates_skips_pr_when_no_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from repo_scaffold.generator import build_template_files
+    from repo_scaffold.overwrite_policy import OverwritePolicy, apply_files
+
+    files = build_template_files(tmp_path, owner="acme", name="repo")
+    apply_files(files, OverwritePolicy(yes=True), is_tty=False, out=lambda _l: None)
+
+    def _fail_if_called(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("should not open a branch/PR when there is no drift")
+
+    monkeypatch.setattr(create_ops, "_github_branch_create", _fail_if_called)
+
+    summary = create_ops._sync_templates(
+        repo_dir=tmp_path,
+        env={},
+        repo="acme/repo",
+        out=lambda _l: None,
+        warn=lambda _l: None,
+    )
+    assert summary.drifted_files == ()
