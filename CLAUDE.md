@@ -183,6 +183,17 @@ All GitHub operations (repos, issues, PRs, projects, backlog) are implemented vi
 
 # Branch Workflow
 
+## What needs a container vs. what's safe locally
+
+Only actual branch work -- editing files, running tests, committing, pushing on a
+specific branch -- needs a container. The local checkout stays on `main`/`master`
+always; never `git checkout -b` a feature branch directly on it.
+
+Everything else is a pure GitHub API call or a Docker lifecycle command and is
+safe to run directly against the local checkout: all `issue`/`pr`/`project`
+commands, `branch create`/`delete`/`rename`, and `docker build-base`/`spin-up`/
+`spin-down`/`list`. None of these touch which branch is checked out locally.
+
 ## How to work on branches
 
 Each branch gets its own isolated Docker container. The container clones the branch
@@ -197,6 +208,18 @@ poetry run repo-scaffold docker shell --repo OWNER/REPO --branch BRANCH
 
 # Add --rebuild if the Dockerfile changed
 poetry run repo-scaffold docker shell --repo OWNER/REPO --branch BRANCH --rebuild
+```
+
+`docker shell` execs into an interactive `-it` session -- it's built for a human at
+a terminal and can't be driven turn-by-turn by a headless/scripted agent. If you
+are a headless agent, use the lifecycle commands directly instead:
+
+```bash
+poetry run repo-scaffold docker spin-up --repo OWNER/REPO --branch BRANCH
+docker exec CONTAINER_NAME bash -c "cd /{repo-name} && poetry run pytest -q"
+docker cp local_file.py CONTAINER_NAME:/{repo-name}/path/to/file.py
+docker exec CONTAINER_NAME bash -c "cd /{repo-name} && git add -A && git commit -m '...' && git push origin BRANCH"
+poetry run repo-scaffold docker spin-down --repo OWNER/REPO --branch BRANCH
 ```
 
 All editing, testing, committing, and pushing happens inside the container.

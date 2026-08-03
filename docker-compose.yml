@@ -3,11 +3,6 @@ services:
     build: .
     image: repo-scaffold-dev:latest
     container_name: repo-scaffold-dev
-    volumes:
-      - repo-worktrees:/workspace/repos
     stdin_open: true
     tty: true
     command: bash
-
-volumes:
-  repo-worktrees:

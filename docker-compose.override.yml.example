@@ -1,7 +1,7 @@
 # Copy this file to docker-compose.override.yml (which is gitignored).
 # Bind-mounts the project root into /workspace so source edits are visible
-# inside the container without rebuilding. The named volume for repos/ is
-# preserved by the second entry. GH_TOKEN is read from .env via the root mount.
+# inside the container without rebuilding. GH_TOKEN is read from .env via
+# the root mount.
 #
 # Usage:
 #   cp docker-compose.override.yml.example docker-compose.override.yml
@@ -13,5 +13,4 @@ services:
   dev:
     volumes:
       - .:/workspace                    # live source edits + .env readable/writable
-      - repo-worktrees:/workspace/repos # named volume wins for git worktrees
       - /var/run/docker.sock:/var/run/docker.sock  # Docker socket passthrough for docker commands
