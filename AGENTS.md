@@ -217,6 +217,16 @@ poetry run repo-scaffold check templates --repo OWNER/REPO [--repos a,b | --all]
 # pushing to main. These PRs are intentionally ticket-less (see Execution SOP).
 poetry run repo-scaffold sync templates --repo OWNER/REPO [--repos a,b | --all] [--yes]
 
+# Check managed tool/environment config files (e.g. poetry.toml) for drift. These are
+# language-conditional -- a repo's language stack is read from a local checkout the same
+# way `check settings` reads it; pass --languages to override when checking a repo you
+# don't have registered/checked out locally.
+poetry run repo-scaffold check configs --repo OWNER/REPO [--repos a,b | --all] [--languages LANGS]
+
+# For every drifted repo, open a branch + PR with the updated config files -- same
+# never-commits-to-default-branch, ticket-less automated-PR behavior as sync templates.
+poetry run repo-scaffold sync configs --repo OWNER/REPO [--repos a,b | --all] [--yes] [--languages LANGS]
+
 # Archive a repo (read-only; reversible via the GitHub UI)
 # Prompts for confirmation unless --yes is passed; refuses in a non-interactive shell without --yes.
 poetry run repo-scaffold repo archive --repo OWNER/REPO [--yes]
@@ -341,7 +351,7 @@ Deciding to execute means, in this order: **create a ticket -> work the ticket -
 - No implementation work starts without an issue to trace it to. If one doesn't exist, file it first (after searching open AND closed issues for overlap, per Standing rules).
 - The PR that implements a ticket must reference it in both places: the PR title ends with `(#NNN)`, and the PR body links it via `Closes #NNN` (or `Related Issues / Epics` in the target repo's own template).
 - This holds even for small or "obvious" fixes -- there is no size threshold below which the ticket step is skipped.
-- **Exception: automated maintenance PRs opened directly by repo-scaffold's own tooling** (e.g. `sync templates`, the dependabot.yml PR fallback in `apply rules`) are exempt. These are fully mechanical -- the change is entirely determined by repo-scaffold's own canonical source, no judgment call is being tracked -- the same way Dependabot itself never files a ticket before opening a PR. Agent-driven work is never exempt; this applies only to repo-scaffold's own bot-like automation.
+- **Exception: automated maintenance PRs opened directly by repo-scaffold's own tooling** (e.g. `sync templates`, `sync configs`, the dependabot.yml PR fallback in `apply rules`) are exempt. These are fully mechanical -- the change is entirely determined by repo-scaffold's own canonical source, no judgment call is being tracked -- the same way Dependabot itself never files a ticket before opening a PR. Agent-driven work is never exempt; this applies only to repo-scaffold's own bot-like automation.
 
 ---
 

@@ -57,14 +57,18 @@ from .github_api import (
 )
 from .backlog_import import build_backlog_import_file
 from .create_ops import (
+    ConfigsCheckSummary,
+    ConfigsSyncResult,
     CreateSummary,
     SettingsCheckSummary,
     TemplatesCheckSummary,
     TemplatesSyncResult,
     apply_repository_settings,
+    check_repository_configs,
     check_repository_settings,
     check_repository_templates,
     create_repository,
+    sync_repository_configs,
     sync_repository_ruleset,
     sync_repository_templates,
 )
@@ -711,7 +715,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check_sub = check.add_subparsers(
         dest="check_command",
-        metavar="{rules,templates,settings}",
+        metavar="{rules,templates,settings,configs}",
         required=True,
     )
     check_rules = check_sub.add_parser(
@@ -758,6 +762,30 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help=(
             "Comma-separated language list to require as status checks "
+            "(default: read from .repo-scaffold.yml, falling back to file detection)"
+        ),
+    )
+
+    check_configs_cmd = check_sub.add_parser(
+        "configs",
+        help="Check managed tool/environment config files (e.g. poetry.toml) for drift",
+    )
+    check_configs_cmd.add_argument("--repo", help="Target GitHub repo (owner/repo)")
+    check_configs_cmd.add_argument(
+        "--repos", help="Comma-separated registered repos (owner/repo,owner/repo)"
+    )
+    check_configs_cmd.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_repos",
+        help="Target every repo in the local registry",
+    )
+    check_configs_cmd.add_argument(
+        "--languages",
+        default="",
+        help=(
+            "Comma-separated language list to check config files for -- required "
+            "when the target's language stack can't be read from a local checkout "
             "(default: read from .repo-scaffold.yml, falling back to file detection)"
         ),
     )
@@ -827,7 +855,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync_sub = sync_cmd.add_subparsers(
         dest="sync_command",
-        metavar="{rules,templates}",
+        metavar="{rules,templates,configs}",
         required=True,
     )
     sync_rules_cmd = sync_sub.add_parser(
@@ -871,6 +899,39 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes",
         action="store_true",
         help="Skip the per-repo confirmation prompt and open PRs for all drifted repos",
+    )
+
+    sync_configs_cmd = sync_sub.add_parser(
+        "configs",
+        help=(
+            "Check managed config files for drift, then open a PR per drifted "
+            "repo with the updated files (never commits to the default branch "
+            "directly)"
+        ),
+    )
+    sync_configs_cmd.add_argument("--repo", help="Target GitHub repo (owner/repo)")
+    sync_configs_cmd.add_argument(
+        "--repos", help="Comma-separated registered repos (owner/repo,owner/repo)"
+    )
+    sync_configs_cmd.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_repos",
+        help="Target every repo in the local registry",
+    )
+    sync_configs_cmd.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the per-repo confirmation prompt and open PRs for all drifted repos",
+    )
+    sync_configs_cmd.add_argument(
+        "--languages",
+        default="",
+        help=(
+            "Comma-separated language list to check config files for -- required "
+            "when a target's language stack can't be read from a local checkout "
+            "(default: read from .repo-scaffold.yml, falling back to file detection)"
+        ),
     )
 
     project_cmd = subparsers.add_parser(
@@ -2383,6 +2444,40 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  drift items: {len(settings_summary.drifts)}")
         return 1 if settings_summary.failed > 0 else 0
 
+    if ns.mode == "check" and ns.check_command == "configs":
+        targets, targets_error = _resolve_repo_targets(ns)
+        if targets_error:
+            print(targets_error, file=sys.stderr)
+            return 2
+        override_langs = (
+            _parse_languages_or_die(parser, ns.languages) if ns.languages else None
+        )
+        total_drifted = 0
+        errors = 0
+        for target_repo, repo_dir in targets:
+            langs = override_langs or tuple(
+                resolve_languages_for_repo(
+                    repo_dir,
+                    target_repo,
+                    warn=lambda line: print(line, file=sys.stderr),
+                )
+            )
+            try:
+                configs_summary: ConfigsCheckSummary = check_repository_configs(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    languages=langs,
+                    out=print,
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                errors += 1
+                continue
+            status = "DRIFT" if configs_summary.drifted_files else "PASS"
+            print(f"{status}  {target_repo}")
+            total_drifted += len(configs_summary.drifted_files)
+        return 1 if (total_drifted > 0 or errors) else 0
+
     if ns.mode == "repo" and ns.repo_command == "register":
         entry: RegistryEntry = register_repo(ns.repo, ns.path, ns.notes)
         print(f"Registered {entry.repo} -> {entry.local_path}")
@@ -2601,11 +2696,98 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if sync_result.pr_url is not None:
                 opened += 1
+            else:
+                # A drifted repo that didn't produce a PR is a failed sync, not
+                # a no-op -- count it so the command doesn't exit 0 while
+                # silently leaving that repo's drift unaddressed.
+                errors += 1
 
         print("")
         print("Summary:")
         print(f"  repos checked: {len(targets)}")
         print(f"  repos drifted: {len(drifted_targets)}")
+        print(f"  sync PRs opened: {opened}")
+        return 1 if errors else 0
+
+    if ns.mode == "sync" and ns.sync_command == "configs":
+        targets, targets_error = _resolve_repo_targets(ns)
+        if targets_error:
+            print(targets_error, file=sys.stderr)
+            return 2
+        override_langs = (
+            _parse_languages_or_die(parser, ns.languages) if ns.languages else None
+        )
+
+        drifted_configs_targets: list[tuple[str, Path]] = []
+        errors = 0
+        for target_repo, repo_dir in targets:
+            langs = override_langs or tuple(
+                resolve_languages_for_repo(
+                    repo_dir,
+                    target_repo,
+                    warn=lambda line: print(line, file=sys.stderr),
+                )
+            )
+            try:
+                configs_drift_summary: ConfigsCheckSummary = check_repository_configs(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    languages=langs,
+                    out=print,
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                errors += 1
+                continue
+            print(
+                f"  {target_repo}: {len(configs_drift_summary.drifted_files)} drifted"
+            )
+            if configs_drift_summary.drifted_files:
+                drifted_configs_targets.append((target_repo, repo_dir))
+
+        if not drifted_configs_targets:
+            print("")
+            print("No drift found. Nothing to sync.")
+            return 1 if errors else 0
+
+        print("")
+        opened = 0
+        for target_repo, repo_dir in drifted_configs_targets:
+            if not ns.yes:
+                answer = (
+                    input(f"Open sync PR for {target_repo}? [y/N] ").strip().lower()
+                )
+                if answer != "y":
+                    print(f"Skipped {target_repo}.")
+                    continue
+            langs = override_langs or tuple(
+                resolve_languages_for_repo(
+                    repo_dir,
+                    target_repo,
+                    warn=lambda line: print(line, file=sys.stderr),
+                )
+            )
+            try:
+                configs_sync_result: ConfigsSyncResult = sync_repository_configs(
+                    repo_dir=repo_dir,
+                    repo=target_repo,
+                    languages=langs,
+                    out=print,
+                    warn=lambda line: print(line, file=sys.stderr),
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                errors += 1
+                continue
+            if configs_sync_result.pr_url is not None:
+                opened += 1
+            else:
+                errors += 1
+
+        print("")
+        print("Summary:")
+        print(f"  repos checked: {len(targets)}")
+        print(f"  repos drifted: {len(drifted_configs_targets)}")
         print(f"  sync PRs opened: {opened}")
         return 1 if errors else 0
 

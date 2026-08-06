@@ -363,6 +363,23 @@ def test_build_ci_files_includes_husky_for_react(tmp_path: Path) -> None:
     assert "web/.husky/pre-commit" in rel_paths
 
 
+def test_build_config_files_includes_poetry_toml_for_python(tmp_path: Path) -> None:
+    from repo_scaffold.generator import build_config_files
+
+    files = build_config_files(tmp_path, languages=("python",))
+    rel_paths = {f.path.relative_to(tmp_path).as_posix() for f in files}
+    assert rel_paths == {"poetry.toml"}
+    [poetry_toml] = files
+    assert "in-project = false" in poetry_toml.content
+
+
+def test_build_config_files_empty_for_non_python_languages(tmp_path: Path) -> None:
+    from repo_scaffold.generator import build_config_files
+
+    files = build_config_files(tmp_path, languages=("go", "react"))
+    assert files == []
+
+
 def test_generate_scaffold_uses_custom_markdown_templates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

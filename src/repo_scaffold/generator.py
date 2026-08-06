@@ -189,6 +189,10 @@ def _render_validate_pr_sop_workflow() -> str:
     return _load_template("github/workflows/validate-pr-sop.yml", "")
 
 
+def _render_poetry_toml() -> str:
+    return _load_template("poetry.toml", "[virtualenvs]\nin-project = false\n")
+
+
 def _render_ci_yaml(languages: Iterable[str]) -> str:
     selected = set(languages)
     parts: list[str] = [
@@ -3321,6 +3325,7 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
                     config.out_dir / "pyproject.toml",
                     _render_python_pyproject(config.name),
                 ),
+                ScaffoldFile(config.out_dir / "poetry.toml", _render_poetry_toml()),
                 ScaffoldFile(config.out_dir / "tox.ini", _render_tox_ini()),
                 ScaffoldFile(
                     config.out_dir / "src" / config.name / "__init__.py",
@@ -3424,6 +3429,33 @@ def build_template_files(
     )
     return _filter_files_for_paths(
         build_scaffold_files(cfg), target_dir, TEMPLATE_FILE_PATHS
+    )
+
+
+CONFIG_FILE_PATHS = ("poetry.toml",)
+
+
+def build_config_files(
+    target_dir: Path,
+    *,
+    languages: tuple[str, ...],
+    owner: str | None = None,
+    name: str | None = None,
+) -> list[ScaffoldFile]:
+    """Managed tool/environment config files, e.g. poetry.toml. Unlike
+    build_template_files, these can be language-conditional -- a repo with no
+    Python component gets an empty list back, since build_scaffold_files only
+    emits poetry.toml when "python" is in languages."""
+    repo_name = name or target_dir.name
+    cfg = ScaffoldConfig(
+        name=repo_name,
+        languages=languages,
+        owner=owner,
+        license_id=SUPPORTED_LICENSE,
+        out_dir=target_dir,
+    )
+    return _filter_files_for_paths(
+        build_scaffold_files(cfg), target_dir, CONFIG_FILE_PATHS
     )
 
 

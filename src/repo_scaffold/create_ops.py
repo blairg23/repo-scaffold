@@ -11,7 +11,7 @@ from typing import Callable
 from urllib.parse import quote
 
 from .auth_tokens import is_placeholder_token, resolve_gh_token
-from .generator import build_template_files
+from .generator import build_config_files, build_template_files
 from .github_api import (
     branch_create as _github_branch_create,
     branch_get_sha as _github_branch_get_sha,
@@ -49,6 +49,18 @@ class TemplatesCheckSummary:
 @dataclass(frozen=True)
 class TemplatesSyncResult:
     summary: TemplatesCheckSummary
+    pr_url: str | None
+
+
+@dataclass(frozen=True)
+class ConfigsCheckSummary:
+    repo: str
+    drifted_files: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ConfigsSyncResult:
+    summary: ConfigsCheckSummary
     pr_url: str | None
 
 
@@ -664,6 +676,7 @@ def _ensure_dependabot_version_updates(
 
 
 _TEMPLATES_SYNC_BRANCH = "chore/sync-templates"
+_CONFIGS_SYNC_BRANCH = "chore/sync-configs"
 
 
 def _normalize_template_content(content: str) -> str:
@@ -732,27 +745,34 @@ def _check_templates(
     return TemplatesCheckSummary(repo=repo, drifted_files=drifted)
 
 
-def _open_templates_sync_pr(
+def _open_managed_files_sync_pr(
     *,
     repo_dir: Path,
     env: dict[str, str],
     repo: str,
     default_branch: str,
+    branch_name: str,
+    sync_label: str,
+    commit_message: str,
+    pr_title: str,
+    pr_description: str,
+    changes_included: str,
     files: list[tuple[str, str]],
     out: Callable[[str], None],
     warn: Callable[[str], None],
 ) -> str | None:
-    """Open a branch + PR updating the given (relative_path, content) template
-    files. Never commits directly to the default branch -- mirrors how
-    Dependabot itself always opens a PR rather than pushing to main. Returns
-    the PR URL on success, None on failure."""
+    """Open a branch + PR updating the given (relative_path, content) managed
+    files -- shared by both the templates and configs categories, which only
+    differ in branch name, messaging, and which files they manage. Never
+    commits directly to the default branch -- mirrors how Dependabot itself
+    always opens a PR rather than pushing to main. Returns the PR URL on
+    success, None on failure."""
     token = (
         _token_from_repo(repo_dir)
         or env.get("GH_TOKEN")
         or env.get("GITHUB_TOKEN")
         or ""
     )
-    branch_name = _TEMPLATES_SYNC_BRANCH
 
     branch_cp = _github_branch_create(repo, branch_name, token, base=default_branch)
     already_exists = "already exists" in (branch_cp.stderr or "").lower()
@@ -798,7 +818,7 @@ def _open_templates_sync_pr(
                 sha = None
 
         payload: dict[str, object] = {
-            "message": "chore: sync issue/PR templates from repo-scaffold",
+            "message": commit_message,
             "content": base64.b64encode(content.encode()).decode(),
             "branch": branch_name,
         }
@@ -817,30 +837,27 @@ def _open_templates_sync_pr(
 
     file_list = "\n".join(f"- `{path}`" for path in changed)
     pr_body = (
-        "## \U0001f9fe Title\n"
-        "Sync issue/PR templates from repo-scaffold\n\n"
-        "## \U0001f9e0 Description\n"
-        "This PR was opened automatically by `repo-scaffold sync templates` because "
-        "one or more of this repo's issue/PR templates have drifted from the current "
-        "canonical versions repo-scaffold generates.\n\n"
-        "## \U0001f9e9 Changes Included\n"
-        "- [x] Added/updated documentation\n\n"
+        f"## \U0001f9fe Title\n{pr_title}\n\n"
+        f"## \U0001f9e0 Description\n{pr_description}\n\n"
+        f"## \U0001f9e9 Changes Included\n{changes_included}\n\n"
         "## \U0001f3af Purpose\n"
-        "Keep downstream templates current with repo-scaffold's own templates, the same "
-        "way Dependabot keeps dependencies current -- never committed directly to the "
-        "default branch.\n\n"
+        f"Keep downstream {sync_label} current with repo-scaffold's own canonical "
+        "versions, the same way Dependabot keeps dependencies current -- never "
+        "committed directly to the default branch.\n\n"
         f"## \U0001f517 Files Changed\n{file_list}"
     )
     pr_cp = _github_pr_create(
         repo,
-        "chore: sync issue/PR templates from repo-scaffold",
+        commit_message,
         pr_body,
         branch_name,
         default_branch,
         token,
     )
     if pr_cp.returncode not in (0, 201):
-        warn(f"Warning: could not open PR for template sync: {pr_cp.stderr.strip()}")
+        warn(
+            f"Warning: could not open PR for {sync_label} sync: {pr_cp.stderr.strip()}"
+        )
         return None
 
     pr_url = ""
@@ -848,8 +865,71 @@ def _open_templates_sync_pr(
         pr_url = json.loads(pr_cp.stdout).get("html_url", "")
     except (json.JSONDecodeError, AttributeError):
         pass
-    out("Opened PR to sync templates" + (f": {pr_url}" if pr_url else "."))
+    out(f"Opened PR to sync {sync_label}" + (f": {pr_url}" if pr_url else "."))
     return pr_url or ""
+
+
+def _open_templates_sync_pr(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    default_branch: str,
+    files: list[tuple[str, str]],
+    out: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> str | None:
+    return _open_managed_files_sync_pr(
+        repo_dir=repo_dir,
+        env=env,
+        repo=repo,
+        default_branch=default_branch,
+        branch_name=_TEMPLATES_SYNC_BRANCH,
+        sync_label="templates",
+        commit_message="chore: sync issue/PR templates from repo-scaffold",
+        pr_title="Sync issue/PR templates from repo-scaffold",
+        pr_description=(
+            "This PR was opened automatically by `repo-scaffold sync templates` "
+            "because one or more of this repo's issue/PR templates have drifted "
+            "from the current canonical versions repo-scaffold generates."
+        ),
+        changes_included="- [x] Added/updated documentation",
+        files=files,
+        out=out,
+        warn=warn,
+    )
+
+
+def _open_configs_sync_pr(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    default_branch: str,
+    files: list[tuple[str, str]],
+    out: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> str | None:
+    return _open_managed_files_sync_pr(
+        repo_dir=repo_dir,
+        env=env,
+        repo=repo,
+        default_branch=default_branch,
+        branch_name=_CONFIGS_SYNC_BRANCH,
+        sync_label="configs",
+        commit_message="chore: sync managed config files from repo-scaffold",
+        pr_title="Sync managed config files from repo-scaffold",
+        pr_description=(
+            "This PR was opened automatically by `repo-scaffold sync configs` "
+            "because one or more of this repo's managed config files have "
+            "drifted from the current canonical versions repo-scaffold "
+            "generates."
+        ),
+        changes_included="- [x] Updated environment configuration",
+        files=files,
+        out=out,
+        warn=warn,
+    )
 
 
 def _sync_templates(
@@ -917,6 +997,170 @@ def sync_repository_templates(
     emit_warn = warn if warn is not None else out
     return _sync_templates(
         repo_dir=repo_dir.resolve(), env=env, repo=repo, out=out, warn=emit_warn
+    )
+
+
+def _fetch_remote_file_content(
+    *, repo: str, rel_path: str, ref: str, token: str
+) -> str | None:
+    """Fetch a file's content from the given ref via the contents API.
+    Returns None only when the file is confirmed absent (404) at that ref --
+    that's real drift (would be a CREATE). Any other failure (403, 5xx,
+    network error, malformed response) raises instead of being treated as
+    "missing", since silently reporting drift on an unreadable source would
+    let sync attempt a mutation based on a state we never actually saw."""
+    encoded_path = quote(rel_path, safe="/")
+    encoded_ref = quote(ref, safe="/")
+    cp = _github_rest(
+        "GET", f"/repos/{repo}/contents/{encoded_path}?ref={encoded_ref}", token
+    )
+    if cp.returncode == 404:
+        return None
+    if cp.returncode not in (0, 200):
+        raise RuntimeError(
+            f"Could not fetch {rel_path}@{ref} for {repo}: "
+            f"{(cp.stderr or '').strip() or f'HTTP {cp.returncode}'}"
+        )
+    try:
+        payload = json.loads(cp.stdout)
+        encoded = str(payload.get("content", "")).replace("\n", "")
+        return base64.b64decode(encoded).decode("utf-8")
+    except (
+        json.JSONDecodeError,
+        AttributeError,
+        UnicodeDecodeError,
+        ValueError,
+    ) as exc:
+        raise RuntimeError(
+            f"Could not decode {rel_path}@{ref} for {repo}: {exc}"
+        ) from exc
+
+
+def _check_configs(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    default_branch: str,
+    languages: tuple[str, ...],
+    out: Callable[[str], None],
+) -> ConfigsCheckSummary:
+    """Compare repo-scaffold's current managed config files against the
+    target repository's remote default branch -- not the local working
+    tree, which may be stale, on another branch, or carry local edits."""
+    owner, _, name = repo.partition("/")
+    files = build_config_files(
+        repo_dir, languages=languages, owner=owner or None, name=name or None
+    )
+    token = (
+        _token_from_repo(repo_dir)
+        or env.get("GH_TOKEN")
+        or env.get("GITHUB_TOKEN")
+        or ""
+    )
+
+    statuses: dict[str, str] = {}
+    for file in files:
+        rel_path = file.path.relative_to(repo_dir).as_posix()
+        remote = _fetch_remote_file_content(
+            repo=repo, rel_path=rel_path, ref=default_branch, token=token
+        )
+        statuses[rel_path] = "PASS" if remote == file.content else "DRIFT"
+
+    for rel_path in sorted(statuses):
+        out(f"{statuses[rel_path]:5} config: {rel_path}")
+
+    drifted = tuple(
+        rel_path for rel_path in sorted(statuses) if statuses[rel_path] == "DRIFT"
+    )
+    return ConfigsCheckSummary(repo=repo, drifted_files=drifted)
+
+
+def _sync_configs(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    languages: tuple[str, ...],
+    out: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> ConfigsSyncResult:
+    default_branch = _fetch_remote_default_branch(repo_dir=repo_dir, env=env, repo=repo)
+    summary = _check_configs(
+        repo_dir=repo_dir,
+        env=env,
+        repo=repo,
+        default_branch=default_branch,
+        languages=languages,
+        out=out,
+    )
+    if not summary.drifted_files:
+        return ConfigsSyncResult(summary=summary, pr_url=None)
+
+    owner, _, name = repo.partition("/")
+    files = build_config_files(
+        repo_dir, languages=languages, owner=owner or None, name=name or None
+    )
+    by_path = {f.path.relative_to(repo_dir).as_posix(): f for f in files}
+    pairs = [
+        (rel_path, by_path[rel_path].content)
+        for rel_path in summary.drifted_files
+        if rel_path in by_path
+    ]
+
+    pr_url = _open_configs_sync_pr(
+        repo_dir=repo_dir,
+        env=env,
+        repo=repo,
+        default_branch=default_branch,
+        files=pairs,
+        out=out,
+        warn=warn,
+    )
+    return ConfigsSyncResult(summary=summary, pr_url=pr_url)
+
+
+def check_repository_configs(
+    *,
+    repo_dir: Path,
+    repo: str,
+    languages: tuple[str, ...],
+    out: Callable[[str], None] = print,
+) -> ConfigsCheckSummary:
+    _ensure_tools()
+    env = _build_env(repo_dir)
+    _ensure_gh_auth(repo_dir, env)
+    resolved = repo_dir.resolve()
+    default_branch = _fetch_remote_default_branch(repo_dir=resolved, env=env, repo=repo)
+    return _check_configs(
+        repo_dir=resolved,
+        env=env,
+        repo=repo,
+        default_branch=default_branch,
+        languages=languages,
+        out=out,
+    )
+
+
+def sync_repository_configs(
+    *,
+    repo_dir: Path,
+    repo: str,
+    languages: tuple[str, ...],
+    out: Callable[[str], None] = print,
+    warn: Callable[[str], None] | None = None,
+) -> ConfigsSyncResult:
+    _ensure_tools()
+    env = _build_env(repo_dir)
+    _ensure_gh_auth(repo_dir, env)
+    emit_warn = warn if warn is not None else out
+    return _sync_configs(
+        repo_dir=repo_dir.resolve(),
+        env=env,
+        repo=repo,
+        languages=languages,
+        out=out,
+        warn=emit_warn,
     )
 
 

@@ -1,0 +1,17 @@
+# Force poetry to always use its own OS-specific global cache
+# (%LOCALAPPDATA%\pypoetry\Cache\virtualenvs on Windows,
+# ~/.cache/pypoetry/virtualenvs under Linux/WSL/macOS) instead of ever
+# creating or adopting an in-project .venv/.
+#
+# This repo is worked on from more than one OS context against the same
+# physical files on disk (native Windows + WSL both pointed at the same
+# directory). A venv is not portable across that boundary -- it pins an
+# absolute interpreter path and platform-specific binaries. Poetry's default
+# fallback is to adopt whatever .venv/ already exists in the project root
+# regardless of this setting, so once any one OS creates it, every other OS
+# context that touches the repo corrupts it for the others. Forcing
+# in-project = false here means every OS keeps its own venv, keyed by
+# project name + path hash in poetry's own cache, and none of them ever
+# share a folder to collide on. See #282.
+[virtualenvs]
+in-project = false

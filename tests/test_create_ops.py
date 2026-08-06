@@ -3067,3 +3067,294 @@ def test_sync_templates_returns_pr_url_when_drifted(
     )
     assert result.summary.drifted_files != ()
     assert result.pr_url == "https://github.com/acme/repo/pull/9"
+
+
+def test_check_configs_reports_drift_for_missing_remote_poetry_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(create_ops, "_github_rest", _fake_contents_get({}))
+
+    out_lines: list[str] = []
+    summary = create_ops._check_configs(
+        repo_dir=tmp_path,
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+        languages=("python",),
+        out=out_lines.append,
+    )
+
+    assert summary.drifted_files == ("poetry.toml",)
+    assert any("DRIFT config: poetry.toml" in line for line in out_lines)
+
+
+def test_check_configs_passes_when_remote_content_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from repo_scaffold.generator import build_config_files
+
+    [wanted] = build_config_files(tmp_path, languages=("python",))
+    monkeypatch.setattr(
+        create_ops,
+        "_github_rest",
+        _fake_contents_get({"poetry.toml": wanted.content}),
+    )
+
+    summary = create_ops._check_configs(
+        repo_dir=tmp_path,
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+        languages=("python",),
+        out=lambda _line: None,
+    )
+
+    assert summary.drifted_files == ()
+
+
+def test_check_configs_empty_for_non_python_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    def _fake_github_rest(
+        method: str, endpoint: str, token: str, data: object = None
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(endpoint)
+        return subprocess.CompletedProcess(
+            args=[], returncode=404, stdout="", stderr="Not Found"
+        )
+
+    monkeypatch.setattr(create_ops, "_github_rest", _fake_github_rest)
+
+    summary = create_ops._check_configs(
+        repo_dir=tmp_path,
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+        languages=("go",),
+        out=lambda _line: None,
+    )
+
+    assert summary.drifted_files == ()
+    assert calls == []
+
+
+def test_check_configs_raises_on_non_404_fetch_error_instead_of_reporting_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 403/5xx/network failure fetching the remote file must not be treated
+    the same as a confirmed-absent (404) file -- that would report false
+    drift (or false PASS) from a source we never actually read."""
+
+    def _fake_github_rest(
+        method: str, endpoint: str, token: str, data: object = None
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=[], returncode=403, stdout="", stderr="API rate limit exceeded"
+        )
+
+    monkeypatch.setattr(create_ops, "_github_rest", _fake_github_rest)
+
+    with pytest.raises(RuntimeError, match="poetry.toml"):
+        create_ops._check_configs(
+            repo_dir=tmp_path,
+            env={},
+            repo="acme/repo",
+            default_branch="main",
+            languages=("python",),
+            out=lambda _line: None,
+        )
+
+
+def test_open_configs_sync_pr_writes_drifted_files_and_opens_pr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    branch_calls: list[tuple[str, str, str]] = []
+    put_calls: list[dict[str, object]] = []
+    pr_calls: list[tuple[str, str, str, str, str]] = []
+
+    def _fake_branch_create(
+        repo: str, name: str, token: str, base: str = "main"
+    ) -> subprocess.CompletedProcess[str]:
+        branch_calls.append((repo, name, base))
+        return subprocess.CompletedProcess(
+            args=[], returncode=201, stdout="{}", stderr=""
+        )
+
+    def _fake_github_rest(
+        method: str, endpoint: str, token: str, data: object = None
+    ) -> subprocess.CompletedProcess[str]:
+        if method == "GET":
+            return subprocess.CompletedProcess(
+                args=[], returncode=404, stdout="", stderr="Not Found"
+            )
+        put_calls.append({"method": method, "endpoint": endpoint, "data": data})
+        return subprocess.CompletedProcess(
+            args=[], returncode=201, stdout="{}", stderr=""
+        )
+
+    def _fake_pr_create(
+        repo: str, title: str, body: str, head: str, base: str, token: str
+    ) -> subprocess.CompletedProcess[str]:
+        pr_calls.append((repo, title, head, base, body))
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=201,
+            stdout='{"html_url": "https://github.com/acme/repo/pull/101"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(create_ops, "_github_branch_create", _fake_branch_create)
+    monkeypatch.setattr(create_ops, "_github_rest", _fake_github_rest)
+    monkeypatch.setattr(create_ops, "_github_pr_create", _fake_pr_create)
+    monkeypatch.setattr(create_ops, "_token_from_repo", lambda _: "tok")
+
+    out_lines: list[str] = []
+    pr_url = create_ops._open_configs_sync_pr(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+        files=[("poetry.toml", "[virtualenvs]\nin-project = false\n")],
+        out=out_lines.append,
+        warn=lambda msg: out_lines.append(f"WARN:{msg}"),
+    )
+
+    assert pr_url == "https://github.com/acme/repo/pull/101"
+    assert branch_calls == [("acme/repo", "chore/sync-configs", "main")]
+    assert put_calls[0]["endpoint"] == "/repos/acme/repo/contents/poetry.toml"
+    assert pr_calls[0][2] == "chore/sync-configs"
+    assert pr_calls[0][3] == "main"
+    assert "Updated environment configuration" in pr_calls[0][4]
+    assert "poetry.toml" in pr_calls[0][4]
+    assert not any(line.startswith("WARN:") for line in out_lines)
+
+
+def test_open_configs_sync_pr_resets_stale_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_branch_create(
+        repo: str, name: str, token: str, base: str = "main"
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=[], returncode=422, stdout="", stderr="Reference already exists"
+        )
+
+    def _fake_branch_get_sha(repo: str, branch: str, token: str) -> str | None:
+        assert branch == "main"
+        return "deadbeef"
+
+    reset_calls: list[dict[str, object]] = []
+
+    def _fake_github_rest(
+        method: str, endpoint: str, token: str, data: object = None
+    ) -> subprocess.CompletedProcess[str]:
+        if method == "PATCH":
+            reset_calls.append({"endpoint": endpoint, "data": data})
+            return subprocess.CompletedProcess(
+                args=[], returncode=200, stdout="{}", stderr=""
+            )
+        if method == "GET":
+            return subprocess.CompletedProcess(
+                args=[], returncode=404, stdout="", stderr="Not Found"
+            )
+        return subprocess.CompletedProcess(
+            args=[], returncode=201, stdout="{}", stderr=""
+        )
+
+    def _fake_pr_create(
+        repo: str, title: str, body: str, head: str, base: str, token: str
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=201,
+            stdout='{"html_url": "https://github.com/acme/repo/pull/102"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(create_ops, "_github_branch_create", _fake_branch_create)
+    monkeypatch.setattr(create_ops, "_github_branch_get_sha", _fake_branch_get_sha)
+    monkeypatch.setattr(create_ops, "_github_rest", _fake_github_rest)
+    monkeypatch.setattr(create_ops, "_github_pr_create", _fake_pr_create)
+    monkeypatch.setattr(create_ops, "_token_from_repo", lambda _: "tok")
+
+    pr_url = create_ops._open_configs_sync_pr(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        default_branch="main",
+        files=[("poetry.toml", "[virtualenvs]\nin-project = false\n")],
+        out=lambda _line: None,
+        warn=lambda _line: None,
+    )
+
+    assert pr_url == "https://github.com/acme/repo/pull/102"
+    assert (
+        reset_calls[0]["endpoint"]
+        == "/repos/acme/repo/git/refs/heads/chore/sync-configs"
+    )
+    assert reset_calls[0]["data"] == {"sha": "deadbeef", "force": True}
+
+
+def test_sync_configs_skips_pr_when_no_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from repo_scaffold.generator import build_config_files
+
+    [wanted] = build_config_files(tmp_path, languages=("python",))
+    monkeypatch.setattr(
+        create_ops,
+        "_github_rest",
+        _fake_contents_get({"poetry.toml": wanted.content}),
+    )
+    monkeypatch.setattr(create_ops, "_token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        create_ops,
+        "_get_repo_info",
+        lambda *, repo_dir, env, repo: {"default_branch": "main"},
+    )
+
+    def _fail_if_called(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("should not open a branch/PR when there is no drift")
+
+    monkeypatch.setattr(create_ops, "_github_branch_create", _fail_if_called)
+
+    result = create_ops._sync_configs(
+        repo_dir=tmp_path,
+        env={},
+        repo="acme/repo",
+        languages=("python",),
+        out=lambda _l: None,
+        warn=lambda _l: None,
+    )
+    assert result.summary.drifted_files == ()
+    assert result.pr_url is None
+
+
+def test_sync_configs_returns_pr_url_when_drifted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(create_ops, "_github_rest", _fake_contents_get({}))
+    monkeypatch.setattr(create_ops, "_token_from_repo", lambda _: "tok")
+    monkeypatch.setattr(
+        create_ops,
+        "_get_repo_info",
+        lambda *, repo_dir, env, repo: {"default_branch": "main"},
+    )
+    monkeypatch.setattr(
+        create_ops,
+        "_open_configs_sync_pr",
+        lambda **_kwargs: "https://github.com/acme/repo/pull/10",
+    )
+
+    result = create_ops._sync_configs(
+        repo_dir=tmp_path,
+        env={},
+        repo="acme/repo",
+        languages=("python",),
+        out=lambda _l: None,
+        warn=lambda _l: None,
+    )
+    assert result.summary.drifted_files != ()
+    assert result.pr_url == "https://github.com/acme/repo/pull/10"

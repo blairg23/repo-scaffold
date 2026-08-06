@@ -4282,9 +4282,12 @@ def test_sync_templates_no_drift_skips_pr(
     assert "No drift found" in stdout
 
 
-def test_sync_templates_does_not_count_failed_pr_open(
+def test_sync_templates_counts_failed_pr_open_as_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A drifted repo whose branch/write/PR-open failed is a failed sync, not
+    a no-op -- it must not report success while leaving that repo's drift
+    unaddressed."""
     from repo_scaffold.registry_ops import RegistryEntry
     from repo_scaffold.create_ops import TemplatesCheckSummary, TemplatesSyncResult
 
@@ -4310,7 +4313,7 @@ def test_sync_templates_does_not_count_failed_pr_open(
     monkeypatch.setattr("builtins.input", lambda _prompt: "y")
 
     rc = main(["sync", "templates", "--all"])
-    assert rc == 0
+    assert rc == 1
     stdout = capsys.readouterr().out
     assert "sync PRs opened: 0" in stdout
 
@@ -4385,5 +4388,132 @@ def test_sync_templates_continues_after_repo_error(
     rc = main(["sync", "templates", "--all"])
     assert rc == 1
     assert synced == ["acme/drifted"]
+    stdout = capsys.readouterr().out
+    assert "sync PRs opened: 1" in stdout
+
+
+def test_check_configs_with_all_flag_iterates_registry(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+    from repo_scaffold.create_ops import ConfigsCheckSummary
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [
+            RegistryEntry(repo="acme/drifted", local_path="/local/drifted"),
+            RegistryEntry(repo="acme/clean", local_path="/local/clean"),
+        ],
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.resolve_languages_for_repo",
+        lambda repo_dir, repo, warn=None: ["python"],
+    )
+
+    def _fake_check(*, repo_dir, repo, languages, out):
+        drifted = ("poetry.toml",) if repo == "acme/drifted" else ()
+        return ConfigsCheckSummary(repo=repo, drifted_files=drifted)
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_configs", _fake_check)
+
+    rc = main(["check", "configs", "--all"])
+    assert rc == 1
+    stdout = capsys.readouterr().out
+    assert "DRIFT  acme/drifted" in stdout
+    assert "PASS  acme/clean" in stdout
+
+
+def test_check_configs_languages_override_bypasses_local_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--languages must be usable against a repo with no matching local
+    checkout/registry entry -- otherwise the remote-only invocation this
+    flag exists for can never get a correct result."""
+    from repo_scaffold.create_ops import ConfigsCheckSummary
+
+    seen_languages: list[tuple[str, ...]] = []
+
+    def _fake_check(*, repo_dir, repo, languages, out):
+        seen_languages.append(languages)
+        return ConfigsCheckSummary(repo=repo, drifted_files=())
+
+    monkeypatch.setattr("repo_scaffold.cli.check_repository_configs", _fake_check)
+
+    def _fail_if_called(repo_dir, repo, warn=None):
+        raise AssertionError("should not resolve languages locally when overridden")
+
+    monkeypatch.setattr("repo_scaffold.cli.resolve_languages_for_repo", _fail_if_called)
+
+    rc = main(["check", "configs", "--repo", "acme/repo", "--languages", "python"])
+    assert rc == 0
+    assert seen_languages == [("python",)]
+
+
+def test_sync_configs_counts_failed_pr_open_as_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+    from repo_scaffold.create_ops import ConfigsCheckSummary, ConfigsSyncResult
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/drifted", local_path="/local/drifted")],
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.resolve_languages_for_repo",
+        lambda repo_dir, repo, warn=None: ["python"],
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.check_repository_configs",
+        lambda *, repo_dir, repo, languages, out: ConfigsCheckSummary(
+            repo=repo, drifted_files=("poetry.toml",)
+        ),
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.sync_repository_configs",
+        lambda *, repo_dir, repo, languages, out, warn=None: ConfigsSyncResult(
+            summary=ConfigsCheckSummary(repo=repo, drifted_files=("poetry.toml",)),
+            pr_url=None,
+        ),
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    rc = main(["sync", "configs", "--all"])
+    assert rc == 1
+    stdout = capsys.readouterr().out
+    assert "sync PRs opened: 0" in stdout
+
+
+def test_sync_configs_opens_pr_for_drifted_repo(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repo_scaffold.registry_ops import RegistryEntry
+    from repo_scaffold.create_ops import ConfigsCheckSummary, ConfigsSyncResult
+
+    monkeypatch.setattr(
+        "repo_scaffold.cli.list_registry",
+        lambda: [RegistryEntry(repo="acme/drifted", local_path="/local/drifted")],
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.resolve_languages_for_repo",
+        lambda repo_dir, repo, warn=None: ["python"],
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.check_repository_configs",
+        lambda *, repo_dir, repo, languages, out: ConfigsCheckSummary(
+            repo=repo, drifted_files=("poetry.toml",)
+        ),
+    )
+    monkeypatch.setattr(
+        "repo_scaffold.cli.sync_repository_configs",
+        lambda *, repo_dir, repo, languages, out, warn=None: ConfigsSyncResult(
+            summary=ConfigsCheckSummary(repo=repo, drifted_files=("poetry.toml",)),
+            pr_url=f"https://github.com/{repo}/pull/1",
+        ),
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    rc = main(["sync", "configs", "--all"])
+    assert rc == 0
     stdout = capsys.readouterr().out
     assert "sync PRs opened: 1" in stdout
