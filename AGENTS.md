@@ -324,12 +324,13 @@ The issue number at the end is required so the PR is immediately traceable to it
 ## How to contribute
 
 1. Create or pick an issue from the [repo-scaffold Roadmap](https://github.com/users/blairg23/projects/6). Note the issue number (`NNN`).
-2. Branch off `main` using the `type/NNN-short-description` format:
+2. Create the branch (safe to run locally -- this hits GitHub's API directly, it doesn't touch the local checkout) and open a container for it:
    ```bash
-   git checkout main && git pull
-   git checkout -b feat/NNN-short-description
+   poetry run repo-scaffold branch create --repo blairg23/repo-scaffold --name feat/NNN-short-description --from main
+   poetry run repo-scaffold docker shell --repo blairg23/repo-scaffold --branch feat/NNN-short-description
    ```
-3. Make changes. Run the gate before committing:
+   The local checkout stays on `main` throughout -- see "What needs a container (and what doesn't)" above.
+3. Inside the container, make changes. Run the gate before committing:
    ```bash
    poetry run tox -e precommit
    ```
