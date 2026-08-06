@@ -11,6 +11,7 @@ from typing import Callable
 from urllib.parse import quote
 
 from .auth_tokens import is_placeholder_token, resolve_gh_token
+from .generator import build_template_files
 from .github_api import (
     branch_create as _github_branch_create,
     branch_get_sha as _github_branch_get_sha,
@@ -37,6 +38,18 @@ class SettingsCheckSummary:
     failed: int
     skipped: int
     drifts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class TemplatesCheckSummary:
+    repo: str
+    drifted_files: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class TemplatesSyncResult:
+    summary: TemplatesCheckSummary
+    pr_url: str | None
 
 
 _API_VERSION = "2026-03-10"
@@ -648,6 +661,263 @@ def _ensure_dependabot_version_updates(
         ):
             return
     warn(f"Warning: could not create {_DEPENDABOT_YML_PATH}: {feature_err}")
+
+
+_TEMPLATES_SYNC_BRANCH = "chore/sync-templates"
+
+
+def _normalize_template_content(content: str) -> str:
+    return content.rstrip("\n") + "\n"
+
+
+def _fetch_remote_default_branch(
+    *, repo_dir: Path, env: dict[str, str], repo: str
+) -> str:
+    repo_info = _get_repo_info(repo_dir=repo_dir, env=env, repo=repo)
+    return str(repo_info.get("default_branch") or "main")
+
+
+def _fetch_remote_template_content(
+    *, repo: str, rel_path: str, ref: str, token: str
+) -> str | None:
+    """Fetch a file's content from the given ref via the contents API.
+    Returns None if the file doesn't exist on that ref (or the response
+    can't be decoded), which is treated as drift (would be a CREATE)."""
+    get_cp = _github_rest("GET", f"/repos/{repo}/contents/{rel_path}?ref={ref}", token)
+    if get_cp.returncode not in (0, 200):
+        return None
+    try:
+        payload = json.loads(get_cp.stdout)
+        encoded = str(payload.get("content", "")).replace("\n", "")
+        return base64.b64decode(encoded).decode("utf-8")
+    except (json.JSONDecodeError, AttributeError, UnicodeDecodeError, ValueError):
+        return None
+
+
+def _check_templates(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    default_branch: str,
+    out: Callable[[str], None],
+) -> TemplatesCheckSummary:
+    """Compare repo-scaffold's current canonical templates against the
+    target repository's remote default branch -- not the local working
+    tree, which may be stale, on another branch, or carry local edits."""
+    owner, _, name = repo.partition("/")
+    files = build_template_files(repo_dir, owner=owner or None, name=name or None)
+    token = (
+        _token_from_repo(repo_dir)
+        or env.get("GH_TOKEN")
+        or env.get("GITHUB_TOKEN")
+        or ""
+    )
+
+    statuses: dict[str, str] = {}
+    for file in files:
+        rel_path = file.path.relative_to(repo_dir).as_posix()
+        desired = _normalize_template_content(file.content)
+        remote = _fetch_remote_template_content(
+            repo=repo, rel_path=rel_path, ref=default_branch, token=token
+        )
+        statuses[rel_path] = "PASS" if remote == desired else "DRIFT"
+
+    for rel_path in sorted(statuses):
+        out(f"{statuses[rel_path]:5} template: {rel_path}")
+
+    drifted = tuple(
+        rel_path for rel_path in sorted(statuses) if statuses[rel_path] == "DRIFT"
+    )
+    return TemplatesCheckSummary(repo=repo, drifted_files=drifted)
+
+
+def _open_templates_sync_pr(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    default_branch: str,
+    files: list[tuple[str, str]],
+    out: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> str | None:
+    """Open a branch + PR updating the given (relative_path, content) template
+    files. Never commits directly to the default branch -- mirrors how
+    Dependabot itself always opens a PR rather than pushing to main. Returns
+    the PR URL on success, None on failure."""
+    token = (
+        _token_from_repo(repo_dir)
+        or env.get("GH_TOKEN")
+        or env.get("GITHUB_TOKEN")
+        or ""
+    )
+    branch_name = _TEMPLATES_SYNC_BRANCH
+
+    branch_cp = _github_branch_create(repo, branch_name, token, base=default_branch)
+    already_exists = "already exists" in (branch_cp.stderr or "").lower()
+    if branch_cp.returncode not in (0, 201) and not already_exists:
+        warn(
+            f"Warning: could not create branch {branch_name}: {branch_cp.stderr.strip()}"
+        )
+        return None
+
+    if already_exists:
+        # A leftover branch from a previous run could carry stale commits --
+        # force it back to the current default-branch tip so this run always
+        # starts from a clean, known state instead of reusing whatever is there.
+        base_sha = _github_branch_get_sha(repo, default_branch, token)
+        if not base_sha:
+            warn(
+                f"Warning: could not resolve {default_branch} SHA to reset "
+                f"stale branch {branch_name}."
+            )
+            return None
+        reset_cp = _github_rest(
+            "PATCH",
+            f"/repos/{repo}/git/refs/heads/{branch_name}",
+            token,
+            {"sha": base_sha, "force": True},
+        )
+        if reset_cp.returncode not in (0, 200):
+            warn(
+                f"Warning: could not reset stale branch {branch_name}: {reset_cp.stderr.strip()}"
+            )
+            return None
+
+    changed: list[str] = []
+    for rel_path, content in files:
+        sha = None
+        get_cp = _github_rest(
+            "GET", f"/repos/{repo}/contents/{rel_path}?ref={branch_name}", token
+        )
+        if get_cp.returncode in (0, 200):
+            try:
+                sha = json.loads(get_cp.stdout).get("sha")
+            except (json.JSONDecodeError, AttributeError):
+                sha = None
+
+        payload: dict[str, object] = {
+            "message": "chore: sync issue/PR templates from repo-scaffold",
+            "content": base64.b64encode(content.encode()).decode(),
+            "branch": branch_name,
+        }
+        if sha:
+            payload["sha"] = sha
+
+        file_cp = _github_rest(
+            "PUT", f"/repos/{repo}/contents/{rel_path}", token, payload
+        )
+        if file_cp.returncode not in (0, 201):
+            warn(
+                f"Warning: could not write {rel_path} on {branch_name}: {file_cp.stderr.strip()}"
+            )
+            return None
+        changed.append(rel_path)
+
+    file_list = "\n".join(f"- `{path}`" for path in changed)
+    pr_body = (
+        "## \U0001f9fe Title\n"
+        "Sync issue/PR templates from repo-scaffold\n\n"
+        "## \U0001f9e0 Description\n"
+        "This PR was opened automatically by `repo-scaffold sync templates` because "
+        "one or more of this repo's issue/PR templates have drifted from the current "
+        "canonical versions repo-scaffold generates.\n\n"
+        "## \U0001f9e9 Changes Included\n"
+        "- [x] Added/updated documentation\n\n"
+        "## \U0001f3af Purpose\n"
+        "Keep downstream templates current with repo-scaffold's own templates, the same "
+        "way Dependabot keeps dependencies current -- never committed directly to the "
+        "default branch.\n\n"
+        f"## \U0001f517 Files Changed\n{file_list}"
+    )
+    pr_cp = _github_pr_create(
+        repo,
+        "chore: sync issue/PR templates from repo-scaffold",
+        pr_body,
+        branch_name,
+        default_branch,
+        token,
+    )
+    if pr_cp.returncode not in (0, 201):
+        warn(f"Warning: could not open PR for template sync: {pr_cp.stderr.strip()}")
+        return None
+
+    pr_url = ""
+    try:
+        pr_url = json.loads(pr_cp.stdout).get("html_url", "")
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    out("Opened PR to sync templates" + (f": {pr_url}" if pr_url else "."))
+    return pr_url or ""
+
+
+def _sync_templates(
+    *,
+    repo_dir: Path,
+    env: dict[str, str],
+    repo: str,
+    out: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> TemplatesSyncResult:
+    default_branch = _fetch_remote_default_branch(repo_dir=repo_dir, env=env, repo=repo)
+    summary = _check_templates(
+        repo_dir=repo_dir, env=env, repo=repo, default_branch=default_branch, out=out
+    )
+    if not summary.drifted_files:
+        return TemplatesSyncResult(summary=summary, pr_url=None)
+
+    owner, _, name = repo.partition("/")
+    files = build_template_files(repo_dir, owner=owner or None, name=name or None)
+    by_path = {f.path.relative_to(repo_dir).as_posix(): f for f in files}
+    pairs = [
+        (rel_path, by_path[rel_path].content)
+        for rel_path in summary.drifted_files
+        if rel_path in by_path
+    ]
+
+    pr_url = _open_templates_sync_pr(
+        repo_dir=repo_dir,
+        env=env,
+        repo=repo,
+        default_branch=default_branch,
+        files=pairs,
+        out=out,
+        warn=warn,
+    )
+    return TemplatesSyncResult(summary=summary, pr_url=pr_url)
+
+
+def check_repository_templates(
+    *,
+    repo_dir: Path,
+    repo: str,
+    out: Callable[[str], None] = print,
+) -> TemplatesCheckSummary:
+    _ensure_tools()
+    env = _build_env(repo_dir)
+    _ensure_gh_auth(repo_dir, env)
+    resolved = repo_dir.resolve()
+    default_branch = _fetch_remote_default_branch(repo_dir=resolved, env=env, repo=repo)
+    return _check_templates(
+        repo_dir=resolved, env=env, repo=repo, default_branch=default_branch, out=out
+    )
+
+
+def sync_repository_templates(
+    *,
+    repo_dir: Path,
+    repo: str,
+    out: Callable[[str], None] = print,
+    warn: Callable[[str], None] | None = None,
+) -> TemplatesSyncResult:
+    _ensure_tools()
+    env = _build_env(repo_dir)
+    _ensure_gh_auth(repo_dir, env)
+    emit_warn = warn if warn is not None else out
+    return _sync_templates(
+        repo_dir=repo_dir.resolve(), env=env, repo=repo, out=out, warn=emit_warn
+    )
 
 
 def _enable_security_and_analysis_feature(
