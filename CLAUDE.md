@@ -175,6 +175,14 @@ To verify all threads are SOP-compliant before declaring work done:
 poetry run repo-scaffold pr check-sop --repo OWNER/REPO --pr-number N
 ```
 
+The `check-sop` status check doesn't always refresh itself: replying (step 2) is a
+new review comment and re-triggers it automatically, but resolving (step 3) and
+reacting (step 4) have no corresponding Actions trigger event. If it's still
+failed/stale after all four steps, refresh it manually:
+```bash
+poetry run repo-scaffold pr rerun --repo OWNER/REPO --pr-number N --failed-only
+```
+
 ## Supported languages for init/apply ci
 `go`, `gin`, `python`, `react`
 
