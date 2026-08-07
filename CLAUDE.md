@@ -113,6 +113,10 @@ poetry run repo-scaffold check rules --repo OWNER/REPO
 # Apply/sync repo settings, ruleset, and security features. If .github/dependabot.yml
 # can't be committed directly because the ruleset already requires PRs, this opens a
 # branch + PR for it instead of just warning -- check for and merge that PR.
+# CodeQL default setup gets the repo's own known languages (mapped to CodeQL's language
+# identifiers) plus the extended query suite when languages are known, falling back to
+# GitHub's bare auto-detected default otherwise. `create` passes languages the same way:
+# parsed from --languages when scaffolding, detected from disk for an existing directory.
 poetry run repo-scaffold apply rules --repo OWNER/REPO --apply
 
 # Check issue/PR templates for drift against repo-scaffold's current templates

@@ -1402,6 +1402,7 @@ def test_create_subcommand_delegates_to_create_ops(
         apply_settings,
         dry_run,
         stage_files,
+        languages,
         out,
         err,
     ):
@@ -1433,6 +1434,49 @@ def test_create_subcommand_delegates_to_create_ops(
     assert called["dry_run"] is True
 
 
+def test_create_detects_languages_for_existing_nonempty_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An existing, non-empty local directory isn't scaffolded (needs_init is
+    False), so its language stack must come from detecting what's actually on
+    disk rather than being left empty -- otherwise settings applied during
+    create (e.g. CodeQL default setup) get no language info at all."""
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir(parents=True)
+    (repo_dir / "pyproject.toml").write_text("[tool.poetry]\n", encoding="utf-8")
+
+    called: dict[str, object] = {}
+
+    def _fake_create_repository(
+        *,
+        repo_dir: Path,
+        repo,
+        owner,
+        name,
+        visibility,
+        apply_settings,
+        dry_run,
+        stage_files,
+        languages,
+        out,
+        err,
+    ):
+        called["languages"] = languages
+        return CreateSummary(
+            repo="acme/repo",
+            repo_created=True,
+            pushed=True,
+            settings_applied=True,
+            failures=0,
+        )
+
+    monkeypatch.setattr("repo_scaffold.cli.create_repository", _fake_create_repository)
+
+    rc = main(["create", "--path", str(repo_dir), "--repo", "acme/repo", "--dry-run"])
+    assert rc == 0
+    assert called["languages"] == ["python"]
+
+
 def test_create_auto_inits_default_path_from_github_repo_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1454,6 +1498,7 @@ def test_create_auto_inits_default_path_from_github_repo_env(
         apply_settings,
         dry_run,
         stage_files,
+        languages,
         out,
         err,
     ):
@@ -1506,6 +1551,7 @@ def test_create_repo_flag_name_takes_precedence_for_auto_init_path(
         apply_settings,
         dry_run,
         stage_files,
+        languages,
         out,
         err,
     ):

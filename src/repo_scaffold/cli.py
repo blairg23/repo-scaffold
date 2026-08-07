@@ -1873,6 +1873,12 @@ def main(argv: list[str] | None = None) -> int:
                     "Error: failed to initialize scaffold for create.", file=sys.stderr
                 )
                 return 1
+        else:
+            # An existing, non-empty local directory wasn't scaffolded by this
+            # run -- detect its actual language stack from disk rather than
+            # leaving settings (e.g. CodeQL default setup) with no language
+            # info at all.
+            languages = detect_languages_from_repo(repo_dir)
 
         create_repo_dir = repo_dir
         temp_create_dir: tempfile.TemporaryDirectory[str] | None = None
@@ -1892,6 +1898,7 @@ def main(argv: list[str] | None = None) -> int:
                 apply_settings=not ns.skip_settings,
                 dry_run=ns.dry_run,
                 stage_files=needs_init,
+                languages=list(languages),
                 out=(
                     (
                         lambda line: print(

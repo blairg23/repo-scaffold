@@ -1890,6 +1890,7 @@ def create_repository(
     apply_settings: bool,
     dry_run: bool,
     stage_files: bool = False,
+    languages: list[str] | None = None,
     out: Callable[[str], None] = print,
     err: Callable[[str], None] | None = None,
 ) -> CreateSummary:
@@ -1938,6 +1939,7 @@ def create_repository(
                 dry_run=dry_run,
                 out=out,
                 warn=emit_err,
+                languages=languages,
             )
             settings_applied = True
         elif apply_settings and not pushed:

@@ -2130,6 +2130,26 @@ def test_create_repository_covers_success_skip_and_error_paths(
     assert summary.failures == 0
     assert applied == ["acme/repo"]
 
+    applied_languages: list[list[str] | None] = []
+    monkeypatch.setattr(
+        create_ops,
+        "_apply_settings",
+        lambda **kwargs: applied_languages.append(kwargs.get("languages")),
+    )
+    create_ops.create_repository(
+        repo_dir=repo_dir,
+        repo=None,
+        owner=None,
+        name=None,
+        visibility="public",
+        apply_settings=True,
+        dry_run=False,
+        languages=["python"],
+        out=lambda _line: None,
+        err=lambda _line: None,
+    )
+    assert applied_languages == [["python"]]
+
     skipped_lines: list[str] = []
     monkeypatch.setattr(
         create_ops,
