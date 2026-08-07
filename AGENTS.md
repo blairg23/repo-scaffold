@@ -330,11 +330,14 @@ The issue number at the end is required so the PR is immediately traceable to it
    poetry run repo-scaffold docker shell --repo blairg23/repo-scaffold --branch feat/NNN-short-description
    ```
    The local checkout stays on `main` throughout -- see "What needs a container (and what doesn't)" above.
-3. Inside the container, make changes. Run the gate before committing:
+3. Inside the container, make changes and commit as usual. The `pre-commit`
+   hook (installed via `poetry run pre-commit install`, see README.md setup)
+   runs the full gate automatically:
    ```bash
-   poetry run tox -e precommit
+   poetry run tox -e precommit              # what the hook runs
    ```
-   If Black reformats files, re-stage them and re-run.
+   To get faster feedback before attempting a commit, run it manually first.
+   If Black reformats files, re-stage them and re-run (either way).
 4. Commit with a subject + blank line + body (see recent commits for style). No one-liners.
 5. Open a PR using the PR template. Title must follow `type(scope): description (#NNN)`:
    ```bash
