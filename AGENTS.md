@@ -44,6 +44,25 @@ a stopped one needs sudo (`systemctl start docker`) -- a real privilege-escalati
 not just launching a user-space app. Most Linux dev/CI environments already have
 `dockerd` running as a service; if yours doesn't, start it yourself first.
 
+### What needs a container (and what doesn't)
+
+Only actual branch work -- editing files, running tests, committing, pushing on a
+specific branch -- needs a container. The local checkout stays on `main`/`master`
+at all times; it's never checked out to a feature branch directly.
+
+Everything else is a pure GitHub API call or a Docker container-lifecycle command,
+neither of which touches which branch is checked out locally, so it's safe to run
+directly from the local checkout:
+
+- All `issue`/`pr`/`project` commands (create, view, list, comment, label, etc.)
+- `branch create`/`branch delete`/`branch rename` (these hit GitHub's API directly;
+  they don't touch local git state at all)
+- `docker build-base`/`docker spin-up`/`docker spin-down`/`docker list` (managing a
+  container's lifecycle doesn't require being inside one, or having the target
+  branch checked out locally)
+
+Only reach for a container once you're actually changing code.
+
 ### Per-repo container workflow (preferred)
 
 One command to get a shell inside an isolated container for any branch:
@@ -91,11 +110,48 @@ Both are host-side tools. Inside your container, your branch is already checked 
 `/{repo-name}`. Just work there: edit files, run tests, commit, push. No worktrees,
 no new containers, no workspace create.
 
+### Headless / non-interactive agents
+
+`docker shell` execs into an interactive `-it` session -- built for a human at a
+terminal, not something a scripted/headless agent can drive turn-by-turn. For
+headless agents, drive the container's lifecycle commands directly instead:
+
+```bash
+# Start the container (clones the branch, installs deps) without exec-ing in
+poetry run repo-scaffold docker spin-up --repo OWNER/REPO --branch BRANCH
+
+# Run commands non-interactively
+docker exec CONTAINER_NAME bash -c "cd /{repo-name} && poetry run pytest -q"
+
+# Move files in/out -- the container has no host bind-mount (it cloned its own
+# copy), so file edits go through docker cp, not a shared filesystem path
+docker cp local_file.py CONTAINER_NAME:/{repo-name}/path/to/file.py
+docker cp CONTAINER_NAME:/{repo-name}/path/to/file.py local_file.py
+
+# Commit and push from inside the container -- it has its own GH_TOKEN
+docker exec CONTAINER_NAME bash -c "cd /{repo-name} && git add -A && git commit -m '...' && git push origin BRANCH"
+
+# Tear down when done
+poetry run repo-scaffold docker spin-down --repo OWNER/REPO --branch BRANCH
+```
+
+Container names follow `{repo-slug}-{branch-slug}` (see below).
+
 ### Compose-based container (legacy)
 
-The Compose stack (`docker-compose.yml` + optional `docker-compose.override.yml`) runs
-a single long-lived container for the repo root. Prefer the per-repo container workflow
-above for branch work; the Compose stack is useful for quick interactive exploration.
+This is a different mechanism solving a different problem than the per-branch
+containers above. The Compose stack (`docker-compose.yml` + optional
+`docker-compose.override.yml`) runs a single long-lived container for the repo
+root, with the project bind-mounted so host edits are visible immediately -- it
+exists for running *all* tool execution inside one clean Linux environment with
+zero host-side poetry involvement at all. `poetry.toml` (`virtualenvs.in-project
+= false`, see `pyproject.toml`'s neighbor) already solves the specific
+Windows/WSL venv-collision problem this was originally built to work around, so
+plain `poetry run` on the host is fine for the "safe to run locally" commands
+above. Reach for Compose when you want a fully clean environment with no local
+Python/poetry involvement at all, not as the default.
+
+Prefer the per-repo container workflow above for actual branch work.
 
 ```bash
 docker compose build       # build the image
@@ -276,16 +332,20 @@ The issue number at the end is required so the PR is immediately traceable to it
 ## How to contribute
 
 1. Create or pick an issue from the [repo-scaffold Roadmap](https://github.com/users/blairg23/projects/6). Note the issue number (`NNN`).
-2. Branch off `main` using the `type/NNN-short-description` format:
+2. Create the branch (safe to run locally -- this hits GitHub's API directly, it doesn't touch the local checkout) and open a container for it:
    ```bash
-   git checkout main && git pull
-   git checkout -b feat/NNN-short-description
+   poetry run repo-scaffold branch create --repo blairg23/repo-scaffold --name feat/NNN-short-description --from main
+   poetry run repo-scaffold docker shell --repo blairg23/repo-scaffold --branch feat/NNN-short-description
    ```
-3. Make changes. Run the gate before committing:
+   The local checkout stays on `main` throughout -- see "What needs a container (and what doesn't)" above.
+3. Inside the container, make changes and commit as usual. The `pre-commit`
+   hook (installed via `poetry run pre-commit install`, see README.md setup)
+   runs the full gate automatically:
    ```bash
-   poetry run tox -e precommit
+   poetry run tox -e precommit              # what the hook runs
    ```
-   If Black reformats files, re-stage them and re-run.
+   To get faster feedback before attempting a commit, run it manually first.
+   If Black reformats files, re-stage them and re-run (either way).
 4. Commit with a subject + blank line + body (see recent commits for style). No one-liners.
 5. Open a PR using the PR template. Title must follow `type(scope): description (#NNN)`:
    ```bash

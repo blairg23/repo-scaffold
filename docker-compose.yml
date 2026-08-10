@@ -3,11 +3,14 @@ services:
     build: .
     image: repo-scaffold-dev:latest
     container_name: repo-scaffold-dev
-    volumes:
-      - repo-worktrees:/workspace/repos
     stdin_open: true
     tty: true
     command: bash
 
 volumes:
+  # Kept for compatibility with any pre-existing local docker-compose.override.yml
+  # (gitignored) that still mounts this from before the repos/ worktree model was
+  # deprecated in favor of per-branch Docker containers (#238). No service in this
+  # tracked file references it anymore -- it's only declared so an old override
+  # referencing it doesn't fail Compose's undefined-volume validation.
   repo-worktrees:

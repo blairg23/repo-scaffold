@@ -42,9 +42,20 @@ poetry install
 
 ## Docker dev environment
 
-A Docker dev container provides a clean Linux environment for all tool execution,
-eliminating Windows/WSL venv conflicts. Credentials are bind-mounted at runtime --
-never baked into the image.
+There are two distinct Docker mechanisms in this repo -- don't confuse them:
+
+- **Per-branch containers** (`repo-scaffold docker shell`/`spin-up`/`build-base`,
+  see [AGENTS.md](AGENTS.md#docker-dev-environment)) -- one isolated container per
+  branch, for actual code changes. This is the default for branch work.
+- **This Compose-based single dev container** -- one long-lived container for the
+  whole repo root, useful when you want *all* tool execution to happen inside a
+  clean Linux environment with zero local Python/poetry involvement. It originally
+  existed to work around Windows/WSL venv collisions; `poetry.toml`
+  (`virtualenvs.in-project = false`) now fixes that at the source, so plain
+  `poetry run` on the host works fine for read-only/API commands too -- reach for
+  Compose when you specifically want a fully clean environment, not by default.
+
+Credentials are bind-mounted at runtime -- never baked into the image.
 
 **One-time setup:**
 
@@ -77,10 +88,8 @@ docker exec -it repo-scaffold-dev poetry run pytest -q                   # tests
   are visible inside the container immediately; no rebuild needed.
 - `.env` is accessible (and writable) inside the container via the root bind-mount.
   `GH_TOKEN` and all other env vars load automatically via `_seed_env_from_dotenv`.
-- Repo worktrees (`repos/`) are stored in a named volume (`repo-worktrees`) that persists
-  across `docker compose down` / `up` cycles.
 - Multiple agents can `docker exec` into the same running container concurrently -- all
-  persistent state lives on the host or in the named volume, not in the container layer.
+  persistent state lives on the host bind-mount, not in the container layer.
 
 **Windows note:** Docker Desktop for Windows must already be running for this
 Compose-based flow (raw `docker compose`/`docker exec`, not run through `repo-scaffold`).
