@@ -122,6 +122,15 @@ poetry run repo-scaffold check templates --repo OWNER/REPO [--repos a,b | --all]
 # to the default branch. Ticket-less by design, like Dependabot (see AGENTS.md Execution SOP).
 poetry run repo-scaffold sync templates --repo OWNER/REPO [--repos a,b | --all] [--yes]
 
+# Check managed tool/environment config files (e.g. poetry.toml) for drift. Language-
+# conditional -- pass --languages to override when checking a repo without a local
+# checkout/registry entry to read the language stack from.
+poetry run repo-scaffold check configs --repo OWNER/REPO [--repos a,b | --all] [--languages LANGS]
+
+# Open a branch + PR per drifted repo with updated config files -- same never-commits/
+# ticket-less behavior as sync templates.
+poetry run repo-scaffold sync configs --repo OWNER/REPO [--repos a,b | --all] [--yes] [--languages LANGS]
+
 # Archive a repo (read-only; reversible via the GitHub UI). Prompts for confirmation
 # unless --yes is passed; refuses in a non-interactive shell without --yes.
 poetry run repo-scaffold repo archive --repo OWNER/REPO [--yes]
