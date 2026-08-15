@@ -448,6 +448,16 @@ Verify SOP compliance before declaring work done:
 poetry run repo-scaffold pr check-sop --repo OWNER/REPO --pr-number N
 ```
 
+**The `check-sop` status check does not always refresh itself.** Step 2 (reply) is a
+new review comment, so it re-triggers the workflow automatically. Steps 3 (resolve)
+and 4 (react +1) have no corresponding GitHub Actions trigger event -- GitHub doesn't
+expose a review thread's resolved/unresolved action, or comment reactions, to
+workflow `on:` triggers. If `check-sop` still shows failed/stale after finishing all
+four steps, refresh it manually:
+```bash
+poetry run repo-scaffold pr rerun --repo OWNER/REPO --pr-number N --failed-only
+```
+
 ---
 
 ## Testing
