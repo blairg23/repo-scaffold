@@ -87,6 +87,13 @@ _LANG_ECOSYSTEM_MAP: dict[str, str] = {
     "react": "npm",
 }
 
+_LANG_CODEQL_MAP: dict[str, str] = {
+    "python": "python",
+    "go": "go",
+    "gin": "go",
+    "react": "javascript-typescript",
+}
+
 
 def _is_managed_ruleset_name(name: object) -> bool:
     return isinstance(name, str) and (
@@ -1212,13 +1219,26 @@ def _enable_code_scanning_default_setup(
     repo: str,
     out: Callable[[str], None],
     warn: Callable[[str], None],
+    languages: list[str] | None = None,
 ) -> None:
+    payload: dict[str, object] = {"state": "configured"}
+    codeql_languages = sorted(
+        {
+            _LANG_CODEQL_MAP[lang]
+            for lang in (languages or [])
+            if lang in _LANG_CODEQL_MAP
+        }
+    )
+    if codeql_languages:
+        payload["languages"] = codeql_languages
+        payload["query_suite"] = "extended"
+
     cp = _api(
         repo_dir=repo_dir,
         env=env,
         method="PATCH",
         endpoint=f"/repos/{repo}/code-scanning/default-setup",
-        stdin_text=json.dumps({"state": "configured"}),
+        stdin_text=json.dumps(payload),
     )
     if cp.returncode == 0:
         out("Enabled code scanning default setup.")
@@ -1933,6 +1953,7 @@ def _apply_settings(
         repo=repo,
         out=out,
         warn=warn,
+        languages=languages,
     )
 
     if visibility == "public":
@@ -2113,6 +2134,7 @@ def create_repository(
     apply_settings: bool,
     dry_run: bool,
     stage_files: bool = False,
+    languages: list[str] | None = None,
     out: Callable[[str], None] = print,
     err: Callable[[str], None] | None = None,
 ) -> CreateSummary:
@@ -2161,6 +2183,7 @@ def create_repository(
                 dry_run=dry_run,
                 out=out,
                 warn=emit_err,
+                languages=languages,
             )
             settings_applied = True
         elif apply_settings and not pushed:

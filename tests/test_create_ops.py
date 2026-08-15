@@ -850,6 +850,70 @@ def test_enable_code_scanning_default_setup_success_and_warning(
     )
 
 
+def test_enable_code_scanning_default_setup_includes_mapped_languages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payloads: list[str | None] = []
+
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **kwargs: (
+            payloads.append(kwargs.get("stdin_text"))
+            or subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="", stderr=""
+            )
+        ),
+    )
+
+    create_ops._enable_code_scanning_default_setup(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=lambda _line: None,
+        warn=lambda _line: None,
+        languages=["gin", "react", "python"],
+    )
+
+    assert payloads[0] is not None
+    payload = json.loads(payloads[0])
+    assert payload["state"] == "configured"
+    assert payload["query_suite"] == "extended"
+    assert sorted(payload["languages"]) == ["go", "javascript-typescript", "python"]
+
+
+def test_enable_code_scanning_default_setup_no_languages_matches_old_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No known languages -> unchanged from the pre-existing behavior, since
+    GitHub's own auto-detection is the only sensible fallback when we don't
+    know the repo's language stack."""
+    payloads: list[str | None] = []
+
+    monkeypatch.setattr(
+        create_ops,
+        "_api",
+        lambda **kwargs: (
+            payloads.append(kwargs.get("stdin_text"))
+            or subprocess.CompletedProcess(
+                args=["gh"], returncode=0, stdout="", stderr=""
+            )
+        ),
+    )
+
+    create_ops._enable_code_scanning_default_setup(
+        repo_dir=Path("/tmp/repo"),
+        env={},
+        repo="acme/repo",
+        out=lambda _line: None,
+        warn=lambda _line: None,
+        languages=None,
+    )
+
+    assert payloads[0] is not None
+    assert json.loads(payloads[0]) == {"state": "configured"}
+
+
 def test_sync_ruleset_covers_update_create_missing_id_and_api_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2065,6 +2129,26 @@ def test_create_repository_covers_success_skip_and_error_paths(
     assert summary.settings_applied is True
     assert summary.failures == 0
     assert applied == ["acme/repo"]
+
+    applied_languages: list[list[str] | None] = []
+    monkeypatch.setattr(
+        create_ops,
+        "_apply_settings",
+        lambda **kwargs: applied_languages.append(kwargs.get("languages")),
+    )
+    create_ops.create_repository(
+        repo_dir=repo_dir,
+        repo=None,
+        owner=None,
+        name=None,
+        visibility="public",
+        apply_settings=True,
+        dry_run=False,
+        languages=["python"],
+        out=lambda _line: None,
+        err=lambda _line: None,
+    )
+    assert applied_languages == [["python"]]
 
     skipped_lines: list[str] = []
     monkeypatch.setattr(
