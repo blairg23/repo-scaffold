@@ -9,14 +9,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from repo_scaffold.docker_ops import (
+    WORKSPACE_IMAGE_TAG,
+    _STARTUP_SCRIPT,
+    _err,
+    _ok,
     _slug,
     container_name,
+    default_workspace_dockerfile_dir,
     docker_build_base,
     docker_list,
     docker_shell,
     docker_spin_down,
     docker_spin_up,
-    image_name,
 )
 
 # ---------------------------------------------------------------------------
@@ -47,12 +51,25 @@ def test_container_name_simple_branch() -> None:
     assert container_name("owner/myrepo", "main") == "myrepo-main"
 
 
-def test_image_name() -> None:
-    assert image_name("blairg23/repo-scaffold") == "repo-scaffold-base:latest"
+def test_workspace_image_tag_is_fixed_not_per_repo() -> None:
+    assert WORKSPACE_IMAGE_TAG == "repo-scaffold-workspace:latest"
 
 
-def test_image_name_strips_owner() -> None:
-    assert image_name("org/project-x") == "project-x-base:latest"
+def test_default_workspace_dockerfile_dir_is_bundled_asset() -> None:
+    assert default_workspace_dockerfile_dir().name == "docker_assets"
+
+
+def test_startup_script_detects_all_language_manifests() -> None:
+    """Post-clone dependency install must cover every ALLOWED_LANGUAGES case,
+    detected from the freshly-cloned repo content inside the container -- not
+    from a host-side checkout or a per-repo Dockerfile."""
+    assert "pyproject.toml" in _STARTUP_SCRIPT
+    assert "poetry install" in _STARTUP_SCRIPT
+    assert "go.mod" in _STARTUP_SCRIPT
+    assert "go mod download" in _STARTUP_SCRIPT
+    assert "web/package.json" in _STARTUP_SCRIPT
+    assert "npm install" in _STARTUP_SCRIPT
+    assert ".repo-scaffold/setup.sh" in _STARTUP_SCRIPT
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +98,7 @@ def _make_client() -> MagicMock:
 
 def test_build_base_missing_dockerfile(tmp_path: Path) -> None:
     with patch("repo_scaffold.docker_ops._client", return_value=_make_client()):
-        result = docker_build_base("owner/myrepo", tmp_path)
+        result = docker_build_base(tmp_path)
     assert result.returncode == 1
     assert "No Dockerfile" in result.stderr
 
@@ -99,13 +116,27 @@ def test_build_base_success(tmp_path: Path) -> None:
     client.images.build.return_value = (fake_image, iter(fake_logs))
 
     with patch("repo_scaffold.docker_ops._client", return_value=client):
-        result = docker_build_base("owner/myrepo", tmp_path)
+        result = docker_build_base(tmp_path)
 
     assert result.returncode == 0
-    assert "myrepo-base:latest" in result.stdout
+    assert WORKSPACE_IMAGE_TAG in result.stdout
     client.images.build.assert_called_once_with(
-        path=str(tmp_path), tag="myrepo-base:latest", rm=True
+        path=str(tmp_path), tag=WORKSPACE_IMAGE_TAG, rm=True
     )
+
+
+def test_build_base_defaults_to_bundled_dockerfile() -> None:
+    """No dockerfile_dir given -> resolves to repo-scaffold's own bundled asset,
+    never a target repo's local checkout."""
+    fake_image = MagicMock()
+    client = _make_client()
+    client.images.build.return_value = (fake_image, iter([]))
+
+    with patch("repo_scaffold.docker_ops._client", return_value=client):
+        docker_build_base()
+
+    call_kwargs = client.images.build.call_args.kwargs
+    assert call_kwargs["path"] == str(default_workspace_dockerfile_dir())
 
 
 def test_build_base_sdk_error(tmp_path: Path) -> None:
@@ -115,7 +146,7 @@ def test_build_base_sdk_error(tmp_path: Path) -> None:
     client.images.build.side_effect = RuntimeError("daemon down")
 
     with patch("repo_scaffold.docker_ops._client", return_value=client):
-        result = docker_build_base("owner/myrepo", tmp_path)
+        result = docker_build_base(tmp_path)
 
     assert result.returncode == 1
     assert "docker build failed" in result.stderr
@@ -381,14 +412,10 @@ def test_spin_down_stop_failure() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_shell_builds_image_when_missing_and_execs(tmp_path: Path) -> None:
-    (tmp_path / "Dockerfile").write_text("FROM python:3.12")
-
+def test_shell_builds_image_when_missing_and_execs() -> None:
     client = _make_client()
     # First call (shell checks if image exists) raises; second call (spin_up verifies) succeeds.
     client.images.get.side_effect = [Exception("not found"), MagicMock()]
-    fake_logs = [{"stream": "done\n"}]
-    client.images.build.return_value = (MagicMock(), iter(fake_logs))
     client.containers.get.side_effect = Exception("not found")
     client.containers.run.return_value = MagicMock()
 
@@ -398,49 +425,48 @@ def test_shell_builds_image_when_missing_and_execs(tmp_path: Path) -> None:
         exec_calls.append((file, args))
 
     with patch("repo_scaffold.docker_ops._client", return_value=client), patch(
+        "repo_scaffold.docker_ops.docker_build_base", return_value=_ok("built")
+    ) as build_mock, patch(
         "repo_scaffold.docker_ops.os.execvp", side_effect=fake_execvp
     ):
-        docker_shell("owner/myrepo", "main", "tok", tmp_path)
+        docker_shell("owner/myrepo", "main", "tok")
 
+    build_mock.assert_called_once_with()
     assert exec_calls == [
         ("docker", ["docker", "exec", "-it", "-w", "/myrepo", "myrepo-main", "bash"])
     ]
 
 
-def test_shell_skips_build_when_image_exists(tmp_path: Path) -> None:
+def test_shell_skips_build_when_image_exists() -> None:
     client = _make_client()
     client.images.get.return_value = MagicMock()
     client.containers.get.side_effect = Exception("not found")
     client.containers.run.return_value = MagicMock()
 
     with patch("repo_scaffold.docker_ops._client", return_value=client), patch(
-        "repo_scaffold.docker_ops.os.execvp"
-    ):
-        docker_shell("owner/myrepo", "main", "tok", tmp_path)
+        "repo_scaffold.docker_ops.docker_build_base"
+    ) as build_mock, patch("repo_scaffold.docker_ops.os.execvp"):
+        docker_shell("owner/myrepo", "main", "tok")
 
-    client.images.build.assert_not_called()
+    build_mock.assert_not_called()
 
 
-def test_shell_rebuild_flag_forces_build(tmp_path: Path) -> None:
-    (tmp_path / "Dockerfile").write_text("FROM python:3.12")
-
+def test_shell_rebuild_flag_forces_build() -> None:
     client = _make_client()
-    # image exists, but rebuild=True bypasses the check; spin_up still needs to find it
+    # image exists, but rebuild=True bypasses the check
     client.images.get.return_value = MagicMock()
-    fake_logs = [{"stream": "done\n"}]
-    client.images.build.return_value = (MagicMock(), iter(fake_logs))
     client.containers.get.side_effect = Exception("not found")
     client.containers.run.return_value = MagicMock()
 
     with patch("repo_scaffold.docker_ops._client", return_value=client), patch(
-        "repo_scaffold.docker_ops.os.execvp"
-    ):
-        docker_shell("owner/myrepo", "main", "tok", tmp_path, rebuild=True)
+        "repo_scaffold.docker_ops.docker_build_base", return_value=_ok("built")
+    ) as build_mock, patch("repo_scaffold.docker_ops.os.execvp"):
+        docker_shell("owner/myrepo", "main", "tok", rebuild=True)
 
-    client.images.build.assert_called_once()
+    build_mock.assert_called_once_with()
 
 
-def test_shell_stops_existing_container_before_spinup(tmp_path: Path) -> None:
+def test_shell_stops_existing_container_before_spinup() -> None:
     client = _make_client()
     client.images.get.return_value = MagicMock()
     existing = MagicMock()
@@ -451,23 +477,25 @@ def test_shell_stops_existing_container_before_spinup(tmp_path: Path) -> None:
     with patch("repo_scaffold.docker_ops._client", return_value=client), patch(
         "repo_scaffold.docker_ops.os.execvp"
     ):
-        docker_shell("owner/myrepo", "main", "tok", tmp_path)
+        docker_shell("owner/myrepo", "main", "tok")
 
     existing.stop.assert_called_once_with(timeout=10)
     existing.remove.assert_called_once()
 
 
-def test_shell_raises_on_build_failure(tmp_path: Path) -> None:
+def test_shell_raises_on_build_failure() -> None:
     client = _make_client()
     client.images.get.side_effect = Exception("not found")
-    client.images.build.side_effect = RuntimeError("daemon down")
 
-    with patch("repo_scaffold.docker_ops._client", return_value=client):
-        with pytest.raises(RuntimeError, match="Base image build failed"):
-            docker_shell("owner/myrepo", "main", "tok", tmp_path)
+    with patch("repo_scaffold.docker_ops._client", return_value=client), patch(
+        "repo_scaffold.docker_ops.docker_build_base",
+        return_value=_err("docker build failed: daemon down"),
+    ):
+        with pytest.raises(RuntimeError, match="Workspace image build failed"):
+            docker_shell("owner/myrepo", "main", "tok")
 
 
-def test_shell_raises_on_spinup_failure(tmp_path: Path) -> None:
+def test_shell_raises_on_spinup_failure() -> None:
     client = _make_client()
     client.images.get.return_value = MagicMock()
     client.containers.get.side_effect = Exception("not found")
@@ -475,7 +503,7 @@ def test_shell_raises_on_spinup_failure(tmp_path: Path) -> None:
 
     with patch("repo_scaffold.docker_ops._client", return_value=client):
         with pytest.raises(RuntimeError, match="Failed to start container"):
-            docker_shell("owner/myrepo", "main", "tok", tmp_path)
+            docker_shell("owner/myrepo", "main", "tok")
 
 
 # ---------------------------------------------------------------------------

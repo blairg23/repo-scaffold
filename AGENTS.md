@@ -29,7 +29,14 @@ cp .env.example .env
 ## Docker dev environment
 
 Each active branch gets its own container (`{repo-name}-{branch-slug}`). All containers
-share a base image built once from the Dockerfile in the repo root. Credentials are
+share one generic workspace image, owned by repo-scaffold itself (git + python/poetry +
+go + node/npm), built once -- not generated from, or dependent on, anything in the target
+repo. The container clones the branch *inside itself* at startup and installs whatever
+deps that repo needs (detected from the freshly-cloned content: `pyproject.toml` ->
+`poetry install`, `go.mod` -> `go mod download`, `web/package.json` -> `npm install`), so
+no local checkout of the target repo is ever needed on the host, and the target repo
+needs no Dockerfile of its own. A repo with unusual system-package needs can drop a
+`.repo-scaffold/setup.sh` in its root -- it runs post-clone, post-install. Credentials are
 passed as env vars at runtime -- never baked into the image.
 
 **Windows/macOS:** `repo-scaffold docker shell`/`spin-up`/`build-base` auto-start Docker
@@ -75,7 +82,7 @@ This builds the base image if needed, tears down any existing container for the 
 starts a fresh one (clones the branch, installs deps), and drops you straight into bash.
 The repo is at `/{repo-name}` inside the container (e.g. `/repo-scaffold`).
 
-Add `--rebuild` when the Dockerfile changes:
+Add `--rebuild` when repo-scaffold's own workspace image definition changes:
 
 ```bash
 poetry run repo-scaffold docker shell --repo OWNER/REPO --branch feat/NNN-my-feature --rebuild
@@ -84,8 +91,8 @@ poetry run repo-scaffold docker shell --repo OWNER/REPO --branch feat/NNN-my-fea
 Other commands (rarely needed directly):
 
 ```bash
-# Build or rebuild the base image without starting a container
-poetry run repo-scaffold docker build-base --repo OWNER/REPO [--path .]
+# Build or rebuild the shared workspace image without starting a container
+poetry run repo-scaffold docker build-base
 
 # Start a container without exec-ing in (for background agent use)
 poetry run repo-scaffold docker spin-up --repo OWNER/REPO --branch BRANCH
@@ -201,7 +208,7 @@ is reached (exit 2, default 30 min). Use it to block an agent loop on CI.
 ### Docker containers
 
 ```bash
-poetry run repo-scaffold docker build-base --repo OWNER/REPO [--path .]
+poetry run repo-scaffold docker build-base
 poetry run repo-scaffold docker spin-up    --repo OWNER/REPO --branch BRANCH [--env-file .env]
 poetry run repo-scaffold docker spin-down  --repo OWNER/REPO --branch BRANCH
 poetry run repo-scaffold docker list       [--repo OWNER/REPO] [--json]
