@@ -1,11 +1,17 @@
-"""Per-repo Docker container management.
+"""Per-branch Docker container management.
 
 Naming convention:
   container: {repo-name}-{branch-slug}
-  base image: {repo-name}-base:latest
+  image: repo-scaffold-workspace:latest
 
-Each repo gets one base image (built once, rebuilt when deps change).
-Each active branch gets its own container started from that image.
+Docker's only job here is isolation: a disposable place to clone a branch and
+work on it so the local checkout never gets touched and concurrent agents
+don't corrupt shared state (see #238, #296). There is one generic workspace
+image, owned by repo-scaffold itself (see docker_assets/Dockerfile) and built
+once -- not generated from, or dependent on, anything in the target repo. Each
+active branch gets its own container started from that same image; the
+container clones the branch and installs its deps *inside itself* at startup,
+so no local checkout of the target repo is ever needed on the host.
 """
 
 from __future__ import annotations
@@ -40,10 +46,16 @@ def container_name(repo: str, branch: str) -> str:
     return f"{repo_slug}-{branch_slug}"
 
 
-def image_name(repo: str) -> str:
-    """Return the base image tag for a repo: '{repo-name}-base:latest'."""
-    repo_slug = _slug(repo.split("/", 1)[-1])
-    return f"{repo_slug}-base:latest"
+WORKSPACE_IMAGE_TAG = "repo-scaffold-workspace:latest"
+
+
+def default_workspace_dockerfile_dir() -> Path:
+    """Directory containing repo-scaffold's own bundled workspace Dockerfile.
+
+    Resolved relative to the installed package so it works the same whether
+    running from a source checkout or an installed wheel.
+    """
+    return Path(__file__).parent / "docker_assets"
 
 
 # ---------------------------------------------------------------------------
@@ -211,8 +223,21 @@ git clone --depth=1 --branch "$BRANCH" \
         "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$REPO_DIR"
 cd "$REPO_DIR"
 git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH"
+if [ -f .repo-scaffold/setup.sh ]; then
+    echo "Running .repo-scaffold/setup.sh ..."
+    bash .repo-scaffold/setup.sh
+fi
 if [ -f pyproject.toml ]; then
+    echo "Detected pyproject.toml -- running poetry install ..."
     poetry install --quiet
+fi
+if [ -f go.mod ]; then
+    echo "Detected go.mod -- running go mod download ..."
+    go mod download
+fi
+if [ -f web/package.json ]; then
+    echo "Detected web/package.json -- running npm install ..."
+    (cd web && npm install --silent)
 fi
 echo "Ready. Container: $CONTAINER_NAME"
 exec sleep infinity
@@ -233,27 +258,25 @@ class ContainerInfo:
 
 
 def docker_build_base(
-    repo: str,
-    dockerfile_dir: Path,
+    dockerfile_dir: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Build (or rebuild) the base image for a repo.
+    """Build (or rebuild) the one shared workspace image.
 
-    dockerfile_dir should contain a Dockerfile. If no Dockerfile is present,
-    a minimal Python + poetry image is used.
+    Not tied to any repo -- builds from repo-scaffold's own bundled Dockerfile
+    (docker_assets/Dockerfile) by default. dockerfile_dir exists only so tests
+    can point at a fixture Dockerfile instead.
     """
-    tag = image_name(repo)
+    tag = WORKSPACE_IMAGE_TAG
     client = _client()
 
-    dockerfile = dockerfile_dir / "Dockerfile"
+    build_dir = dockerfile_dir or default_workspace_dockerfile_dir()
+    dockerfile = build_dir / "Dockerfile"
     if not dockerfile.exists():
-        return _err(
-            f"No Dockerfile found at {dockerfile}. "
-            "Add one to the repo root or run 'docker build-base' from the repo directory."
-        )
+        return _err(f"No Dockerfile found at {dockerfile}.")
 
     try:
         _image, logs = client.images.build(
-            path=str(dockerfile_dir),
+            path=str(build_dir),
             tag=tag,
             rm=True,
         )
@@ -280,15 +303,15 @@ def docker_spin_up(
     """
     client = _client()
     name = container_name(repo, branch)
-    tag = image_name(repo)
+    tag = WORKSPACE_IMAGE_TAG
 
-    # Verify base image exists
+    # Verify the workspace image exists
     try:
         client.images.get(tag)
     except Exception:
         return _err(
-            f"Base image '{tag}' not found. "
-            f"Run: repo-scaffold docker build-base --repo {repo}"
+            f"Workspace image '{tag}' not found. "
+            "Run: repo-scaffold docker build-base"
         )
 
     # Refuse to start a duplicate
@@ -354,18 +377,17 @@ def docker_shell(
     repo: str,
     branch: str,
     token: str,
-    dockerfile_dir: Path,
     rebuild: bool = False,
     env_path: Path | None = None,
 ) -> None:
-    """Build image if needed, restart container, and exec into bash.
+    """Build the workspace image if needed, restart container, and exec into bash.
 
     Replaces the current process with `docker exec -it <name> bash` -- never
     returns on success. Raises RuntimeError on any failure before exec.
     """
     client = _client()
     name = container_name(repo, branch)
-    tag = image_name(repo)
+    tag = WORKSPACE_IMAGE_TAG
 
     needs_build = rebuild
     if not needs_build:
@@ -375,9 +397,9 @@ def docker_shell(
             needs_build = True
 
     if needs_build:
-        result = docker_build_base(repo, dockerfile_dir)
+        result = docker_build_base()
         if result.returncode != 0:
-            raise RuntimeError(f"Base image build failed:\n{result.stderr}")
+            raise RuntimeError(f"Workspace image build failed:\n{result.stderr}")
         print(result.stdout)
 
     try:

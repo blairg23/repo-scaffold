@@ -9,7 +9,10 @@ description = "Generate an OS-agnostic GitHub repository scaffold for Go, Python
 readme = "README.md"
 authors = ["repo-scaffold"]
 packages = [{ include = "repo_scaffold", from = "src" }]
-include = ["src/repo_scaffold/templates/**/*"]
+include = [
+    "src/repo_scaffold/templates/**/*",
+    "src/repo_scaffold/docker_assets/**/*",
+]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"

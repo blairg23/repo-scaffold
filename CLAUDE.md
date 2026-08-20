@@ -224,17 +224,25 @@ commands, `branch create`/`delete`/`rename`, and `docker build-base`/`spin-up`/
 
 ## How to work on branches
 
-Each branch gets its own isolated Docker container. The container clones the branch
-and installs deps on startup. Your code is at `/{repo-name}` inside the container.
-On Windows/macOS, Docker Desktop is auto-started if it isn't already running -- no
-manual start step needed before `docker shell`. On Linux, start `dockerd` yourself
-first (no auto-start there -- it's normally a sudo-gated systemd service, not an app).
+Each branch gets its own isolated Docker container, started from one generic
+workspace image repo-scaffold owns and bundles itself (`src/repo_scaffold/docker_assets/Dockerfile`:
+git + python/poetry + go + node/npm) -- not generated from, or dependent on,
+anything in the target repo. The container clones the branch inside itself and
+installs whatever deps that repo needs on startup, detected from the freshly-cloned
+content (`pyproject.toml` -> `poetry install`, `go.mod` -> `go mod download`,
+`web/package.json` -> `npm install`). A repo with unusual system-package needs can
+drop a `.repo-scaffold/setup.sh` in its root -- it runs post-clone, before those
+installs, so it can prep whatever the manifest-driven installs need. Your code is
+at `/{repo-name}` inside the container. On Windows/macOS, Docker Desktop is
+auto-started if it isn't already running -- no manual start step needed before
+`docker shell`. On Linux, start `dockerd` yourself first (no auto-start there --
+it's normally a sudo-gated systemd service, not an app).
 
 ```bash
 # Get a shell in a branch container (builds image if needed, replaces any existing container)
 poetry run repo-scaffold docker shell --repo OWNER/REPO --branch BRANCH
 
-# Add --rebuild if the Dockerfile changed
+# Add --rebuild if repo-scaffold's own workspace image definition changed
 poetry run repo-scaffold docker shell --repo OWNER/REPO --branch BRANCH --rebuild
 ```
 

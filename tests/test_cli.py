@@ -4075,10 +4075,10 @@ def test_docker_build_base_success(
     monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
     monkeypatch.setattr(
         "repo_scaffold.docker_ops.docker_build_base",
-        lambda repo, path: _docker_ok("Built repo-scaffold-base:latest"),
+        lambda: _docker_ok("Built repo-scaffold-workspace:latest"),
     )
 
-    rc = main(["docker", "build-base", "--repo", "owner/repo-scaffold"])
+    rc = main(["docker", "build-base"])
     assert rc == 0
     assert "Built" in capsys.readouterr().out
 
@@ -4092,10 +4092,10 @@ def test_docker_build_base_failure(
     monkeypatch.setattr("repo_scaffold.cli.token_from_repo", lambda _: "tok")
     monkeypatch.setattr(
         "repo_scaffold.docker_ops.docker_build_base",
-        lambda repo, path: _docker_err("No Dockerfile found"),
+        lambda: _docker_err("No Dockerfile found"),
     )
 
-    rc = main(["docker", "build-base", "--repo", "owner/repo-scaffold"])
+    rc = main(["docker", "build-base"])
     assert rc == 1
     assert "No Dockerfile" in capsys.readouterr().err
 

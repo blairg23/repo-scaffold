@@ -1779,32 +1779,20 @@ def build_parser() -> argparse.ArgumentParser:
     dk_list = docker_sub.add_parser("list", help="List running agent containers")
     dk_list.add_argument("--repo", default=None, help="Filter by repo name (optional)")
 
-    dk_build_base = docker_sub.add_parser(
-        "build-base", help="Build or rebuild the base Docker image for a repo"
-    )
-    dk_build_base.add_argument("--repo", required=True, help="OWNER/REPO")
-    dk_build_base.add_argument(
-        "--path",
-        default=".",
-        dest="dockerfile_dir",
-        help="Directory containing the Dockerfile (default: current directory)",
+    docker_sub.add_parser(
+        "build-base",
+        help="Build or rebuild repo-scaffold's shared workspace image",
     )
 
     dk_shell = docker_sub.add_parser(
         "shell",
         help=(
-            "One command: build image if needed, restart container, exec into bash. "
-            "Use --rebuild to force a fresh image build (required after Dockerfile changes)."
+            "One command: build the workspace image if needed, restart container, "
+            "exec into bash. Use --rebuild to force a fresh image build."
         ),
     )
     dk_shell.add_argument("--repo", required=True, help="OWNER/REPO")
     dk_shell.add_argument("--branch", required=True, help="Branch name")
-    dk_shell.add_argument(
-        "--path",
-        default=".",
-        dest="dockerfile_dir",
-        help="Directory containing the Dockerfile (default: current directory)",
-    )
     dk_shell.add_argument(
         "--env-file",
         default=None,
@@ -1815,7 +1803,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--rebuild",
         action="store_true",
         default=False,
-        help="Rebuild the base image before starting (use after Dockerfile changes)",
+        help="Rebuild the shared workspace image before starting",
     )
 
     return parser
@@ -3930,7 +3918,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if ns.docker_command == "build-base":
-            cp = docker_build_base(ns.repo, Path(ns.dockerfile_dir))
+            cp = docker_build_base()
             if cp.returncode != 0:
                 print(cp.stderr.strip(), file=sys.stderr)
                 return 1
@@ -3946,7 +3934,6 @@ def main(argv: list[str] | None = None) -> int:
                     ns.repo,
                     ns.branch,
                     token,
-                    Path(ns.dockerfile_dir),
                     rebuild=ns.rebuild,
                     env_path=env_file,
                 )
