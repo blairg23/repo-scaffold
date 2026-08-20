@@ -49,26 +49,40 @@ def registry_path() -> Path:
     return _repo_root() / ".repo-scaffold" / "registry.json"
 
 
-def _migrate_legacy_registry(target: Path) -> None:
-    """One-time copy of ~/.repo-scaffold/registry.json to the new location."""
+def _migrate_legacy_registry(target: Path) -> Path:
+    """One-time copy of ~/.repo-scaffold/registry.json to the new location.
+
+    Returns the path to actually read: `target` normally, or the legacy path
+    itself if the copy failed (e.g. a read-only checkout) so existing state
+    is still usable even though it can't be persisted at the new location.
+    """
     if target.exists() or not _LEGACY_REGISTRY_PATH.exists():
-        return
+        return target
     if _LEGACY_REGISTRY_PATH.resolve() == target.resolve():
-        return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        _LEGACY_REGISTRY_PATH.read_text(encoding="utf-8"), encoding="utf-8"
-    )
+        return target
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            _LEGACY_REGISTRY_PATH.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    except OSError as exc:
+        print(
+            f"Warning: could not migrate registry to {target} ({exc}); "
+            f"reading from legacy location {_LEGACY_REGISTRY_PATH} instead.",
+            file=sys.stderr,
+        )
+        return _LEGACY_REGISTRY_PATH
     print(
         f"Migrated registry from {_LEGACY_REGISTRY_PATH} to {target} "
         "(the old location is no longer used and can be deleted).",
         file=sys.stderr,
     )
+    return target
 
 
 def load_registry(path: Path | None = None) -> dict[str, RegistryEntry]:
     target = path or registry_path()
-    _migrate_legacy_registry(target)
+    target = _migrate_legacy_registry(target)
     if not target.exists():
         return {}
     try:

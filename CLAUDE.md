@@ -208,6 +208,12 @@ Token lives in `.env` as `GH_TOKEN`. Commands pick it up automatically via `_see
 ## Coverage
 All GitHub operations (repos, issues, PRs, projects, backlog) are implemented via GH_TOKEN + urllib. No `gh` CLI required.
 
+## Local registry
+`repo-scaffold repo` commands track known repos in `registry.json`, which defaults to
+`{repo_root}/.repo-scaffold/registry.json` (gitignored, travels with the checkout) rather
+than a home-directory file. Override with `REPO_SCAFFOLD_REGISTRY_PATH`. An existing
+`~/.repo-scaffold/registry.json` is migrated automatically on first use.
+
 
 # Branch Workflow
 

@@ -85,6 +85,32 @@ def test_load_registry_skips_migration_when_target_already_exists(
     assert "legacy/repo" not in entries
 
 
+def test_load_registry_falls_back_to_legacy_when_migration_write_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A read-only checkout must not crash commands that could otherwise still
+    read the existing legacy registry -- it should just skip persisting."""
+    legacy = tmp_path / "legacy" / "registry.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps({"acme/repo": {"local_path": "/old/path", "notes": ""}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(registry_ops, "_LEGACY_REGISTRY_PATH", legacy)
+
+    def _raise_mkdir(*args: object, **kwargs: object) -> None:
+        raise PermissionError("read-only filesystem")
+
+    monkeypatch.setattr(Path, "mkdir", _raise_mkdir)
+
+    target = tmp_path / "new" / "registry.json"
+    entries = load_registry(target)
+
+    assert "acme/repo" in entries
+    assert not target.exists()
+    assert "could not migrate" in capsys.readouterr().err
+
+
 def test_load_registry_no_migration_when_legacy_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
