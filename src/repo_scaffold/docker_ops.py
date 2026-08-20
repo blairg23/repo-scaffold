@@ -223,6 +223,10 @@ git clone --depth=1 --branch "$BRANCH" \
         "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$REPO_DIR"
 cd "$REPO_DIR"
 git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH"
+if [ -f .repo-scaffold/setup.sh ]; then
+    echo "Running .repo-scaffold/setup.sh ..."
+    bash .repo-scaffold/setup.sh
+fi
 if [ -f pyproject.toml ]; then
     echo "Detected pyproject.toml -- running poetry install ..."
     poetry install --quiet
@@ -234,10 +238,6 @@ fi
 if [ -f web/package.json ]; then
     echo "Detected web/package.json -- running npm install ..."
     (cd web && npm install --silent)
-fi
-if [ -f .repo-scaffold/setup.sh ]; then
-    echo "Running .repo-scaffold/setup.sh ..."
-    bash .repo-scaffold/setup.sh
 fi
 echo "Ready. Container: $CONTAINER_NAME"
 exec sleep infinity

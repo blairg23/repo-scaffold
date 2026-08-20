@@ -72,6 +72,17 @@ def test_startup_script_detects_all_language_manifests() -> None:
     assert ".repo-scaffold/setup.sh" in _STARTUP_SCRIPT
 
 
+def test_setup_hook_runs_before_dependency_installs() -> None:
+    """.repo-scaffold/setup.sh is the escape hatch for OS packages a repo's own
+    poetry/go/npm install needs. It must run first -- under `set -e`, an install
+    failing before the hook runs would kill the container before the hook that's
+    supposed to fix exactly that ever executes."""
+    setup_hook_index = _STARTUP_SCRIPT.index(".repo-scaffold/setup.sh")
+    assert setup_hook_index < _STARTUP_SCRIPT.index("poetry install")
+    assert setup_hook_index < _STARTUP_SCRIPT.index("go mod download")
+    assert setup_hook_index < _STARTUP_SCRIPT.index("npm install")
+
+
 # ---------------------------------------------------------------------------
 # _client helper (lazy import)
 # ---------------------------------------------------------------------------
