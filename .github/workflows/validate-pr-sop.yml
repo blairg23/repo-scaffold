@@ -5,6 +5,15 @@ on:
     types: [opened, synchronize, reopened]
   pull_request_review:
     types: [submitted]
+  # Replying to a review thread is a new review comment, so this re-triggers
+  # the check after the "reply" SOP step. Resolving a thread and reacting
+  # +1 have no corresponding Actions trigger event (GitHub does not expose
+  # pull_request_review_thread's resolved/unresolved action, or comment
+  # reactions, to workflow `on:` triggers) -- `repo-scaffold pr rerun
+  # --failed-only` after finishing those steps remains the way to refresh
+  # the check without a new commit or review submission.
+  pull_request_review_comment:
+    types: [created]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -32,20 +41,25 @@ jobs:
               return;
             }
 
-            const data = await github.graphql(`
-              query($owner: String!, $repo: String!, $number: Int!) {
-                repository(owner: $owner, name: $repo) {
-                  pullRequest(number: $number) {
-                    reviewThreads(first: 50) {
-                      nodes {
-                        id
-                        isResolved
-                        comments(first: 50) {
-                          nodes {
-                            databaseId
-                            author { login }
-                            reactions(first: 30) {
-                              nodes { content }
+            const threads = [];
+            let after = null;
+            while (true) {
+              const data = await github.graphql(`
+                query($owner: String!, $repo: String!, $number: Int!, $after: String) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      reviewThreads(first: 50, after: $after) {
+                        pageInfo { hasNextPage endCursor }
+                        nodes {
+                          id
+                          isResolved
+                          comments(first: 50) {
+                            nodes {
+                              databaseId
+                              author { login }
+                              reactions(first: 30) {
+                                nodes { content }
+                              }
                             }
                           }
                         }
@@ -53,14 +67,18 @@ jobs:
                     }
                   }
                 }
-              }
-            `, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              number: prNumber,
-            });
+              `, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                number: prNumber,
+                after,
+              });
 
-            const threads = data.repository.pullRequest.reviewThreads.nodes;
+              const page = data.repository.pullRequest.reviewThreads;
+              threads.push(...page.nodes);
+              if (!page.pageInfo.hasNextPage) break;
+              after = page.pageInfo.endCursor;
+            }
 
             if (threads.length === 0) {
               core.info("No review threads found. SOP check passed.");
