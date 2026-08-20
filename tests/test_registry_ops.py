@@ -2,15 +2,126 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import pytest
+
+import repo_scaffold.registry_ops as registry_ops
 from repo_scaffold.registry_ops import (
     forget_repo,
     list_registry,
     load_registry,
     register_repo,
+    registry_path,
     save_registry,
 )
+
+# ---------------------------------------------------------------------------
+# registry_path()
+# ---------------------------------------------------------------------------
+
+
+def test_registry_path_defaults_to_repo_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REPO_SCAFFOLD_REGISTRY_PATH", raising=False)
+    path = registry_path()
+    assert path.name == "registry.json"
+    assert path.parent.name == ".repo-scaffold"
+    assert (path.parent.parent / "pyproject.toml").exists()
+
+
+def test_registry_path_env_var_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    override = tmp_path / "custom" / "registry.json"
+    monkeypatch.setenv("REPO_SCAFFOLD_REGISTRY_PATH", str(override))
+    assert registry_path() == override
+
+
+# ---------------------------------------------------------------------------
+# Legacy ~/.repo-scaffold/registry.json migration
+# ---------------------------------------------------------------------------
+
+
+def test_load_registry_migrates_legacy_home_dir_registry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    legacy = tmp_path / "legacy" / "registry.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps({"acme/repo": {"local_path": "/old/path", "notes": ""}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(registry_ops, "_LEGACY_REGISTRY_PATH", legacy)
+
+    target = tmp_path / "new" / "registry.json"
+    entries = load_registry(target)
+
+    assert "acme/repo" in entries
+    assert target.exists()
+    assert "Migrated registry" in capsys.readouterr().err
+
+
+def test_load_registry_skips_migration_when_target_already_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    legacy = tmp_path / "legacy" / "registry.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps({"legacy/repo": {"local_path": "/old", "notes": ""}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(registry_ops, "_LEGACY_REGISTRY_PATH", legacy)
+
+    target = tmp_path / "new" / "registry.json"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        json.dumps({"current/repo": {"local_path": "/new", "notes": ""}}),
+        encoding="utf-8",
+    )
+
+    entries = load_registry(target)
+    assert "current/repo" in entries
+    assert "legacy/repo" not in entries
+
+
+def test_load_registry_falls_back_to_legacy_when_migration_write_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A read-only checkout must not crash commands that could otherwise still
+    read the existing legacy registry -- it should just skip persisting."""
+    legacy = tmp_path / "legacy" / "registry.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps({"acme/repo": {"local_path": "/old/path", "notes": ""}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(registry_ops, "_LEGACY_REGISTRY_PATH", legacy)
+
+    def _raise_mkdir(*args: object, **kwargs: object) -> None:
+        raise PermissionError("read-only filesystem")
+
+    monkeypatch.setattr(Path, "mkdir", _raise_mkdir)
+
+    target = tmp_path / "new" / "registry.json"
+    entries = load_registry(target)
+
+    assert "acme/repo" in entries
+    assert not target.exists()
+    assert "could not migrate" in capsys.readouterr().err
+
+
+def test_load_registry_no_migration_when_legacy_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        registry_ops,
+        "_LEGACY_REGISTRY_PATH",
+        tmp_path / "nonexistent" / "registry.json",
+    )
+    target = tmp_path / "new" / "registry.json"
+    assert load_registry(target) == {}
+    assert not target.exists()
 
 
 def test_load_registry_missing_file_returns_empty(tmp_path: Path) -> None:

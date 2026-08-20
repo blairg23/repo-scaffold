@@ -26,6 +26,19 @@ cp .env.example .env
 
 ---
 
+## Local registry
+
+`repo-scaffold repo` commands (`register`, `list`, `forget`, `discover`) track known repos
+in a local `registry.json`. It defaults to `{repo_root}/.repo-scaffold/registry.json` --
+gitignored, local state per working copy -- not a home-directory file, so it travels with
+the checkout instead of being invisible to a fresh clone or container.
+
+Override the location with `REPO_SCAFFOLD_REGISTRY_PATH` if needed. An existing
+`~/.repo-scaffold/registry.json` from before this change is migrated automatically the
+first time any registry command runs, with a one-time warning printed to stderr.
+
+---
+
 ## Docker dev environment
 
 Each active branch gets its own container (`{repo-name}-{branch-slug}`). All containers
