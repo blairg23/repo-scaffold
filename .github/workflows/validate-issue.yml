@@ -54,6 +54,13 @@ jobs:
               labels: ["needs-format"],
             });
 
+            // Relative markdown links in a comment resolve against the comment's
+            // own URL (.../issues/<n>), not the repo root, so a plain relative
+            // path 404s instead of opening the template. Build an absolute blob
+            // URL against the actual default branch instead (see #299).
+            const ref = context.payload.repository.default_branch;
+            const repoBlobUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${ref}`;
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -62,6 +69,6 @@ jobs:
                 "This issue is missing required template sections:",
                 ...missing.map(h => `- \`${h}\``),
                 "",
-                "Please update the body to match the [epic template](../.github/ISSUE_TEMPLATE/epic.md) or [ticket template](../.github/ISSUE_TEMPLATE/ticket.md).",
+                `Please update the body to match the [epic template](${repoBlobUrl}/.github/ISSUE_TEMPLATE/epic.md) or [ticket template](${repoBlobUrl}/.github/ISSUE_TEMPLATE/ticket.md).`,
               ].join("\n"),
             });
