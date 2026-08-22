@@ -4583,7 +4583,7 @@ def test_layout_warning_fires_on_mismatch(
     ]
     monkeypatch.setattr(
         "repo_scaffold.cli.load_registry",
-        lambda: {e.repo: e for e in _registry_entries(nested)},
+        lambda **_: {e.repo: e for e in _registry_entries(nested)},
     )
 
     flat_target = tmp_path / "NewProj"
@@ -4591,7 +4591,7 @@ def test_layout_warning_fires_on_mismatch(
 
     stderr = capsys.readouterr().err
     assert "does not match the local layout convention" in stderr
-    suggested = flat_target.resolve().parent / "src" / "new-proj"
+    suggested = flat_target.resolve() / "src" / "new-proj"
     assert str(suggested) in stderr
 
 
@@ -4605,7 +4605,7 @@ def test_layout_warning_silent_when_path_matches(
     ]
     monkeypatch.setattr(
         "repo_scaffold.cli.load_registry",
-        lambda: {e.repo: e for e in _registry_entries(nested)},
+        lambda **_: {e.repo: e for e in _registry_entries(nested)},
     )
 
     matching_target = tmp_path / "NewProj" / "src" / "new-proj"
@@ -4618,7 +4618,7 @@ def test_layout_warning_silent_when_path_matches(
 def test_layout_warning_silent_with_empty_registry(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    monkeypatch.setattr("repo_scaffold.cli.load_registry", lambda: {})
+    monkeypatch.setattr("repo_scaffold.cli.load_registry", lambda **_: {})
 
     cli_module._warn_if_breaks_layout_convention(tmp_path / "NewProj", "new-proj")
 
@@ -4636,7 +4636,7 @@ def test_layout_warning_silent_with_mixed_registry(
     ]
     monkeypatch.setattr(
         "repo_scaffold.cli.load_registry",
-        lambda: {e.repo: e for e in _registry_entries(mixed)},
+        lambda **_: {e.repo: e for e in _registry_entries(mixed)},
     )
 
     cli_module._warn_if_breaks_layout_convention(tmp_path / "NewProj", "new-proj")

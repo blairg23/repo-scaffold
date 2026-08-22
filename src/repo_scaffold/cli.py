@@ -366,7 +366,7 @@ def _warn_if_breaks_layout_convention(repo_dir: Path, repo_name: str) -> None:
     established local convention yet.
     """
     try:
-        entries = list(load_registry().values())
+        entries = list(load_registry(migrate=False).values())
     except Exception:
         return
 
@@ -383,7 +383,7 @@ def _warn_if_breaks_layout_convention(repo_dir: Path, repo_name: str) -> None:
     if resolved.parent.name == "src":
         return
 
-    suggested = resolved.parent / "src" / repo_name
+    suggested = resolved / "src" / repo_name
     print(
         f"warning: {resolved} does not match the local layout convention used by "
         f"{len(nested)}/{len(paths)} registered repos (<wrapper>/src/<repo-name>/). "

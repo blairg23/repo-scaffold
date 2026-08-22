@@ -151,6 +151,7 @@ Defaults:
 - default branch policy uses a ruleset baseline: PR required, `0` approvals, conversation resolution, squash-only, linear history, no force-push, no delete, CodeQL merge protection, and automatic Copilot review on new pushes
 - also attempts to enable secret scanning, push protection, Dependabot alerts, automated security updates, and public-repo private vulnerability reporting (best-effort; warnings only if plan/policy blocks them)
 - supports `--dry-run`
+- both `init --out` and `create --path` compare the target against the layout pattern the registry's existing `local_path` entries already follow, and print a suggested conventional-equivalent path to stderr on a mismatch -- advisory only, never blocking
 
 Tip: avoid shell-expanding possibly-unset vars in `--repo` (for example `--repo "$GITHUB_ORG/$TEST_REPO"`).
 If you keep repo metadata in `.env`, omit `--repo` and let `repo-scaffold` resolve it.
