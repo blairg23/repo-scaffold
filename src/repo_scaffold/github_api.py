@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import urllib.error
 import urllib.parse
@@ -1537,8 +1538,9 @@ query($owner: String!, $repo: String!, $number: Int!, $after: String) {
               databaseId
               author { login }
               body
-              reactions(first: 30) {
-                nodes { content user { login } }
+              reactionGroups {
+                content
+                reactors { totalCount }
               }
             }
           }
@@ -1623,6 +1625,9 @@ def pr_resolve_thread(thread_id: str, token: str) -> subprocess.CompletedProcess
         return _err("Unexpected response resolving thread.")
 
 
+_SOP_HASH_RE = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
+
+
 def pr_check_sop(
     owner: str, repo: str, number: int, token: str
 ) -> subprocess.CompletedProcess[str]:
@@ -1663,14 +1668,23 @@ def pr_check_sop(
         comments = thread.get("comments", {}).get("nodes", [])
         first_comment = comments[0] if comments else {}
         first_comment_id = first_comment.get("databaseId")
-        reactions = first_comment.get("reactions", {}).get("nodes", [])
-        has_plus_one = any(r.get("content") == "THUMBS_UP" for r in reactions)
+        # reactionGroups gives an aggregate count per reaction type in one
+        # shot -- no pagination needed, unlike the raw `reactions` connection
+        # this replaced (see #303).
+        reaction_groups = first_comment.get("reactionGroups", [])
+        has_plus_one = any(
+            g.get("content") == "THUMBS_UP"
+            and g.get("reactors", {}).get("totalCount", 0) > 0
+            for g in reaction_groups
+        )
 
-        # Matches validate-pr-sop.yml's actual enforcement logic exactly: any
-        # additional comment counts as a reply, regardless of author. A same-author
-        # check would misreport self-review threads (reviewer and repo owner sharing
-        # a GitHub login) as missing a reply even when one was genuinely posted.
-        has_reply = len(comments) > 1
+        # A reply only satisfies the SOP if it actually carries the commit
+        # hash the SOP requires. Matches validate-pr-sop.yml's enforcement
+        # exactly. Author-based discrimination was already proven wrong (a
+        # repo owner reviewing and then fixing their own PR shares a login
+        # with the thread opener), and "any second comment" wrongly counted
+        # a reviewer follow-up or bot comment as a completed reply (see #263).
+        has_reply = any(_SOP_HASH_RE.search(c.get("body") or "") for c in comments[1:])
 
         missing = []
         if not has_reply:

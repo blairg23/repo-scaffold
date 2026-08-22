@@ -41,6 +41,14 @@ jobs:
               return;
             }
 
+            // A reply only satisfies the SOP if it actually carries the
+            // commit hash the SOP requires -- author-based discrimination
+            // was already proven wrong (a repo owner reviewing and then
+            // fixing their own PR shares a login with the thread opener),
+            // and "any second comment" wrongly counts a reviewer follow-up
+            // or bot comment as a completed reply. See #263.
+            const HASH_RE = /\b[0-9a-f]{7,40}\b/i;
+
             const threads = [];
             let after = null;
             while (true) {
@@ -56,9 +64,11 @@ jobs:
                           comments(first: 50) {
                             nodes {
                               databaseId
+                              body
                               author { login }
-                              reactions(first: 30) {
-                                nodes { content }
+                              reactionGroups {
+                                content
+                                reactors { totalCount }
                               }
                             }
                           }
@@ -88,11 +98,16 @@ jobs:
             const failing = [];
             for (const thread of threads) {
               const comments = thread.comments.nodes;
-              const hasReply = comments.length > 1;
+              const hasReply = comments.slice(1).some(c => HASH_RE.test(c.body || ""));
               const isResolved = thread.isResolved;
               const firstComment = comments[0] || {};
-              const reactions = (firstComment.reactions?.nodes) || [];
-              const hasPlusOne = reactions.some(r => r.content === "THUMBS_UP");
+              // reactionGroups gives an aggregate count per reaction type in
+              // one shot -- no pagination needed, unlike the raw `reactions`
+              // connection this replaced (see #303).
+              const reactionGroups = firstComment.reactionGroups || [];
+              const hasPlusOne = reactionGroups.some(
+                g => g.content === "THUMBS_UP" && g.reactors.totalCount > 0
+              );
 
               if (!hasReply || !isResolved || !hasPlusOne) {
                 const missing = [];
