@@ -1754,6 +1754,121 @@ def test_pr_check_sop_reviewer_followup_without_hash_not_reply() -> None:
     assert "reply" in report[0]["missing"]
 
 
+def test_pr_check_sop_hex_looking_word_without_fixed_in_not_reply() -> None:
+    """A reply containing an incidental hex-looking English word (e.g.
+    "defaced", which is composed entirely of hex digit letters) must not
+    satisfy the reply step unless it's actually in the SOP's prescribed
+    "Fixed in <hash>." form (follow-up review on #307)."""
+    thread = _make_thread(
+        "PRRT_11",
+        is_resolved=True,
+        num_comments=2,
+        first_has_thumbs_up=True,
+        reply_author="reviewer",
+        reply_body="This section looks defaced by the merge, please recheck.",
+    )
+    with patch.object(
+        github_api, "graphql", return_value=github_api._ok(_sop_resp([thread]))
+    ):
+        cp = github_api.pr_check_sop("acme", "repo", 11, "tok")
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert report[0]["has_reply"] is False
+
+
+def _sop_thread_comments_resp(
+    nodes: list, has_next_page: bool = False, end_cursor: str | None = None
+) -> str:
+    return json.dumps(
+        {
+            "node": {
+                "comments": {
+                    "pageInfo": {
+                        "hasNextPage": has_next_page,
+                        "endCursor": end_cursor,
+                    },
+                    "nodes": nodes,
+                }
+            }
+        }
+    )
+
+
+def test_pr_check_sop_paginates_comments_within_a_thread() -> None:
+    """A thread whose own comments exceed the first page must still find the
+    genuine fix-reply if it lands on a later page (follow-up review on #307)."""
+    thread = {
+        "id": "PRRT_12",
+        "isResolved": True,
+        "comments": {
+            "pageInfo": {"hasNextPage": True, "endCursor": "cursor1"},
+            "nodes": [
+                {
+                    "databaseId": 100,
+                    "author": {"login": "reviewer"},
+                    "body": "Please fix this.",
+                    "reactionGroups": [
+                        {"content": "THUMBS_UP", "reactors": {"totalCount": 1}}
+                    ],
+                }
+            ],
+        },
+    }
+    second_page_comments = [
+        {
+            "databaseId": 101,
+            "author": {"login": "agent"},
+            "body": "Fixed in abc1234. Change #1.",
+            "reactionGroups": [],
+        }
+    ]
+    responses = iter(
+        [
+            github_api._ok(_sop_resp([thread])),
+            github_api._ok(
+                _sop_thread_comments_resp(second_page_comments, has_next_page=False)
+            ),
+        ]
+    )
+    with patch.object(
+        github_api, "graphql", side_effect=lambda *_a, **_kw: next(responses)
+    ):
+        cp = github_api.pr_check_sop("acme", "repo", 12, "tok")
+    assert cp.returncode == 0
+    report = json.loads(cp.stdout)
+    assert report[0]["has_reply"] is True
+    assert report[0]["compliant"] is True
+
+
+def test_pr_check_sop_comment_pagination_error_propagates() -> None:
+    thread = {
+        "id": "PRRT_13",
+        "isResolved": True,
+        "comments": {
+            "pageInfo": {"hasNextPage": True, "endCursor": "cursor1"},
+            "nodes": [
+                {
+                    "databaseId": 100,
+                    "author": {"login": "reviewer"},
+                    "body": "Please fix this.",
+                    "reactionGroups": [],
+                }
+            ],
+        },
+    }
+    responses = iter(
+        [
+            github_api._ok(_sop_resp([thread])),
+            github_api._err("GraphQL error"),
+        ]
+    )
+    with patch.object(
+        github_api, "graphql", side_effect=lambda *_a, **_kw: next(responses)
+    ):
+        cp = github_api.pr_check_sop("acme", "repo", 13, "tok")
+    assert cp.returncode != 0
+
+
 def test_pr_check_sop_paginates_all_threads() -> None:
     page1_thread = _make_thread(
         "PRRT_P1", is_resolved=True, num_comments=2, first_has_thumbs_up=True
