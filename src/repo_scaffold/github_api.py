@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import urllib.error
 import urllib.parse
@@ -1533,14 +1534,37 @@ query($owner: String!, $repo: String!, $number: Int!, $after: String) {
           id
           isResolved
           comments(first: 50) {
+            pageInfo { hasNextPage endCursor }
             nodes {
               databaseId
               author { login }
               body
-              reactions(first: 30) {
-                nodes { content user { login } }
+              reactionGroups {
+                content
+                reactors { totalCount }
               }
             }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+_GQL_THREAD_COMMENTS = """
+query($threadId: ID!, $after: String) {
+  node(id: $threadId) {
+    ... on PullRequestReviewThread {
+      comments(first: 50, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          databaseId
+          author { login }
+          body
+          reactionGroups {
+            content
+            reactors { totalCount }
           }
         }
       }
@@ -1623,6 +1647,37 @@ def pr_resolve_thread(thread_id: str, token: str) -> subprocess.CompletedProcess
         return _err("Unexpected response resolving thread.")
 
 
+_SOP_REPLY_RE = re.compile(r"\bfixed in\s+[0-9a-f]{7,40}\b", re.IGNORECASE)
+
+
+def _fetch_remaining_thread_comments(
+    thread_id: str, after: str | None, token: str
+) -> list[dict] | None:
+    """Fetch any comment pages beyond the first 50 for one review thread.
+
+    Returns None on a GraphQL or parsing error so the caller can propagate
+    the failure instead of silently treating a partial fetch as complete.
+    """
+    comments: list[dict] = []
+    while True:
+        cp = graphql(
+            _GQL_THREAD_COMMENTS, {"threadId": thread_id, "after": after}, token
+        )
+        if cp.returncode != 0:
+            return None
+        try:
+            data = json.loads(cp.stdout)
+            page = data["node"]["comments"]
+            comments.extend(page.get("nodes", []))
+            page_info = page.get("pageInfo", {})
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return None
+        if not page_info.get("hasNextPage"):
+            break
+        after = page_info.get("endCursor")
+    return comments
+
+
 def pr_check_sop(
     owner: str, repo: str, number: int, token: str
 ) -> subprocess.CompletedProcess[str]:
@@ -1660,17 +1715,41 @@ def pr_check_sop(
     for thread in all_threads:
         thread_id = thread.get("id", "")
         is_resolved = bool(thread.get("isResolved", False))
-        comments = thread.get("comments", {}).get("nodes", [])
+        comments_conn = thread.get("comments", {})
+        comments = comments_conn.get("nodes", [])
+        # A thread's own comments connection can in principle exceed one
+        # page too, same as the outer reviewThreads connection -- fetch
+        # whatever's left instead of silently missing a reply that lands
+        # past the first 50 comments (see #263 follow-up review on #307).
+        if comments_conn.get("pageInfo", {}).get("hasNextPage"):
+            extra = _fetch_remaining_thread_comments(
+                thread_id, comments_conn["pageInfo"].get("endCursor"), token
+            )
+            if extra is None:
+                return _err(f"Failed to paginate comments for thread {thread_id}.")
+            comments = comments + extra
         first_comment = comments[0] if comments else {}
         first_comment_id = first_comment.get("databaseId")
-        reactions = first_comment.get("reactions", {}).get("nodes", [])
-        has_plus_one = any(r.get("content") == "THUMBS_UP" for r in reactions)
+        # reactionGroups gives an aggregate count per reaction type in one
+        # shot -- no pagination needed, unlike the raw `reactions` connection
+        # this replaced (see #303).
+        reaction_groups = first_comment.get("reactionGroups", [])
+        has_plus_one = any(
+            g.get("content") == "THUMBS_UP"
+            and g.get("reactors", {}).get("totalCount", 0) > 0
+            for g in reaction_groups
+        )
 
-        # Matches validate-pr-sop.yml's actual enforcement logic exactly: any
-        # additional comment counts as a reply, regardless of author. A same-author
-        # check would misreport self-review threads (reviewer and repo owner sharing
-        # a GitHub login) as missing a reply even when one was genuinely posted.
-        has_reply = len(comments) > 1
+        # A reply only satisfies the SOP if it matches the prescribed reply
+        # form, "Fixed in <hash>. <sentence>." (AGENTS.md Review thread SOP
+        # step 2). Matches validate-pr-sop.yml's enforcement exactly.
+        # Author-based discrimination was already proven wrong (a repo owner
+        # reviewing and then fixing their own PR shares a login with the
+        # thread opener), "any second comment" wrongly counted a reviewer
+        # follow-up or bot comment as a completed reply (#263), and a bare
+        # unanchored hash pattern false-positives on ordinary hex-letter
+        # words like "defaced" (follow-up review on #307).
+        has_reply = any(_SOP_REPLY_RE.search(c.get("body") or "") for c in comments[1:])
 
         missing = []
         if not has_reply:
