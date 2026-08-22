@@ -353,6 +353,45 @@ def _resolve_output_path(name: str) -> Path:
     return Path(name)
 
 
+_LAYOUT_MIN_SAMPLE = 3
+_LAYOUT_MAJORITY_THRESHOLD = 0.7
+
+
+def _warn_if_breaks_layout_convention(repo_dir: Path, repo_name: str) -> None:
+    """Compare repo_dir against the nesting pattern the registry's existing
+    local_path entries already follow, and warn (never block) on a mismatch.
+
+    Stays silent with too few registry entries to infer a pattern confidently,
+    so this never fires spuriously for a repo-scaffold user with no
+    established local convention yet.
+    """
+    try:
+        entries = list(load_registry().values())
+    except Exception:
+        return
+
+    paths = [Path(e.local_path) for e in entries if e.local_path]
+    if len(paths) < _LAYOUT_MIN_SAMPLE:
+        return
+
+    nested = [p for p in paths if p.parent.name == "src"]
+    ratio = len(nested) / len(paths)
+    if ratio < _LAYOUT_MAJORITY_THRESHOLD:
+        return
+
+    resolved = repo_dir.resolve()
+    if resolved.parent.name == "src":
+        return
+
+    suggested = resolved.parent / "src" / repo_name
+    print(
+        f"warning: {resolved} does not match the local layout convention used by "
+        f"{len(nested)}/{len(paths)} registered repos (<wrapper>/src/<repo-name>/). "
+        f"Consider: {suggested}",
+        file=sys.stderr,
+    )
+
+
 def _seed_env_for_parsed_mode(ns: argparse.Namespace) -> None:
     _seed_env_from_dotenv(Path.cwd() / ".env")
     if ns.mode == "create" and getattr(ns, "path", None):
@@ -1897,6 +1936,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
+        _warn_if_breaks_layout_convention(repo_dir, repo_name_hint)
+
         needs_init = not repo_dir.exists()
         if repo_dir.exists() and repo_dir.is_dir():
             needs_init = not any(repo_dir.iterdir())
@@ -2039,6 +2080,8 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+
+        _warn_if_breaks_layout_convention(out_dir, init_name)
 
         cfg = ScaffoldConfig(
             name=init_name,
