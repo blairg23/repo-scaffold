@@ -62,6 +62,40 @@ def test_load_registry_migrates_legacy_home_dir_registry(
     assert "Migrated registry" in capsys.readouterr().err
 
 
+def test_load_registry_migrate_false_does_not_write_or_print(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    legacy = tmp_path / "legacy" / "registry.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps({"acme/repo": {"local_path": "/old/path", "notes": ""}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(registry_ops, "_LEGACY_REGISTRY_PATH", legacy)
+
+    target = tmp_path / "new" / "registry.json"
+    entries = load_registry(target, migrate=False)
+
+    assert "acme/repo" in entries
+    assert not target.exists()
+    assert capsys.readouterr().err == ""
+
+
+def test_load_registry_migrate_false_with_no_legacy_and_no_target_returns_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        registry_ops, "_LEGACY_REGISTRY_PATH", tmp_path / "no-such-legacy.json"
+    )
+
+    target = tmp_path / "new" / "registry.json"
+    entries = load_registry(target, migrate=False)
+
+    assert entries == {}
+    assert not target.exists()
+    assert capsys.readouterr().err == ""
+
+
 def test_load_registry_skips_migration_when_target_already_exists(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -37,6 +37,18 @@ Override the location with `REPO_SCAFFOLD_REGISTRY_PATH` if needed. An existing
 `~/.repo-scaffold/registry.json` from before this change is migrated automatically the
 first time any registry command runs, with a one-time warning printed to stderr.
 
+### Local layout convention warning
+
+`create --path` and `init --out` compare their target directory against the layout
+pattern the registry's existing `local_path` entries already follow (e.g. `<wrapper>/src/<repo-name>/`,
+the pattern most repos on a given machine tend to use). If at least 3 registered repos have
+a `local_path` and 70% or more of them share a parent-directory nesting pattern that the
+new target doesn't match, a suggested conventional-equivalent path is printed to stderr.
+This is advisory only -- it never blocks, never prompts, and never fails the command. It
+stays silent with too few registry entries to infer a pattern confidently, so a repo-scaffold
+user with no established convention yet never sees it. It reads the registry without
+triggering the legacy-registry migration above (`create`/`init` are not registry commands).
+
 ---
 
 ## Docker dev environment

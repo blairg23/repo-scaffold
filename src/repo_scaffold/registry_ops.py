@@ -80,9 +80,14 @@ def _migrate_legacy_registry(target: Path) -> Path:
     return target
 
 
-def load_registry(path: Path | None = None) -> dict[str, RegistryEntry]:
+def load_registry(
+    path: Path | None = None, *, migrate: bool = True
+) -> dict[str, RegistryEntry]:
     target = path or registry_path()
-    target = _migrate_legacy_registry(target)
+    if migrate:
+        target = _migrate_legacy_registry(target)
+    elif not target.exists() and target != _LEGACY_REGISTRY_PATH:
+        target = _LEGACY_REGISTRY_PATH
     if not target.exists():
         return {}
     try:

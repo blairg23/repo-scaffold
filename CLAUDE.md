@@ -214,6 +214,13 @@ All GitHub operations (repos, issues, PRs, projects, backlog) are implemented vi
 than a home-directory file. Override with `REPO_SCAFFOLD_REGISTRY_PATH`. An existing
 `~/.repo-scaffold/registry.json` is migrated automatically on first use.
 
+`create --path` and `init --out` compare their target against the layout pattern the
+registry's existing `local_path` entries already follow (e.g. `<wrapper>/src/<repo-name>/`).
+With at least 3 registered repos where 70%+ share a nesting pattern the new target doesn't
+match, a suggested conventional-equivalent path is printed to stderr -- advisory only, never
+blocking, silent with too few entries to infer a pattern. Reads the registry without
+triggering the legacy-registry migration (these are not registry commands).
+
 
 # Branch Workflow
 
