@@ -55,22 +55,6 @@ jobs:
               labels: ["needs-format"],
             });
 
-            // Avoid posting a duplicate notice on every edit while the issue
-            // stays malformed -- only comment once, when the notice isn't
-            // already there (see #301, the identical fix in validate-pr.yml).
-            const existingComments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: number,
-            });
-            const alreadyNotified = existingComments.some(
-              c => c.user?.type === "Bot" && (c.body || "").includes(MISSING_SECTIONS_MARKER)
-            );
-            if (alreadyNotified) {
-              core.info(`Issue #${number} already has the missing-sections notice; skipping duplicate comment.`);
-              return;
-            }
-
             // Relative markdown links in a comment resolve against the comment's
             // own URL (.../issues/<n>), not the repo root, so a plain relative
             // path 404s instead of opening the template. Build an absolute blob
@@ -78,14 +62,47 @@ jobs:
             const ref = context.payload.repository.default_branch;
             const repoBlobUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${ref}`;
 
+            const noticeBody = [
+              MISSING_SECTIONS_MARKER,
+              ...missing.map(h => `- \`${h}\``),
+              "",
+              `Please update the body to match the [epic template](${repoBlobUrl}/.github/ISSUE_TEMPLATE/epic.md) or [ticket template](${repoBlobUrl}/.github/ISSUE_TEMPLATE/ticket.md).`,
+            ].join("\n");
+
+            // Avoid posting a duplicate notice on every edit while the issue
+            // stays malformed -- but an edit can change *which* sections are
+            // missing (e.g. Title added, Summary removed), so a marker-only
+            // match isn't enough: compare the full notice text and update
+            // the existing comment in place if it's gone stale, rather than
+            // treating any historical marker match as still current (see
+            // #301, the identical fix in validate-pr.yml).
+            const existingComments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+            });
+            const existingNotice = existingComments.find(
+              c => c.user?.type === "Bot" && (c.body || "").includes(MISSING_SECTIONS_MARKER)
+            );
+
+            if (existingNotice) {
+              if (existingNotice.body === noticeBody) {
+                core.info(`Issue #${number} already has the current missing-sections notice; skipping duplicate comment.`);
+                return;
+              }
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingNotice.id,
+                body: noticeBody,
+              });
+              core.info(`Issue #${number} missing sections changed; updated the existing notice instead of posting a new one.`);
+              return;
+            }
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: number,
-              body: [
-                MISSING_SECTIONS_MARKER,
-                ...missing.map(h => `- \`${h}\``),
-                "",
-                `Please update the body to match the [epic template](${repoBlobUrl}/.github/ISSUE_TEMPLATE/epic.md) or [ticket template](${repoBlobUrl}/.github/ISSUE_TEMPLATE/ticket.md).`,
-              ].join("\n"),
+              body: noticeBody,
             });
