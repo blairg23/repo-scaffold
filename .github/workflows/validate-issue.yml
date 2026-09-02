@@ -17,6 +17,7 @@ jobs:
           script: |
             const body = context.payload.issue.body || "";
             const number = context.payload.issue.number;
+            const MISSING_SECTIONS_MARKER = "This issue is missing required template sections:";
 
             const required = ["## 🧾 Title", "## 🧠 Summary"];
             const missing = required.filter(h => !body.includes(h));
@@ -54,6 +55,22 @@ jobs:
               labels: ["needs-format"],
             });
 
+            // Avoid posting a duplicate notice on every edit while the issue
+            // stays malformed -- only comment once, when the notice isn't
+            // already there (see #301, the identical fix in validate-pr.yml).
+            const existingComments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+            });
+            const alreadyNotified = existingComments.some(
+              c => c.user?.type === "Bot" && (c.body || "").includes(MISSING_SECTIONS_MARKER)
+            );
+            if (alreadyNotified) {
+              core.info(`Issue #${number} already has the missing-sections notice; skipping duplicate comment.`);
+              return;
+            }
+
             // Relative markdown links in a comment resolve against the comment's
             // own URL (.../issues/<n>), not the repo root, so a plain relative
             // path 404s instead of opening the template. Build an absolute blob
@@ -66,7 +83,7 @@ jobs:
               repo: context.repo.repo,
               issue_number: number,
               body: [
-                "This issue is missing required template sections:",
+                MISSING_SECTIONS_MARKER,
                 ...missing.map(h => `- \`${h}\``),
                 "",
                 `Please update the body to match the [epic template](${repoBlobUrl}/.github/ISSUE_TEMPLATE/epic.md) or [ticket template](${repoBlobUrl}/.github/ISSUE_TEMPLATE/ticket.md).`,
