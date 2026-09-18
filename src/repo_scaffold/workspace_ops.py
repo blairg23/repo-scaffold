@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 import subprocess
-import urllib.request
 from pathlib import Path
+
+from .auth_ops import configure_auth, github_username
+
+# Relocated to auth_ops (see #316). Bound here so the deprecated workspace
+# CLI path keeps working until the group is removed.
+workspace_configure_auth = configure_auth
 
 
 def _run(
@@ -129,22 +133,6 @@ def _copy_ignored_files(source: Path, dest: Path) -> list[str]:
     return copied
 
 
-def _github_username(token: str) -> str:
-    """Return the GitHub login for this token, or 'x-token' if unreachable."""
-    try:
-        req = urllib.request.Request(
-            "https://api.github.com/user",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github.v3+json",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read()).get("login", "x-token")
-    except Exception:
-        return "x-token"
-
-
 def _setup_bare_auth(bare: Path, token: str) -> None:
     """Configure the bare repo to authenticate without Windows Credential Manager.
 
@@ -152,7 +140,7 @@ def _setup_bare_auth(bare: Path, token: str) -> None:
     configures the local credential.helper to use git-credential-store, bypassing
     the system-level 'manager' (GCM) helper that hangs in non-interactive contexts.
     """
-    username = _github_username(token)
+    username = github_username(token)
     creds_file = bare / ".git-credentials"
     # LF-only: git-credential-store rejects CRLF-terminated entries on Windows
     creds_file.write_bytes(f"https://{username}:{token}@github.com\n".encode())
@@ -175,49 +163,6 @@ def _setup_bare_auth(bare: Path, token: str) -> None:
         cwd=bare,
         bare=True,
     )
-
-
-def workspace_configure_auth(
-    token: str,
-    path: Path | None = None,
-) -> subprocess.CompletedProcess[str]:
-    """Configure git credential-store for a regular (non-bare) working tree.
-
-    Writes credentials to .git/.git-credentials (inside the .git dir, never tracked)
-    and configures the local credential.helper chain to bypass Windows Credential
-    Manager (GCM) in non-interactive contexts. Safe to run multiple times -- clears
-    any accumulated helper entries before writing fresh config.
-    """
-    worktree = (path or Path.cwd()).resolve()
-    git_dir = worktree / ".git"
-    if not git_dir.is_dir():
-        return _err(f"Not a git repository: {worktree}")
-
-    username = _github_username(token)
-    creds_file = git_dir / ".git-credentials"
-    # LF-only, no BOM: git-credential-store rejects BOM and CRLF on all platforms
-    creds_file.write_bytes(f"https://{username}:{token}@github.com\n".encode())
-    try:
-        creds_file.chmod(0o600)
-    except NotImplementedError:
-        pass
-
-    creds_posix = creds_file.as_posix()
-    # Clear any accumulated local helpers (idempotent -- exit 5 = key not found = ok)
-    _run(["git", "config", "--unset-all", "credential.helper"], cwd=worktree)
-    # Empty string resets the credential helper list, overriding the system GCM
-    _run(["git", "config", "credential.helper", ""], cwd=worktree)
-    _run(
-        [
-            "git",
-            "config",
-            "--add",
-            "credential.helper",
-            f'store --file "{creds_posix}"',
-        ],
-        cwd=worktree,
-    )
-    return _ok(f"Configured credential-store for {worktree}")
 
 
 def workspace_create(
