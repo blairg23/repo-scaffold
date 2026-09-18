@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 from repo_scaffold.credentials_ops import (
+    ConfigReadError,
     check_repository_credentials,
+    scan_git_config,
     redact,
     strip_url_secret,
     url_has_secret,
@@ -259,3 +261,96 @@ def test_strip_url_secret_is_a_noop_on_clean_urls() -> None:
 def test_redact_masks_an_unparseable_value_entirely() -> None:
     """A bare token does not parse as a URL, so mask all of it rather than guess."""
     assert SECRET not in redact(SECRET)
+
+
+def test_credentialed_pushurl_is_flagged(repo: Path) -> None:
+    """`remote set-url --push` is a common push-only credential configuration."""
+    _git("remote", "add", "origin", "https://github.com/o/r.git", cwd=repo)
+    _git(
+        "remote",
+        "set-url",
+        "--add",
+        "--push",
+        "origin",
+        f"https://alice:{SECRET}@github.com/o/r.git",
+        cwd=repo,
+    )
+
+    summary = check_repository_credentials(repo_dir=repo, repo="o/r")
+
+    assert [f.key for f in summary.findings] == ["remote.origin.pushurl"]
+
+
+def test_fix_strips_credentials_from_pushurl(repo: Path) -> None:
+    _git("remote", "add", "origin", "https://github.com/o/r.git", cwd=repo)
+    _git(
+        "remote",
+        "set-url",
+        "--add",
+        "--push",
+        "origin",
+        f"https://alice:{SECRET}@github.com/o/r.git",
+        cwd=repo,
+    )
+
+    check_repository_credentials(
+        repo_dir=repo, repo="o/r", fix=True, out=lambda _: None
+    )
+
+    assert check_repository_credentials(repo_dir=repo, repo="o/r").clean
+
+
+def _write_included_config(path, secret):
+    """Write a config file whose remote carries a credential.
+
+    Built with explicit newline joins rather than an escaped literal so the
+    fixture stays readable and does not depend on escaping surviving edits.
+    """
+    lines = [
+        '[remote "sneaky"]',
+        "\turl = https://alice:" + secret + "@github.com/o/r.git",
+        "",
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def test_credential_pulled_in_by_include_is_flagged(repo: Path, tmp_path: Path) -> None:
+    """`--file` ignores includes by default, but git still honours them."""
+    included = tmp_path / "extra.cfg"
+    _write_included_config(included, SECRET)
+    _git("config", "include.path", str(included), cwd=repo)
+
+    summary = check_repository_credentials(repo_dir=repo, repo="o/r")
+
+    assert [f.key for f in summary.findings] == ["remote.sneaky.url"]
+
+
+def test_finding_points_at_the_included_file_not_the_includer(
+    repo: Path, tmp_path: Path
+) -> None:
+    """A finding has to name the file that actually needs editing."""
+    included = tmp_path / "extra.cfg"
+    _write_included_config(included, SECRET)
+    _git("config", "include.path", str(included), cwd=repo)
+
+    summary = check_repository_credentials(repo_dir=repo, repo="o/r")
+
+    assert summary.findings[0].config_path == included
+
+
+def test_unreadable_config_is_an_error_not_a_pass(repo: Path) -> None:
+    """A config git cannot parse means the repo was never actually checked."""
+    (repo / ".git" / "config").write_text('[remote "o"\n  url = x\n', encoding="utf-8")
+
+    summary = check_repository_credentials(repo_dir=repo, repo="o/r")
+
+    assert summary.errors
+    assert not summary.clean
+
+
+def test_scan_git_config_raises_on_unreadable_file(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.cfg"
+    bad.write_text("[section\n", encoding="utf-8")
+
+    with pytest.raises(ConfigReadError):
+        scan_git_config(bad)
