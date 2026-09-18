@@ -30,7 +30,9 @@ _URL_USERINFO = re.compile(
 # Config keys git reports in lowercase; extraheader is only a finding when it
 # carries an actual authorization value.
 _EXTRAHEADER_KEY = re.compile(r"^http\..*\.extraheader$|^http\.extraheader$")
-_REMOTE_URL_KEY = re.compile(r"^remote\.(?P<name>.+)\.url$")
+# `pushurl` is as effective as `url` for pushes and is equally visible in
+# `git remote -v`, so a push-only credential must be a finding too.
+_REMOTE_URL_KEY = re.compile(r"^remote\.(?P<name>.+)\.(?P<kind>pushurl|url)$")
 
 _AUTHORIZATION = re.compile(r"authorization\s*:", re.IGNORECASE)
 
@@ -51,10 +53,12 @@ class CredentialsCheckSummary:
     fixed: list[str] = field(default_factory=list)
     scanned: list[Path] = field(default_factory=list)
     skipped: str | None = None
+    errors: list[str] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
-        return not self.findings
+        """Clean means checked and nothing found. An unreadable config is not clean."""
+        return not self.findings and not self.errors
 
 
 def redact(value: str) -> str:
@@ -99,26 +103,54 @@ def strip_url_secret(url: str) -> str:
     return f"{match.group('scheme')}{match.group('rest')}"
 
 
-def _git_config_entries(config_path: Path) -> list[tuple[str, str]]:
-    """Read one git config file as (key, value) pairs, lowercased keys.
+class ConfigReadError(RuntimeError):
+    """git could not read a config file we were asked to scan.
 
-    Uses git itself rather than an ad-hoc parser so includes, quoting and
-    section/subsection syntax behave exactly as git would interpret them.
+    Raised rather than swallowed: an unreadable config means the repository was
+    never actually checked, and reporting that as PASS would be worse than
+    reporting nothing at all.
+    """
+
+
+def _git_config_entries(config_path: Path) -> list[tuple[Path, str, str]]:
+    """Read a git config as (source_file, key, value), keys lowercased.
+
+    Uses git itself rather than an ad-hoc parser so quoting and
+    section/subsection syntax behave exactly as git interprets them.
+
+    `--includes` matters for correctness: `--file` does not follow include
+    directives by default, so a config that pulls a credentialed remote in via
+    `include.path` would be live (and visible in `git remote -v`) while scanning
+    clean. `--show-origin` then reports which file each entry actually came
+    from, so a finding points at the file that needs editing rather than at the
+    config that included it.
     """
     cp = subprocess.run(
-        ["git", "config", "--file", str(config_path), "--list", "--null"],
+        [
+            "git",
+            "config",
+            "--file",
+            str(config_path),
+            "--list",
+            "--includes",
+            "--show-origin",
+            "--null",
+        ],
         capture_output=True,
         text=True,
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
     )
     if cp.returncode != 0:
-        return []
-    entries: list[tuple[str, str]] = []
-    for record in cp.stdout.split("\0"):
-        if not record:
-            continue
+        raise ConfigReadError(
+            f"could not read {config_path}: {cp.stderr.strip() or 'git config failed'}"
+        )
+    # Stream shape: origin NUL key LF value NUL origin NUL key LF value NUL ...
+    tokens = [t for t in cp.stdout.split("\0") if t != ""]
+    entries: list[tuple[Path, str, str]] = []
+    for origin, record in zip(tokens[::2], tokens[1::2]):
         key, _, value = record.partition("\n")
-        entries.append((key.strip().lower(), value))
+        source = origin[len("file:") :] if origin.startswith("file:") else origin
+        entries.append((Path(source), key.strip().lower(), value))
     return entries
 
 
@@ -144,26 +176,21 @@ def _config_paths(repo_dir: Path) -> list[Path]:
 
 
 def scan_git_config(config_path: Path) -> list[CredentialFinding]:
-    """Findings for a single git config file."""
+    """Findings for a git config, following includes.
+
+    Raises ConfigReadError if git cannot read the file.
+    """
     findings: list[CredentialFinding] = []
-    for key, value in _git_config_entries(config_path):
+    for source, key, value in _git_config_entries(config_path):
         remote = _REMOTE_URL_KEY.match(key)
         if remote and url_has_secret(value):
             findings.append(
-                CredentialFinding(
-                    config_path=config_path,
-                    key=key,
-                    detail=redact(value),
-                )
+                CredentialFinding(config_path=source, key=key, detail=redact(value))
             )
             continue
         if _EXTRAHEADER_KEY.match(key) and _AUTHORIZATION.search(value):
             findings.append(
-                CredentialFinding(
-                    config_path=config_path,
-                    key=key,
-                    detail=redact(value),
-                )
+                CredentialFinding(config_path=source, key=key, detail=redact(value))
             )
     return findings
 
@@ -195,7 +222,10 @@ def check_repository_credentials(
         return summary
 
     for config_path in summary.scanned:
-        summary.findings.extend(scan_git_config(config_path))
+        try:
+            summary.findings.extend(scan_git_config(config_path))
+        except ConfigReadError as exc:
+            summary.errors.append(str(exc))
 
     if fix and summary.findings:
         _apply_fixes(summary=summary, repo=repo, out=out)
@@ -228,7 +258,16 @@ def _apply_fixes(
         remote = _REMOTE_URL_KEY.match(finding.key)
         if remote:
             name = remote.group("name")
-            if name == "origin" and work_dir.joinpath(".git").is_dir():
+            # _ensure_origin_remote only knows about `url` on a real checkout's own
+            # config. A pushurl, or an entry that came from an included file, has to
+            # go through the generic strip so the edit lands on the right key in the
+            # right file.
+            canonical_origin = (
+                name == "origin"
+                and remote.group("kind") == "url"
+                and finding.config_path == work_dir / ".git" / "config"
+            )
+            if canonical_origin and work_dir.joinpath(".git").is_dir():
                 _ensure_origin_remote(
                     repo_dir=work_dir,
                     env=env,

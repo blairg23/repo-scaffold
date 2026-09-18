@@ -2549,6 +2549,7 @@ def main(argv: list[str] | None = None) -> int:
             print(targets_error, file=sys.stderr)
             return 2
         total_findings = 0
+        read_errors = 0
         for target_repo, repo_dir in targets:
             creds_summary: CredentialsCheckSummary = check_repository_credentials(
                 repo_dir=repo_dir,
@@ -2559,6 +2560,9 @@ def main(argv: list[str] | None = None) -> int:
             if creds_summary.skipped:
                 print(f"SKIP  {target_repo} ({creds_summary.skipped})")
                 continue
+            for message in creds_summary.errors:
+                print(f"ERROR {target_repo}: {message}", file=sys.stderr)
+                read_errors += 1
             if creds_summary.clean:
                 print(f"PASS  {target_repo}")
                 continue
@@ -2570,7 +2574,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"FOUND {target_repo} ({len(creds_summary.findings)} entrie(s))")
                 total_findings += len(creds_summary.findings)
-        return 1 if total_findings > 0 else 0
+        return 1 if (total_findings > 0 or read_errors) else 0
 
     if ns.mode == "repo" and ns.repo_command == "register":
         entry: RegistryEntry = register_repo(ns.repo, ns.path, ns.notes)
