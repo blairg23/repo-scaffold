@@ -73,9 +73,14 @@ def configure_auth(
     are cleared before fresh config is written.
     """
     worktree = (path or Path.cwd()).resolve()
-    git_dir = worktree / ".git"
-    if not git_dir.is_dir():
+    # A linked worktree (git worktree add, which is what workspace_create produces)
+    # has .git as a *file* pointing at the real git dir, so testing for a directory
+    # would reject exactly the checkouts this command was built to serve. Ask git
+    # where its directory actually is instead.
+    resolved = _run(["git", "rev-parse", "--absolute-git-dir"], cwd=worktree)
+    if resolved.returncode != 0:
         return _err(f"Not a git repository: {worktree}")
+    git_dir = Path(resolved.stdout.strip())
 
     if not token:
         return _err(

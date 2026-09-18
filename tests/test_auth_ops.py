@@ -9,7 +9,7 @@ import pytest
 
 from repo_scaffold import auth_ops
 from repo_scaffold.auth_ops import configure_auth
-from repo_scaffold.cli import build_parser, main
+from repo_scaffold.cli import _token_for_auth_path, build_parser, main
 
 TOKEN = "ghp_ExampleSecretValue0123456789abcd"
 
@@ -131,3 +131,67 @@ def test_workspace_ops_no_longer_owns_the_implementation() -> None:
     from repo_scaffold import workspace_ops
 
     assert workspace_ops.workspace_configure_auth is configure_auth
+
+
+def test_linked_worktree_is_accepted(tmp_path: Path) -> None:
+    """`git worktree add` makes .git a file, and those are the checkouts this serves."""
+    main_repo = tmp_path / "main"
+    main_repo.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "."], cwd=main_repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=a@b",
+            "-c",
+            "user.name=a",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        cwd=main_repo,
+        check=True,
+        capture_output=True,
+    )
+    linked = tmp_path / "linked"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", str(linked), "-b", "feature"],
+        cwd=main_repo,
+        check=True,
+        capture_output=True,
+    )
+    assert (linked / ".git").is_file()  # the condition that used to be rejected
+
+    cp = configure_auth(TOKEN, path=linked)
+
+    assert cp.returncode == 0
+
+
+def test_target_env_token_beats_ambient_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--path at another repo must not install the current checkout's PAT.
+
+    token_from_repo seeds from os.environ and applies .env only via setdefault,
+    so without an independent read the ambient token silently wins.
+    """
+    target = tmp_path / "repo_b"
+    target.mkdir()
+    (target / ".env").write_text("GH_TOKEN=ghp_target_repo_token\n", encoding="utf-8")
+    monkeypatch.setenv("GH_TOKEN", "ghp_ambient_repo_a_token")
+
+    assert _token_for_auth_path(target) == "ghp_target_repo_token"
+
+
+def test_ambient_token_is_used_when_target_has_no_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "repo_c"
+    target.mkdir()
+    monkeypatch.setenv("GH_TOKEN", "ghp_ambient_only")
+
+    assert _token_for_auth_path(target) == "ghp_ambient_only"

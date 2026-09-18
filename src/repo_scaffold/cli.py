@@ -244,19 +244,31 @@ def _resolve_repo_from_args_or_env(
     )
 
 
-def _dispatch_configure_auth(auth_path_arg: str | None) -> int:
-    """Shared by `auth configure` and the deprecated `workspace configure-auth`.
+def _token_for_auth_path(auth_path: Path | None) -> str:
+    """Resolve the token to install, preferring the target checkout's own .env.
 
-    Resolves the token from the target repo's own .env first so pointing --path
-    at another checkout uses that checkout's credentials, falling back to the
-    cwd's .env.
+    token_from_repo seeds itself from os.environ and applies a repo's .env only
+    via setdefault, so an ambient GH_TOKEN (which is already present for the
+    checkout we are running from) wins over the .env of whatever --path points
+    at. That would quietly write repo A's PAT into repo B's credential store.
+    Read the target's .env directly first, and fall back to ambient resolution
+    only when it has none.
     """
+    from .github_api import _load_env_file, resolve_token
+
+    if auth_path is not None:
+        own = resolve_token(_load_env_file(auth_path / ".env"))
+        if own:
+            return own
+    return token_from_repo(auth_path or Path.cwd()) or ""
+
+
+def _dispatch_configure_auth(auth_path_arg: str | None) -> int:
+    """Shared by `auth configure` and the deprecated `workspace configure-auth`."""
     from .auth_ops import configure_auth
 
     auth_path = Path(auth_path_arg).resolve() if auth_path_arg else None
-    token = (
-        (auth_path and token_from_repo(auth_path)) or token_from_repo(Path.cwd()) or ""
-    )
+    token = _token_for_auth_path(auth_path)
     cp = configure_auth(token, path=auth_path)
     if cp.returncode != 0:
         print(cp.stderr.strip(), file=sys.stderr)
