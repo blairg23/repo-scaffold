@@ -504,11 +504,15 @@ def _minimal_dependabot_yml(languages: list[str] | None) -> str:
             ecosystems[eco] = "/"
     entries = []
     for eco, directory in ecosystems.items():
+        prefix = "ci" if eco == "github-actions" else "build"
         entries += [
             f'  - package-ecosystem: "{eco}"',
             f'    directory: "{directory}"',
             "    schedule:",
             '      interval: "weekly"',
+            "    commit-message:",
+            f'      prefix: "{prefix}"',
+            '      include: "scope"',
         ]
     return "version: 2\nupdates:\n" + "\n".join(entries) + "\n"
 
