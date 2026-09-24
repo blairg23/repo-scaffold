@@ -284,6 +284,10 @@ poetry run repo-scaffold create --repo OWNER/REPO --visibility public --path /pa
 poetry run repo-scaffold init --name NAME --languages go,gin,python,react --owner OWNER --out /path --yes
 
 # Apply CI workflows to an existing repo
+# Also installs release-please (workflow + release-please-config.json +
+# .release-please-manifest.json) and the PR-conventions checks. The manifest is
+# create-only: re-running apply ci never resets a released version, even with
+# --yes/--force. See AGENTS.md "Releases (release-please)".
 poetry run repo-scaffold apply ci --path . --languages go,gin,python,react
 
 # Apply issue/PR templates to an existing repo
@@ -494,6 +498,77 @@ four steps, refresh it manually:
 ```bash
 poetry run repo-scaffold pr rerun --repo OWNER/REPO --pr-number N --failed-only
 ```
+
+---
+
+## Releases (release-please)
+
+Repos created by `init`, or given `apply ci`, release with
+[release-please](https://github.com/googleapis/release-please). Merging a
+Conventional Commits PR to `main` opens or updates a release PR; merging that
+tags the release and publishes GitHub release notes.
+
+The notes carry a full trail for every completed ticket. The ruleset baseline
+squash-merges with the PR title as the commit subject, repo-scaffold PR titles end
+in `(#ticket)`, and the squash appends the PR number, so each changelog line reads
+`* **scope:** description (#ticket) (#pr) (sha)`.
+
+**Files it adds**
+
+| File | Purpose |
+|---|---|
+| `.github/workflows/release-please.yml` | Runs release-please on every push to `main` |
+| `release-please-config.json` | Release type, changelog sections, tag format |
+| `.release-please-manifest.json` | Last released version. **State owned by release-please**: created when missing and never overwritten, even by `apply ci --yes`/`--force`, so re-applying cannot roll a released repo back. Delete it to regenerate on purpose. |
+| `.github/workflows/pr-conventions.yml` | The `conventional-title` and `ticket-link` checks |
+
+**Release type** is picked from the repo: `python` when Python is selected,
+`node` when a `package.json` sits at the repo root, otherwise `simple`. A React
+app in `web/` is released as `simple` with `web/package.json` bumped through
+`extra-files`, because release-please's node strategy expects `package.json` at
+the package root. The manifest is seeded from the version the repo already
+declares (`pyproject.toml`, then `package.json`, then `web/package.json`),
+defaulting to `0.1.0`.
+
+**Changelog sections** are visible for every PR type (`feat`, `fix`, `perf`,
+`revert`, `refactor`, `docs`, `test`, `chore`) and hidden for `build`, `ci` and
+`style`. Dependabot is configured to title its PRs `build(deps)` and `ci(deps)`,
+so dependency bumps never clutter the notes or cut a release on their own.
+
+**PR conventions** (both are separate status checks):
+
+- `conventional-title` fails unless the PR title is a Conventional Commit.
+  Dependabot PRs skip it: a repo opting in keeps its own `dependabot.yml`,
+  which may not set Conventional Commits prefixes (a skipped job still
+  satisfies a required check).
+- `ticket-link` fails unless the PR body closes an issue (`Closes #N`,
+  `Fixes owner/repo#N`, or an issue URL; any GitHub closing keyword). Same-repo
+  references must be real issues, not PRs. HTML comments are ignored, so the PR
+  template's placeholder does not count. Ticket-less by design and exempt:
+  Dependabot, release-please's own release PRs, and repo-scaffold's sync branches
+  (`chore/sync-templates`, `chore/sync-configs`, `chore/add-dependabot-yml`).
+
+Both become **required status checks** in the managed ruleset whenever the repo
+has `pr-conventions.yml`, so `apply ci --repo` makes them blocking and `check
+rules` reports them as drift if missing. Repos without the workflow are never
+required to report them, since a required check no workflow runs would block
+every PR.
+
+**Token.** `GITHUB_TOKEN` by default. Events created with `GITHUB_TOKEN` do not
+trigger other workflows, so a release PR opened that way gets no CI runs, and if
+the ruleset requires status checks it cannot merge until something re-triggers
+them (close and reopen it, or push to its branch). To avoid that, give the repo a
+GitHub App:
+
+- repository **variable** `RELEASE_PLEASE_CLIENT_ID`: the App's client ID
+- repository **secret** `RELEASE_PLEASE_PRIVATE_KEY`: the App's private key
+
+The workflow mints a short-lived App token when the variable is set and falls back
+to `GITHUB_TOKEN` otherwise. The App needs Contents, Pull requests and Issues
+read/write. Choosing which App to use is a separate decision.
+
+Existing repos are not changed by `sync templates`; run `apply ci` on a repo to
+opt it in.
 
 ---
 
