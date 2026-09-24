@@ -538,12 +538,21 @@ so dependency bumps never clutter the notes or cut a release on their own.
 **PR conventions** (both are separate status checks):
 
 - `conventional-title` fails unless the PR title is a Conventional Commit.
+  Dependabot PRs skip it: a repo opting in keeps its own `dependabot.yml`,
+  which may not set Conventional Commits prefixes (a skipped job still
+  satisfies a required check).
 - `ticket-link` fails unless the PR body closes an issue (`Closes #N`,
   `Fixes owner/repo#N`, or an issue URL; any GitHub closing keyword). Same-repo
   references must be real issues, not PRs. HTML comments are ignored, so the PR
   template's placeholder does not count. Ticket-less by design and exempt:
   Dependabot, release-please's own release PRs, and repo-scaffold's sync branches
   (`chore/sync-templates`, `chore/sync-configs`, `chore/add-dependabot-yml`).
+
+Both become **required status checks** in the managed ruleset whenever the repo
+has `pr-conventions.yml`, so `apply ci --repo` makes them blocking and `check
+rules` reports them as drift if missing. Repos without the workflow are never
+required to report them, since a required check no workflow runs would block
+every PR.
 
 **Token.** `GITHUB_TOKEN` by default. Events created with `GITHUB_TOKEN` do not
 trigger other workflows, so a release PR opened that way gets no CI runs, and if

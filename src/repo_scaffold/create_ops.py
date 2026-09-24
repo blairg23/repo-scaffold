@@ -133,11 +133,42 @@ _LANGUAGE_CI_CONTEXT: dict[str, list[str]] = {
 
 _ALWAYS_REQUIRED_CONTEXTS: list[str] = ["check-sop", "validate-pr"]
 
+# Job names from pr-conventions.yml. Required only when that workflow is present:
+# a required context that no workflow ever reports blocks every PR forever, so
+# repos that have not opted in via `apply ci` must not get them.
+_PR_CONVENTIONS_WORKFLOW = ".github/workflows/pr-conventions.yml"
+_PR_CONVENTION_CONTEXTS: list[str] = ["conventional-title", "ticket-link"]
+
+
+def _has_pr_conventions(repo_dir: Path) -> bool:
+    return (repo_dir / _PR_CONVENTIONS_WORKFLOW).is_file()
+
+
+def _required_status_contexts(
+    languages: list[str] | None,
+    *,
+    include_pr_conventions: bool = False,
+) -> list[str]:
+    """Status checks the managed ruleset requires.
+
+    The single source for both applying the ruleset and detecting drift, so
+    the two can never disagree about what "required" means.
+    """
+    contexts = list(_ALWAYS_REQUIRED_CONTEXTS)
+    if include_pr_conventions:
+        contexts.extend(_PR_CONVENTION_CONTEXTS)
+    for lang in dict.fromkeys(languages or []):
+        for ctx in _LANGUAGE_CI_CONTEXT.get(lang, []):
+            if ctx not in contexts:
+                contexts.append(ctx)
+    return contexts
+
 
 def _default_branch_ruleset_payload(
     languages: list[str] | None = None,
     *,
     include_code_quality: bool = True,
+    include_pr_conventions: bool = False,
 ) -> str:
     rules: list[dict[str, object]] = [
         {"type": "creation"},
@@ -192,12 +223,9 @@ def _default_branch_ruleset_payload(
         }
     )
 
-    contexts = list(_ALWAYS_REQUIRED_CONTEXTS)
-    if languages:
-        for lang in dict.fromkeys(languages):
-            for ctx in _LANGUAGE_CI_CONTEXT.get(lang, []):
-                if ctx not in contexts:
-                    contexts.append(ctx)
+    contexts = _required_status_contexts(
+        languages, include_pr_conventions=include_pr_conventions
+    )
     rules.append(
         {
             "type": "required_status_checks",
@@ -449,9 +477,14 @@ def _sync_default_branch_ruleset(
             return False
         raise RuntimeError(err or f"Failed applying managed ruleset ({method}).")
 
-    payload = _default_branch_ruleset_payload(languages=languages)
+    pr_conventions = _has_pr_conventions(repo_dir)
+    payload = _default_branch_ruleset_payload(
+        languages=languages, include_pr_conventions=pr_conventions
+    )
     fallback_payload = _default_branch_ruleset_payload(
-        languages=languages, include_code_quality=False
+        languages=languages,
+        include_code_quality=False,
+        include_pr_conventions=pr_conventions,
     )
 
     if managed_rulesets:
@@ -1315,6 +1348,7 @@ def _compare_ruleset_against_baseline(
     *,
     default_branch: str,
     languages: list[str] | None = None,
+    include_pr_conventions: bool = False,
 ) -> list[str]:
     drifts: list[str] = []
     managed_rulesets = [
@@ -1463,12 +1497,9 @@ def _compare_ruleset_against_baseline(
                         f"copilot_code_review.{key} expected {expected!r} got {actual!r}"
                     )
 
-    expected_contexts = list(_ALWAYS_REQUIRED_CONTEXTS)
-    if languages:
-        for lang in dict.fromkeys(languages):
-            for ctx in _LANGUAGE_CI_CONTEXT.get(lang, []):
-                if ctx not in expected_contexts:
-                    expected_contexts.append(ctx)
+    expected_contexts = _required_status_contexts(
+        languages, include_pr_conventions=include_pr_conventions
+    )
 
     status_checks_rule = rule_map.get("required_status_checks")
     if not isinstance(status_checks_rule, dict):
@@ -2028,6 +2059,7 @@ def _check_settings(
         detailed_rulesets,
         default_branch=default_branch,
         languages=languages,
+        include_pr_conventions=_has_pr_conventions(repo_dir),
     )
     if ruleset_drifts:
         failed += 1
