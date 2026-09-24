@@ -1,0 +1,46 @@
+name: release-please
+
+# Opens and maintains a release PR from Conventional Commits merged to main.
+# Merging that PR tags the release and publishes GitHub release notes.
+#
+# Token: GITHUB_TOKEN by default. A release PR opened with GITHUB_TOKEN does not
+# trigger other workflows, so its CI checks never run on their own; if the
+# ruleset requires status checks, close and reopen the PR (or push to its branch)
+# to run them. To avoid that, set a GitHub App:
+#   - repository variable RELEASE_PLEASE_CLIENT_ID  (the App's client ID)
+#   - repository secret   RELEASE_PLEASE_PRIVATE_KEY (the App's private key)
+# The App needs Contents and Pull requests read/write, and Issues read/write.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        if: ${{ vars.RELEASE_PLEASE_CLIENT_ID != '' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
+
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

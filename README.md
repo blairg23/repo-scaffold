@@ -610,7 +610,11 @@ See [AGENTS.md](AGENTS.md) for the full branch naming convention, PR title forma
     workflows/
       ci.yml
       codeql.yml
+      pr-conventions.yml   # conventional-title + ticket-link checks
+      release-please.yml
     dependabot.yml
+  release-please-config.json
+  .release-please-manifest.json   # release-please state; never overwritten
   pyproject.toml   # when python selected
   tox.ini          # when python selected
   go.mod           # when go selected
