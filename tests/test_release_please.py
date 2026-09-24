@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -362,3 +363,126 @@ def test_apply_rules_dependabot_uses_conventional_prefixes() -> None:
     assert 'prefix: "ci"' in text
     assert 'prefix: "build"' in text
     assert text.count('include: "scope"') == text.count("package-ecosystem")
+
+
+# ------------------------------------------- required status checks (#322)
+
+
+def _required(payload: str) -> list[str]:
+    ruleset = json.loads(payload)
+    rule = next(r for r in ruleset["rules"] if r["type"] == "required_status_checks")
+    return [c["context"] for c in rule["parameters"]["required_status_checks"]]
+
+
+def _status_drifts(ruleset: dict, *, include: bool) -> list[str]:
+    drifts = create_ops._compare_ruleset_against_baseline(
+        [ruleset],
+        default_branch="main",
+        languages=["python"],
+        include_pr_conventions=include,
+    )
+    return [d for d in drifts if "required_status_checks" in d]
+
+
+def test_convention_checks_are_not_required_without_the_workflow() -> None:
+    """A required context no workflow reports would block every PR forever."""
+    contexts = _required(create_ops._default_branch_ruleset_payload(["python"]))
+
+    assert "conventional-title" not in contexts
+    assert "ticket-link" not in contexts
+
+
+def test_convention_checks_are_required_with_the_workflow() -> None:
+    contexts = _required(
+        create_ops._default_branch_ruleset_payload(
+            ["python"], include_pr_conventions=True
+        )
+    )
+
+    assert {"conventional-title", "ticket-link"} <= set(contexts)
+    assert {"check-sop", "validate-pr"} <= set(contexts)
+
+
+def test_has_pr_conventions_follows_the_workflow_file(tmp_path: Path) -> None:
+    assert not create_ops._has_pr_conventions(tmp_path)
+
+    workflow = tmp_path / ".github" / "workflows" / "pr-conventions.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: PR conventions\n", encoding="utf-8")
+
+    assert create_ops._has_pr_conventions(tmp_path)
+
+
+def test_payload_and_drift_check_agree() -> None:
+    """Both paths share one context list, so a ruleset we apply is never drift."""
+    ruleset = json.loads(
+        create_ops._default_branch_ruleset_payload(
+            ["python"], include_pr_conventions=True
+        )
+    )
+
+    assert _status_drifts(ruleset, include=True) == []
+
+
+def test_drift_flags_convention_checks_missing_from_an_opted_in_repo() -> None:
+    ruleset = json.loads(create_ops._default_branch_ruleset_payload(["python"]))
+
+    drifts = _status_drifts(ruleset, include=True)
+
+    assert drifts
+    assert "conventional-title" in drifts[0]
+    assert "ticket-link" in drifts[0]
+
+
+def test_repo_without_the_workflow_reports_no_convention_drift() -> None:
+    ruleset = json.loads(create_ops._default_branch_ruleset_payload(["python"]))
+
+    assert _status_drifts(ruleset, include=False) == []
+
+
+def test_required_contexts_match_the_workflow_job_names() -> None:
+    """Renaming a job must fail here, not silently unrequire the check."""
+    text = (WORKFLOWS / "pr-conventions.yml").read_text(encoding="utf-8")
+    job_names = set(re.findall(r"^    name: (\S+)$", text, flags=re.MULTILINE))
+
+    assert set(create_ops._PR_CONVENTION_CONTEXTS) == job_names
+
+
+def test_applying_the_ruleset_requires_convention_checks_when_opted_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real apply path, reading the workflow from the checkout on disk."""
+    workflow = tmp_path / ".github" / "workflows" / "pr-conventions.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: PR conventions\n", encoding="utf-8")
+    sent: list[str] = []
+
+    monkeypatch.setattr(create_ops, "_list_repo_rulesets", lambda **_: [])
+
+    def fake_api(**kwargs):  # type: ignore[no-untyped-def]
+        sent.append(kwargs.get("stdin_text") or "")
+        return subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="{}", stderr=""
+        )
+
+    monkeypatch.setattr(create_ops, "_api", fake_api)
+
+    create_ops._sync_default_branch_ruleset(
+        repo_dir=tmp_path,
+        env={},
+        repo="o/r",
+        out=lambda _: None,
+        languages=["python"],
+    )
+
+    assert sent
+    assert {"conventional-title", "ticket-link"} <= set(_required(sent[0]))
+
+
+def test_conventional_title_does_not_run_for_dependabot() -> None:
+    """Opted-in repos keep their own dependabot.yml, which may not produce
+    Conventional Commits titles; a skipped job still satisfies the check."""
+    text = (WORKFLOWS / "pr-conventions.yml").read_text(encoding="utf-8")
+    job = text.split("  conventional-title:", 1)[1].split("\n  ticket-link:", 1)[0]
+
+    assert "if: ${{ github.event.pull_request.user.login != 'dependabot[bot]' }}" in job
