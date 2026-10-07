@@ -3270,11 +3270,6 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
         ScaffoldFile(config.out_dir / ".gitattributes", _render_gitattributes()),
         ScaffoldFile(config.out_dir / ".editorconfig", _render_editorconfig()),
         ScaffoldFile(config.out_dir / "Makefile", _render_makefile()),
-        ScaffoldFile(
-            config.out_dir / "scripts" / "first_time_setup.sh",
-            _render_first_time_setup_script(),
-            executable=True,
-        ),
     ]
 
     selected = set(config.languages)
