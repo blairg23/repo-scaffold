@@ -854,22 +854,18 @@ def _render_repo_readme(config: ScaffoldConfig) -> str:
             "- Keep repo planning markdown in a directory of your choice; point repo-scaffold at it with `--source` or `GITHUB_TICKETS_DIR` in `.env`.",
             "- The canonical repo project metadata file is `.repo-scaffold/project.json` once a project has been created or synced.",
             "- `AGENTS.md` tells local agents to treat `GH_REPO` and `.repo-scaffold/project.json` as the repo-local GitHub context.",
-            "- Prefer `gh auth login` or an OS-backed credential manager for local GitHub auth; use `.env` only when you intentionally want token-based local scripting.",
-            "- Run `./scripts/first_time_setup.sh` once to wire the local GitHub Projects v2 token, Claude Code settings, and the `ghp` shell alias for WSL workflows.",
+            "- Use `.env` for local GitHub auth (set `GH_TOKEN` in `.env`; repo-scaffold loads it automatically). Never use `gh` CLI directly.",
+            "- Run `./scripts/first_time_setup.sh` once to wire the local GitHub Projects v2 token and Claude Code settings.",
             "",
             "### GitHub Projects v2 auth for WSL / Claude Code",
             "",
             "```bash",
-            "./scripts/first_time_setup.sh",
-            "source ~/.bashrc  # or ~/.zshrc",
-            "ghp project list --owner YOUR_OWNER",
-            "GH_TOKEN=<classic-PAT> gh project item-list <PROJECT_NUMBER> --owner YOUR_OWNER",
+            "poetry run repo-scaffold project list --project-owner YOUR_OWNER",
             "```",
             "",
             "- `.env.example` includes `export GH_PROJECT_TOKEN=<classic-PAT>` because child processes need the export prefix.",
             "- `.claude/settings.local.json` is local-only and gives Claude Code the same project token context.",
-            "- For direct `gh project ...` calls in WSL/Claude, prefer `ghp ...` or `GH_TOKEN=<classic-PAT> gh ...`.",
-            "- Do not rely on `GH_TOKEN=$GH_PROJECT_TOKEN gh ...` for project board commands in this environment.",
+            "- Use `repo-scaffold project` commands for all project operations.",
             "",
             "## GitHub templates included",
             "",
@@ -1007,13 +1003,11 @@ Format: subject line (imperative mood) + blank line + body.
 
 ## GitHub Projects v2 auth
 
-For GitHub Projects v2 commands, use the `ghp` shell alias or the explicit form:
+Project commands require `project` scope on your `GH_TOKEN` (set in `.env`), e.g.:
 
 ```bash
-GH_TOKEN=$GH_PROJECT_TOKEN gh ...
+poetry run repo-scaffold project list --project-owner OWNER
 ```
-
-`GH_PROJECT_TOKEN` is a classic PAT with `project` scope. Set it in `.env`.
 """
 
 
@@ -1028,15 +1022,6 @@ ENV_FILE="$REPO_ROOT/.env"
 CLAUDE_DIR="$REPO_ROOT/.claude"
 CLAUDE_SETTINGS_FILE="$CLAUDE_DIR/settings.local.json"
 PAT_PLACEHOLDER="<classic-PAT>"
-
-pick_shell_rc() {
-  local shell_name
-  shell_name="$(basename "${SHELL:-bash}")"
-  case "$shell_name" in
-    zsh) printf '%s\n' "$HOME/.zshrc" ;;
-    *) printf '%s\n' "$HOME/.bashrc" ;;
-  esac
-}
 
 upsert_env_line() {
   local file="$1"
@@ -1059,7 +1044,6 @@ echo "  1) ensure .env exists"
 echo "  2) set export GH_PROJECT_TOKEN=..."
 echo "  3) set GH_TOKEN=... for repo-scaffold compatibility"
 echo "  4) write .claude/settings.local.json"
-echo "  5) optionally append a ghp alias to your shell rc"
 echo
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -1096,32 +1080,13 @@ cat > "$CLAUDE_SETTINGS_FILE" <<EOF
 EOF
 echo "Wrote $CLAUDE_SETTINGS_FILE"
 
-RC_FILE="$(pick_shell_rc)"
-ALIAS_LINE="alias ghp='GH_TOKEN=$PROJECT_TOKEN gh'"
-read -r -p "Append ghp alias to $RC_FILE? [y/N] " APPEND_ALIAS
-case "$APPEND_ALIAS" in
-  [yY]|[yY][eE][sS])
-    touch "$RC_FILE"
-    if ! grep -Fqx "$ALIAS_LINE" "$RC_FILE"; then
-      printf '\n%s\n' "$ALIAS_LINE" >> "$RC_FILE"
-      echo "Appended ghp alias to $RC_FILE"
-    else
-      echo "ghp alias already present in $RC_FILE"
-    fi
-    ;;
-  *)
-    echo "Skipped shell alias update."
-    ;;
-esac
-
 echo
-echo "Next steps:"
-echo "  source $RC_FILE"
-echo "  ghp project list --owner YOUR_OWNER"
-echo "  GH_TOKEN=$PROJECT_TOKEN gh project item-list <PROJECT_NUMBER> --owner YOUR_OWNER"
+echo "Next steps (project commands need a token with project scope):"
+echo '  set -a; . ./.env; set +a'
+echo '  GH_TOKEN="$GH_PROJECT_TOKEN" poetry run repo-scaffold project list --project-owner YOUR_OWNER'
 echo
-echo "For project board commands in WSL / Claude Code, use ghp or direct GH_TOKEN=... gh ... commands."
-echo "Do not rely on GH_TOKEN=\\$GH_PROJECT_TOKEN gh ... in this environment."
+echo "If GH_TOKEN already has project scope, the GH_TOKEN= prefix is not needed."
+echo "Use repo-scaffold for all GitHub operations; the gh CLI is not required."
 """
 
 

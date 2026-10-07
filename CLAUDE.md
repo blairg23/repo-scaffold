@@ -64,7 +64,7 @@ poetry run repo-scaffold pr comment --repo OWNER/REPO --pr-number N --body "TEXT
 poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_ID
 poetry run repo-scaffold pr create --repo OWNER/REPO --title "TITLE" --head BRANCH [--base main] [--body "TEXT"] [--draft]
 poetry run repo-scaffold pr update --repo OWNER/REPO --pr-number N [--title "TITLE"] [--body "TEXT"]
-poetry run repo-scaffold pr merge --repo OWNER/REPO --pr-number N [--method squash|merge|rebase]
+poetry run repo-scaffold pr merge --repo OWNER/REPO --pr-number N [--method squash|merge|rebase]  # ⚠ human-only -- agents never merge
 poetry run repo-scaffold pr checks --repo OWNER/REPO --pr-number N [--json]
 poetry run repo-scaffold pr annotations --repo OWNER/REPO --pr-number N [--json]
 poetry run repo-scaffold pr rerun --repo OWNER/REPO --pr-number N [--failed-only]

@@ -127,7 +127,7 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert ".repo-scaffold/project.json" in generated_readme
     assert "AGENTS.md" in generated_readme
     assert "./scripts/first_time_setup.sh" in generated_readme
-    assert "GH_TOKEN=<classic-PAT> gh project item-list" in generated_readme
+    assert "repo-scaffold project list" in generated_readme
     assert ".claude/settings.local.json" in generated_readme
     assert "## Backlog bootstrap" not in generated_readme
     assert "## GitHub token permissions" not in generated_readme
@@ -151,8 +151,8 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert ".repo-scaffold/project.json" in agents_md
     assert "GH_REPO" in agents_md
     assert f"{cfg.name} Roadmap" in agents_md
-    assert "ghp" in agents_md
-    assert "GH_TOKEN=$GH_PROJECT_TOKEN gh ..." in agents_md
+    assert "poetry run repo-scaffold project list" in agents_md
+    assert "Project commands require" in agents_md
     pyproject = (out_dir / "pyproject.toml").read_text(encoding="utf-8")
     assert "black>=" in pyproject
     assert "mypy>=" in pyproject
@@ -217,8 +217,12 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     if sys.platform != "win32":
         assert first_time_setup.stat().st_mode & 0o111
     script_text = first_time_setup.read_text(encoding="utf-8")
-    assert "alias ghp='GH_TOKEN=$PROJECT_TOKEN gh'" in script_text
-    assert "GH_TOKEN=$PROJECT_TOKEN gh project item-list" in script_text
+    assert "ghp" not in script_text
+    assert "gh project" not in script_text
+    assert (
+        'GH_TOKEN="$GH_PROJECT_TOKEN" poetry run repo-scaffold project list'
+        in script_text
+    )
     assert (
         "Repo-scaffold GH_TOKEN (leave blank to reuse the project token): "
         in script_text

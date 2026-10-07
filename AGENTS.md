@@ -137,10 +137,10 @@ Example: `repo-scaffold-feat-238-docker-per-repo-containers`.
 
 Multiple agents can run in parallel -- each gets an isolated container.
 
-**If you are already inside a container: do not run any `docker` or `workspace` commands.**
+**If you are already inside a container: do not run any `docker` commands. The `workspace` command group is deprecated (use `docker spin-up` instead).**
 Both are host-side tools. Inside your container, your branch is already checked out at
 `/{repo-name}`. Just work there: edit files, run tests, commit, push. No worktrees,
-no new containers, no workspace create.
+no new containers.
 
 ### Headless / non-interactive agents
 
@@ -168,6 +168,12 @@ poetry run repo-scaffold docker spin-down --repo OWNER/REPO --branch BRANCH
 ```
 
 Container names follow `{repo-slug}-{branch-slug}` (see below).
+
+**WSL note:** if native Docker runs inside WSL, a leftover Docker Desktop
+`"credsStore": "desktop.exe"` entry in `~/.docker/config.json` breaks `docker build-base`
+(it calls the missing `desktop.exe`). Remove that entry from `~/.docker/config.json`
+before running `docker build-base` headless.
+
 
 ### Compose-based container (legacy)
 
