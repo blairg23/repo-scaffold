@@ -100,6 +100,10 @@ poetry run repo-scaffold import backlog --repo OWNER/REPO
 
 # Scaffold generation
 poetry run repo-scaffold init --name NAME --languages go,gin,python,react --owner OWNER --out /path --yes
+# Also installs release-please (workflow + release-please-config.json +
+# .release-please-manifest.json) and the PR-conventions checks. The manifest is
+# create-only: re-running apply ci never resets a released version, even with
+# --yes/--force. See AGENTS.md "Releases (release-please)".
 poetry run repo-scaffold apply ci --path . --languages go,gin,python,react
 poetry run repo-scaffold apply templates --path . --name NAME --owner OWNER
 

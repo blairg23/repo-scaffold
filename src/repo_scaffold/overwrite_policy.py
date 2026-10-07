@@ -82,6 +82,13 @@ def apply_files(
                 _write_file(path, file.content, file.executable)
             continue
 
+        if file.create_only:
+            # Tool-owned state (e.g. the release-please manifest). Even --force
+            # must not reset it; delete the file to regenerate it deliberately.
+            out(f"SKIP      {display} (exists; state file, never overwritten)")
+            skipped += 1
+            continue
+
         desired = _normalize(file.content)
         try:
             current = path.read_text(encoding="utf-8")

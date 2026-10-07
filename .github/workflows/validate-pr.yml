@@ -39,6 +39,13 @@ jobs:
               return;
             }
 
+            const head = context.payload.pull_request.head?.ref || "";
+            if (head.startsWith("release-please--")) {
+              core.info(`PR #${number} is a release-please release PR; skipping body-format check.`);
+              await removeStaleLabel();
+              return;
+            }
+
             const body = context.payload.pull_request.body || "";
             const required = ["## 🧾 Title"];
             const missing = required.filter(h => !body.includes(h));

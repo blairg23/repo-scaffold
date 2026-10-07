@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -24,6 +25,10 @@ class ScaffoldFile:
     path: Path
     content: str
     executable: bool = False
+    # State owned by a tool after creation (e.g. the release-please manifest,
+    # which records the last released version). Written when missing, never
+    # overwritten: re-applying would silently roll that state back.
+    create_only: bool = False
 
 
 def parse_language_csv(raw: str) -> tuple[str, ...]:
@@ -187,6 +192,137 @@ def _render_validate_pr_workflow() -> str:
 
 def _render_validate_pr_sop_workflow() -> str:
     return _load_template("github/workflows/validate-pr-sop.yml", "")
+
+
+def _render_release_please_workflow() -> str:
+    return _load_template("github/workflows/release-please.yml", "")
+
+
+def _render_pr_conventions_workflow() -> str:
+    return _load_template("github/workflows/pr-conventions.yml", "")
+
+
+RELEASE_PLEASE_SCHEMA_URL = "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json"
+DEFAULT_RELEASE_VERSION = "0.1.0"
+
+# Every type a repo-scaffold PR title may use (AGENTS.md "PR titles") gets a
+# visible section, so each completed ticket shows up in the release notes.
+# build/ci/style are hidden: Dependabot is configured to use build and ci, and a
+# dependency bump on its own should neither clutter the notes nor cut a release.
+_RELEASE_PLEASE_SECTIONS = (
+    ("feat", "Features", False),
+    ("fix", "Bug Fixes", False),
+    ("perf", "Performance Improvements", False),
+    ("revert", "Reverts", False),
+    ("refactor", "Code Refactoring", False),
+    ("docs", "Documentation", False),
+    ("test", "Tests", False),
+    ("chore", "Miscellaneous Chores", False),
+    ("build", "Build System", True),
+    ("ci", "Continuous Integration", True),
+    ("style", "Styles", True),
+)
+
+_SEMVER_CORE = re.compile(r"^\d+\.\d+\.\d+")
+_TOML_VERSION = re.compile(r"""^\s*version\s*=\s*["']([^"']+)["']\s*(?:#.*)?$""")
+
+
+def release_please_release_type(languages: Iterable[str], root: Path) -> str:
+    """Pick release-please's release type for a repo.
+
+    python when Python is selected (pyproject.toml sits at the repo root).
+    node only when package.json is at the root: repo-scaffold puts React apps in
+    web/, and release-please's node strategy expects package.json at the package
+    path, so a web/-only frontend is released as simple with web/package.json
+    bumped through extra-files instead. Everything else falls back to simple.
+    """
+    if "python" in set(languages):
+        return "python"
+    if (root / "package.json").is_file():
+        return "node"
+    return "simple"
+
+
+def _pyproject_version(path: Path) -> str | None:
+    """Read [project].version or [tool.poetry].version from a pyproject.toml.
+
+    A line scan rather than a TOML parser, because tomllib only exists from
+    Python 3.11 and this package supports 3.10. A dynamic or unparseable
+    version falls through to the default, which is safe: release-please treats
+    the manifest as the source of truth from then on.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    section = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            section = stripped.strip("[]").strip()
+            continue
+        if section in ("project", "tool.poetry"):
+            match = _TOML_VERSION.match(line)
+            if match:
+                return match.group(1)
+    return None
+
+
+def _package_json_version(path: Path) -> str | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    version = data.get("version") if isinstance(data, dict) else None
+    return version if isinstance(version, str) else None
+
+
+def current_release_version(root: Path) -> str:
+    """The version to seed the release-please manifest with.
+
+    Reads what the repo already declares, so `apply ci` on an existing repo does
+    not reset it to 0.1.0. On a fresh `init` none of these exist yet, and the
+    default matches the version the scaffold writes.
+    """
+    for candidate in (
+        _pyproject_version(root / "pyproject.toml"),
+        _package_json_version(root / "package.json"),
+        _package_json_version(root / "web" / "package.json"),
+    ):
+        if candidate and _SEMVER_CORE.match(candidate):
+            return candidate
+    return DEFAULT_RELEASE_VERSION
+
+
+def _render_release_please_config(
+    name: str, languages: Iterable[str], root: Path
+) -> str:
+    selected = set(languages)
+    package: dict[str, object] = {
+        "release-type": release_please_release_type(selected, root),
+        "package-name": name,
+        "changelog-path": "CHANGELOG.md",
+    }
+    if "react" in selected or (root / "web" / "package.json").is_file():
+        package["extra-files"] = [
+            {"type": "json", "path": "web/package.json", "jsonpath": "$.version"}
+        ]
+    config = {
+        "$schema": RELEASE_PLEASE_SCHEMA_URL,
+        # One package at the repo root, so tag plain v1.2.3 rather than name-v1.2.3.
+        "include-component-in-tag": False,
+        "bump-minor-pre-major": True,
+        "changelog-sections": [
+            {"type": kind, "section": title, "hidden": hidden}
+            for kind, title, hidden in _RELEASE_PLEASE_SECTIONS
+        ],
+        "packages": {".": package},
+    }
+    return json.dumps(config, indent=2) + "\n"
+
+
+def _render_release_please_manifest(root: Path) -> str:
+    return json.dumps({".": current_release_version(root)}, indent=2) + "\n"
 
 
 def _render_poetry_toml() -> str:
@@ -485,10 +621,16 @@ def _render_dependabot_yaml(languages: Iterable[str]) -> str:
     entries: list[str] = []
 
     def block(ecosystem: str, directory: str, group_name: str) -> str:
+        # Conventional Commits titles, so Dependabot PRs pass the PR-title check.
+        # build/ci are hidden changelog sections: bumps never clutter release notes.
+        prefix = "ci" if ecosystem == "github-actions" else "build"
         return f"""  - package-ecosystem: \"{ecosystem}\"
     directory: \"{directory}\"
     schedule:
       interval: weekly
+    commit-message:
+      prefix: \"{prefix}\"
+      include: \"scope\"
     open-pull-requests-limit: 5
     groups:
       {group_name}:
@@ -3248,6 +3390,25 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
             _render_validate_pr_sop_workflow(),
         ),
         ScaffoldFile(
+            config.out_dir / ".github" / "workflows" / "pr-conventions.yml",
+            _render_pr_conventions_workflow(),
+        ),
+        ScaffoldFile(
+            config.out_dir / ".github" / "workflows" / "release-please.yml",
+            _render_release_please_workflow(),
+        ),
+        ScaffoldFile(
+            config.out_dir / "release-please-config.json",
+            _render_release_please_config(
+                config.name, config.languages, config.out_dir
+            ),
+        ),
+        ScaffoldFile(
+            config.out_dir / ".release-please-manifest.json",
+            _render_release_please_manifest(config.out_dir),
+            create_only=True,
+        ),
+        ScaffoldFile(
             config.out_dir / ".github" / "dependabot.yml",
             _render_dependabot_yaml(config.languages),
         ),
@@ -3480,6 +3641,10 @@ def build_ci_files(
         [
             ".gitattributes",
             ".github/workflows/ci.yml",
+            ".github/workflows/pr-conventions.yml",
+            ".github/workflows/release-please.yml",
+            ".release-please-manifest.json",
+            "release-please-config.json",
             "web/.husky/pre-commit",
         ],
     )
