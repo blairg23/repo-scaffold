@@ -376,6 +376,29 @@ The issue number at the end is required so the PR is immediately traceable to it
 
 ---
 
+## Automated issue/PR template validation
+
+`.github/workflows/validate-issue.yml` and `validate-pr.yml` run on every
+`issues`/`pull_request_target` open-or-edit event and check the body for the
+required template headings (`## 🧾 Title` / `## 🧠 Summary` for issues, `## 🧾
+Title` for PRs). A malformed body gets a `needs-format` label plus a comment
+listing what's missing; the label is removed automatically once the body is
+fixed.
+
+The comment is a status notice, not a log -- editing a still-malformed issue
+or PR again does not pile up duplicate comments. Each check looks for an
+existing bot comment carrying its marker line, compares it against the
+notice it would post now, and:
+
+- skips posting if the notice is already current,
+- edits the existing comment in place if the missing sections changed,
+- otherwise creates a new comment.
+
+Dependabot PRs skip the body-format check entirely (their bodies never match
+the human template). See #301/#309/#312 for the history of this behavior.
+
+---
+
 ## How to contribute
 
 1. Create or pick an issue from the [repo-scaffold Roadmap](https://github.com/users/blairg23/projects/6). Note the issue number (`NNN`).
