@@ -11,6 +11,9 @@ It generates project structure (CI, templates, CODEOWNERS, AGENTS.md, SPEC.md),
 applies settings, manages issue backlogs, and interacts with GitHub Projects v2 --
 all via the GitHub REST and GraphQL APIs. No `gh` CLI required.
 
+Requires Python 3.11+ (`pyproject.toml` sets `python = ">=3.11,<4.0"`; the code uses
+`typing.NotRequired`). The per-branch workspace image ships Python 3.12.
+
 ---
 
 ## Auth

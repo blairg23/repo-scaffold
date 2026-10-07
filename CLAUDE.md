@@ -22,6 +22,7 @@ Before writing any code, verify every item below. These are non-negotiable and a
 - [ ] Acceptable CueQueue job types: HTTP calls, file sync, local git, build tools, agent chains, any shell command routed through CueQueue
 
 ## Dependencies
+- [ ] Runtime floor is Python 3.11 (`pyproject.toml`); do not use features newer than 3.11 without raising it
 - [ ] Before building any feature, search PyPI for a well-maintained library that already does it
 - [ ] Wrapping a good library (`copier`, `requests`, etc.) is always better than rebuilding it
 - [ ] Every external dependency is explicitly justified
