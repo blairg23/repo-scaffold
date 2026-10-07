@@ -56,6 +56,10 @@ from .github_api import (
     token_from_repo,
 )
 from .backlog_import import build_backlog_import_file
+from .credentials_ops import (
+    CredentialsCheckSummary,
+    check_repository_credentials,
+)
 from .create_ops import (
     ConfigsCheckSummary,
     ConfigsSyncResult,
@@ -754,7 +758,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check_sub = check.add_subparsers(
         dest="check_command",
-        metavar="{rules,templates,settings,configs}",
+        metavar="{rules,templates,settings,configs,credentials}",
         required=True,
     )
     check_rules = check_sub.add_parser(
@@ -826,6 +830,29 @@ def build_parser() -> argparse.ArgumentParser:
             "Comma-separated language list to check config files for -- required "
             "when the target's language stack can't be read from a local checkout "
             "(default: read from .repo-scaffold.yml, falling back to file detection)"
+        ),
+    )
+
+    check_credentials_cmd = check_sub.add_parser(
+        "credentials",
+        help="Check local git configs for credentials persisted to disk",
+    )
+    check_credentials_cmd.add_argument("--repo", help="Target GitHub repo (owner/repo)")
+    check_credentials_cmd.add_argument(
+        "--repos", help="Comma-separated registered repos (owner/repo,owner/repo)"
+    )
+    check_credentials_cmd.add_argument(
+        "--all",
+        action="store_true",
+        dest="all_repos",
+        help="Target every repo in the local registry",
+    )
+    check_credentials_cmd.add_argument(
+        "--fix",
+        action="store_true",
+        help=(
+            "Rewrite offending entries: strip credentials from remote URLs and "
+            "unset any on-disk http.extraHeader (default: report only)"
         ),
     )
 
@@ -2515,6 +2542,39 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{status}  {target_repo}")
             total_drifted += len(configs_summary.drifted_files)
         return 1 if (total_drifted > 0 or errors) else 0
+
+    if ns.mode == "check" and ns.check_command == "credentials":
+        targets, targets_error = _resolve_repo_targets(ns)
+        if targets_error:
+            print(targets_error, file=sys.stderr)
+            return 2
+        total_findings = 0
+        read_errors = 0
+        for target_repo, repo_dir in targets:
+            creds_summary: CredentialsCheckSummary = check_repository_credentials(
+                repo_dir=repo_dir,
+                repo=target_repo,
+                fix=ns.fix,
+                out=print,
+            )
+            if creds_summary.skipped:
+                print(f"SKIP  {target_repo} ({creds_summary.skipped})")
+                continue
+            for message in creds_summary.errors:
+                print(f"ERROR {target_repo}: {message}", file=sys.stderr)
+                read_errors += 1
+            if creds_summary.clean:
+                print(f"PASS  {target_repo}")
+                continue
+            for finding in creds_summary.findings:
+                print(f"  {finding.key} = {finding.detail}")
+                print(f"    in {finding.config_path}")
+            if ns.fix:
+                print(f"FIXED {target_repo} ({len(creds_summary.fixed)} entrie(s))")
+            else:
+                print(f"FOUND {target_repo} ({len(creds_summary.findings)} entrie(s))")
+                total_findings += len(creds_summary.findings)
+        return 1 if (total_findings > 0 or read_errors) else 0
 
     if ns.mode == "repo" and ns.repo_command == "register":
         entry: RegistryEntry = register_repo(ns.repo, ns.path, ns.notes)
