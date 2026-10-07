@@ -320,6 +320,12 @@ poetry run repo-scaffold check configs --repo OWNER/REPO [--repos a,b | --all] [
 # never-commits-to-default-branch, ticket-less automated-PR behavior as sync templates.
 poetry run repo-scaffold sync configs --repo OWNER/REPO [--repos a,b | --all] [--yes] [--languages LANGS]
 
+# Configure git credential-store from .env GH_TOKEN so authenticated git operations
+# resolve without a Windows Credential Manager prompt (which hangs headless/agent
+# runs). Run once per checkout. This is the supported alternative to embedding a
+# token in a remote URL -- see `check credentials`.
+poetry run repo-scaffold auth configure [--path PATH]
+
 # Archive a repo (read-only; reversible via the GitHub UI)
 # Prompts for confirmation unless --yes is passed; refuses in a non-interactive shell without --yes.
 poetry run repo-scaffold repo archive --repo OWNER/REPO [--yes]

@@ -3855,7 +3855,7 @@ def test_workspace_configure_auth_cli_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "repo_scaffold.workspace_ops.workspace_configure_auth",
+        "repo_scaffold.auth_ops.configure_auth",
         lambda token, path=None: SimpleNamespace(
             returncode=0, stdout="Configured.", stderr=""
         ),

@@ -244,6 +244,39 @@ def _resolve_repo_from_args_or_env(
     )
 
 
+def _token_for_auth_path(auth_path: Path | None) -> str:
+    """Resolve the token to install, preferring the target checkout's own .env.
+
+    token_from_repo seeds itself from os.environ and applies a repo's .env only
+    via setdefault, so an ambient GH_TOKEN (which is already present for the
+    checkout we are running from) wins over the .env of whatever --path points
+    at. That would quietly write repo A's PAT into repo B's credential store.
+    Read the target's .env directly first, and fall back to ambient resolution
+    only when it has none.
+    """
+    from .github_api import _load_env_file, resolve_token
+
+    if auth_path is not None:
+        own = resolve_token(_load_env_file(auth_path / ".env"))
+        if own:
+            return own
+    return token_from_repo(auth_path or Path.cwd()) or ""
+
+
+def _dispatch_configure_auth(auth_path_arg: str | None) -> int:
+    """Shared by `auth configure` and the deprecated `workspace configure-auth`."""
+    from .auth_ops import configure_auth
+
+    auth_path = Path(auth_path_arg).resolve() if auth_path_arg else None
+    token = _token_for_auth_path(auth_path)
+    cp = configure_auth(token, path=auth_path)
+    if cp.returncode != 0:
+        print(cp.stderr.strip(), file=sys.stderr)
+        return 1
+    print(cp.stdout.strip())
+    return 0
+
+
 def _resolve_repo_targets(
     ns: argparse.Namespace,
 ) -> tuple[list[tuple[str, Path]], str | None]:
@@ -520,7 +553,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(
         dest="mode",
-        metavar="{create,delete,init,apply,check,repo,sync,project,import,issue,pr,branch,label,workspace}",
+        metavar="{create,delete,init,apply,check,repo,sync,project,import,issue,pr,branch,label,auth,workspace}",
         required=True,
     )
 
@@ -1737,6 +1770,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     label_preset_cmd.add_argument("--repo", required=True)
 
+    auth_cmd = subparsers.add_parser(
+        "auth",
+        help="Configure local git credentials for non-interactive use",
+    )
+    auth_sub = auth_cmd.add_subparsers(
+        dest="auth_command",
+        metavar="{configure}",
+        required=True,
+    )
+    auth_configure = auth_sub.add_parser(
+        "configure",
+        help=(
+            "Configure git credential-store from .env GH_TOKEN, "
+            "bypassing Windows Credential Manager (GCM)"
+        ),
+    )
+    auth_configure.add_argument(
+        "--path",
+        default=None,
+        dest="auth_path",
+        help="Path to a git working tree (default: current directory)",
+    )
+
     workspace_cmd = subparsers.add_parser(
         "workspace", help="Manage per-branch git worktrees under repos/"
     )
@@ -1864,6 +1920,7 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
         "issue",
         "pr",
         "branch",
+        "auth",
         "workspace",
         "repo",
         "sync",
@@ -3861,17 +3918,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Skipped (already exist): {skipped}")
             return 0
 
+    if ns.mode == "auth" and ns.auth_command == "configure":
+        return _dispatch_configure_auth(getattr(ns, "auth_path", None))
+
     if ns.mode == "workspace":
         import warnings
 
         warnings.warn(
             "The 'workspace' command group is deprecated. "
-            "Use 'repo-scaffold docker spin-up/spin-down/list' instead.",
+            "Use 'repo-scaffold docker spin-up/spin-down/list' instead, "
+            "and 'repo-scaffold auth configure' for credential setup.",
             DeprecationWarning,
             stacklevel=1,
         )
         from .workspace_ops import (
-            workspace_configure_auth,
             workspace_create,
             workspace_delete,
             workspace_list,
@@ -3916,14 +3976,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if ns.workspace_command == "configure-auth":
-            auth_path = Path(ns.auth_path).resolve() if ns.auth_path else None
-            effective_token = (auth_path and token_from_repo(auth_path)) or token
-            cp = workspace_configure_auth(effective_token, path=auth_path)
-            if cp.returncode != 0:
-                print(cp.stderr.strip(), file=sys.stderr)
-                return 1
-            print(cp.stdout.strip())
-            return 0
+            return _dispatch_configure_auth(getattr(ns, "auth_path", None))
 
     if ns.mode == "docker":
         from .docker_ops import (
