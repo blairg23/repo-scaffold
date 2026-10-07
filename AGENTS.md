@@ -283,6 +283,9 @@ poetry run repo-scaffold create --repo OWNER/REPO --visibility public --path /pa
 # Init scaffold files into an existing local directory
 poetry run repo-scaffold init --name NAME --languages go,gin,python,react --owner OWNER --out /path --yes
 
+# Init an infra/config repo (no language stack; SOPS + age secrets, gitleaks, plaintext check)
+poetry run repo-scaffold init --kind infra --name NAME --owner OWNER --out /path --yes
+
 # Apply CI workflows to an existing repo
 poetry run repo-scaffold apply ci --path . --languages go,gin,python,react
 

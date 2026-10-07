@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
 import repo_scaffold.generator as generator_module
 from repo_scaffold.generator import ScaffoldConfig, _render_spec_md, generate_scaffold
 
@@ -593,8 +595,216 @@ def test_parse_language_csv_accepts_gin() -> None:
 
 
 def test_parse_language_csv_rejects_unknown_still() -> None:
-    from repo_scaffold.generator import parse_language_csv
     import pytest
+
+    from repo_scaffold.generator import parse_language_csv
 
     with pytest.raises(ValueError, match="Unknown language"):
         parse_language_csv("rust")
+
+
+# --- infra kind (#325) -------------------------------------------------------
+
+INFRA_EXPECTED_FILES = {
+    ".pre-commit-config.yaml",
+    ".github/pull_request_template.md",
+    ".github/CODEOWNERS",
+    ".github/ISSUE_TEMPLATE/epic.md",
+    ".github/ISSUE_TEMPLATE/ticket.md",
+    ".github/ISSUE_TEMPLATE/config.yml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/validate-issue.yml",
+    ".github/workflows/validate-pr.yml",
+    ".github/workflows/validate-pr-sop.yml",
+    ".github/dependabot.yml",
+    ".sops.yaml",
+    "secrets/README.md",
+    "scripts/check_sops_encrypted.py",
+    "AGENTS.md",
+    "README.md",
+    ".gitignore",
+    ".gitattributes",
+    ".editorconfig",
+}
+
+
+def _infra_config(out_dir: Path) -> ScaffoldConfig:
+    return ScaffoldConfig(
+        name="todd",
+        languages=(),
+        owner="EnkiThoth",
+        license_id="apache-2.0",
+        out_dir=out_dir,
+        kind="infra",
+    )
+
+
+def test_scaffold_config_defaults_to_app_kind(tmp_path: Path) -> None:
+    cfg = ScaffoldConfig(
+        name="demo",
+        languages=("python",),
+        owner=None,
+        license_id="apache-2.0",
+        out_dir=tmp_path,
+    )
+    assert cfg.kind == "app"
+
+
+def test_infra_kind_generates_only_infra_files(tmp_path: Path) -> None:
+    out_dir = tmp_path / "todd"
+    generate_scaffold(_infra_config(out_dir))
+    written = {
+        p.relative_to(out_dir).as_posix() for p in out_dir.rglob("*") if p.is_file()
+    }
+    assert written == INFRA_EXPECTED_FILES
+
+
+def test_infra_kind_has_no_language_or_app_artifacts(tmp_path: Path) -> None:
+    out_dir = tmp_path / "todd"
+    generate_scaffold(_infra_config(out_dir))
+    for absent in (
+        "LICENSE",
+        "SPEC.md",
+        "Makefile",
+        ".env.example",
+        "pyproject.toml",
+        "go.mod",
+        "web",
+        "docs",
+    ):
+        assert not (out_dir / absent).exists(), absent
+    dependabot = (out_dir / ".github" / "dependabot.yml").read_text()
+    assert "github-actions" in dependabot
+    for eco in ("npm", "gomod", "pip", "uv"):
+        assert f'"{eco}"' not in dependabot
+
+
+def test_infra_kind_guards_are_wired(tmp_path: Path) -> None:
+    out_dir = tmp_path / "todd"
+    generate_scaffold(_infra_config(out_dir))
+    pre_commit = (out_dir / ".pre-commit-config.yaml").read_text()
+    assert "gitleaks" in pre_commit
+    assert "detect-private-key" in pre_commit
+    assert "scripts/check_sops_encrypted.py" in pre_commit
+    ci = (out_dir / ".github" / "workflows" / "ci.yml").read_text()
+    assert "zricethezav/gitleaks" in ci
+    assert "gitleaks-action" not in ci
+    assert "python scripts/check_sops_encrypted.py" in ci
+    sops = (out_dir / ".sops.yaml").read_text()
+    assert "path_regex: ^secrets/.*" in sops
+    assert "age1" in sops
+    gitignore = (out_dir / ".gitignore").read_text().splitlines()
+    for pattern in ("*.key", "keys.txt", "*.dec.*", ".secrets/", ".env"):
+        assert pattern in gitignore
+    agents = (out_dir / "AGENTS.md").read_text()
+    assert "## Infra repo rules" in agents
+
+
+def test_infra_yaml_files_parse(tmp_path: Path) -> None:
+    yaml = pytest.importorskip("yaml")
+    out_dir = tmp_path / "todd"
+    generate_scaffold(_infra_config(out_dir))
+    for rel in (
+        ".pre-commit-config.yaml",
+        ".sops.yaml",
+        ".github/workflows/ci.yml",
+        ".github/dependabot.yml",
+    ):
+        assert yaml.safe_load((out_dir / rel).read_text()) is not None, rel
+
+
+def _run_sops_check(repo: Path) -> subprocess.CompletedProcess[str]:
+    import subprocess
+
+    return subprocess.run(
+        [sys.executable, str(repo / "scripts" / "check_sops_encrypted.py")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_sops_check_passes_with_only_readme(tmp_path: Path) -> None:
+    out_dir = tmp_path / "todd"
+    generate_scaffold(_infra_config(out_dir))
+    assert _run_sops_check(out_dir).returncode == 0
+
+
+def test_sops_check_fails_on_plaintext(tmp_path: Path) -> None:
+    out_dir = tmp_path / "todd"
+    generate_scaffold(_infra_config(out_dir))
+    (out_dir / "secrets" / "kittv3.yaml").write_text("TODOIST_TOKEN: abc123\n")
+    result = _run_sops_check(out_dir)
+    assert result.returncode == 1
+    assert "NOT ENCRYPTED: secrets/kittv3.yaml" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "TODOIST_TOKEN: ENC[AES256_GCM,data:xx,iv:yy,tag:zz,type:str]\n"
+        "sops:\n    age:\n        - recipient: age1abc\n    mac: ENC[AES256_GCM,data:mm]\n",
+        '{"TODOIST_TOKEN": "ENC[AES256_GCM,data:xx]", "sops": {"mac": "ENC[x]"}}\n',
+        "TODOIST_TOKEN=ENC[AES256_GCM,data:xx]\nsops_mac=ENC[AES256_GCM,data:mm]\n",
+    ],
+    ids=["yaml", "json", "dotenv"],
+)
+def test_sops_check_passes_on_encrypted(tmp_path: Path, content: str) -> None:
+    out_dir = tmp_path / "todd"
+    generate_scaffold(_infra_config(out_dir))
+    (out_dir / "secrets" / "kittv3.enc").write_text(content)
+    assert _run_sops_check(out_dir).returncode == 0
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "A: ENC[AES256_GCM,data:xx]\nB: leaked\nsops:\n    mac: ENC[AES256_GCM,data:mm]\n",
+        "A: ENC[x]\nnested:\n    B: leaked\nsops:\n    mac: ENC[m]\n",
+        '{"A": "ENC[x]", "B": "leaked", "sops": {"mac": "ENC[x]"}}\n',
+        "A=ENC[x]\nB=leaked\nsops_mac=ENC[m]\n",
+    ],
+    ids=["yaml", "yaml-nested", "json", "dotenv"],
+)
+def test_sops_check_fails_on_partly_plaintext(tmp_path: Path, content: str) -> None:
+    out_dir = tmp_path / "todd"
+    generate_scaffold(_infra_config(out_dir))
+    (out_dir / "secrets" / "kittv3.enc").write_text(content)
+    result = _run_sops_check(out_dir)
+    assert result.returncode == 1
+    assert "plaintext values: B" in result.stdout
+
+
+def test_sops_check_allows_readme_only_at_secrets_root(tmp_path: Path) -> None:
+    out_dir = tmp_path / "todd"
+    generate_scaffold(_infra_config(out_dir))
+    nested = out_dir / "secrets" / "production"
+    nested.mkdir()
+    (nested / "README.md").write_text("TOKEN: abc123\n")
+    result = _run_sops_check(out_dir)
+    assert result.returncode == 1
+    assert "NOT ENCRYPTED: secrets/production/README.md" in result.stdout
+
+
+def test_sops_check_skips_unencrypted_suffix(tmp_path: Path) -> None:
+    out_dir = tmp_path / "todd"
+    generate_scaffold(_infra_config(out_dir))
+    (out_dir / "secrets" / "kittv3.yaml").write_text(
+        "A: ENC[x]\nhost_unencrypted: kittv3\nsops:\n    mac: ENC[m]\n"
+    )
+    assert _run_sops_check(out_dir).returncode == 0
+
+
+def test_unknown_kind_is_rejected(tmp_path: Path) -> None:
+    from repo_scaffold.generator import build_scaffold_files
+
+    cfg = ScaffoldConfig(
+        name="demo",
+        languages=(),
+        owner=None,
+        license_id="apache-2.0",
+        out_dir=tmp_path,
+        kind="nope",
+    )
+    with pytest.raises(ValueError, match="Unknown kind"):
+        build_scaffold_files(cfg)

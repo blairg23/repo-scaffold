@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 ALLOWED_LANGUAGES = ("go", "gin", "python", "react")
+ALLOWED_KINDS = ("app", "infra")
 SUPPORTED_LICENSE = "apache-2.0"
 TEMPLATE_ROOT = Path(__file__).resolve().parent / "templates"
 
@@ -17,6 +18,7 @@ class ScaffoldConfig:
     owner: str | None
     license_id: str
     out_dir: Path
+    kind: str = "app"
 
 
 @dataclass(frozen=True)
@@ -3206,6 +3208,12 @@ def _render_spec_md(config: ScaffoldConfig) -> str:
 
 def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
     _ensure_license_supported(config.license_id)
+    if config.kind not in ALLOWED_KINDS:
+        raise ValueError(
+            f"Unknown kind: {config.kind}. Allowed: {', '.join(ALLOWED_KINDS)}"
+        )
+    if config.kind == "infra":
+        return _build_infra_files(config)
 
     files: list[ScaffoldFile] = [
         ScaffoldFile(
@@ -3375,6 +3383,366 @@ def build_scaffold_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
         )
 
     return files
+
+
+# ---------------------------------------------------------------------------
+# Infra kind: language-free repos for machine config, agent config and
+# SOPS-encrypted secrets.
+# ---------------------------------------------------------------------------
+
+INFRA_SECRETS_DIR = "secrets"
+
+
+def _render_infra_ci_yaml() -> str:
+    return """name: CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Scan history for secrets (gitleaks)
+        run: >-
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest
+          detect --source /repo --redact --verbose
+
+  sops-encrypted:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Every file in secrets/ must be SOPS-encrypted
+        run: python scripts/check_sops_encrypted.py
+"""
+
+
+def _render_infra_pre_commit_config() -> str:
+    return """repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: detect-private-key
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+  - repo: local
+    hooks:
+      - id: sops-encrypted
+        name: every file in secrets/ must be SOPS-encrypted
+        entry: python scripts/check_sops_encrypted.py
+        language: python
+        pass_filenames: false
+        files: ^secrets/
+"""
+
+
+def _render_sops_yaml() -> str:
+    return """# SOPS creation rules.
+#
+# Every age public key listed here can decrypt files in secrets/.
+# Each machine (and you, as break-glass) has its own key pair:
+#   age-keygen -o ~/.config/sops/age/keys.txt   (private key stays on that machine)
+# Add a machine: append its public key (age1...) below, comma-separated,
+# then run `sops updatekeys secrets/<file>` for each existing file.
+# Remove a machine: delete its key, run `sops updatekeys`, then rotate the secrets.
+creation_rules:
+  - path_regex: ^secrets/.*
+    age: >-
+      age1REPLACE_WITH_YOUR_PUBLIC_KEY
+"""
+
+
+def _render_secrets_readme() -> str:
+    return """# secrets/
+
+Everything in this folder is encrypted with [SOPS](https://github.com/getsops/sops) +
+[age](https://github.com/FiloSottile/age) before it is committed. Plaintext never lands here.
+
+- Encrypt a new file: `sops encrypt --in-place secrets/<name>.yaml`
+- Edit an encrypted file: `sops secrets/<name>.yaml`
+- Use values without writing plaintext to disk: `sops exec-env secrets/<name>.yaml '<command>'`
+
+Who can decrypt is set in `../.sops.yaml`. Private age keys never go in this repo.
+
+`scripts/check_sops_encrypted.py` runs in pre-commit and CI and fails if any file here
+(other than this README and `.gitkeep` at the top of `secrets/`) is not fully
+SOPS-encrypted: every value outside the SOPS metadata must be an `ENC[...]` string.
+"""
+
+
+_CHECK_SOPS_SCRIPT = '''"""Fail if any file in secrets/ is not fully SOPS-encrypted.
+
+Every value outside the SOPS metadata must be an ENC[...] string, so a file
+that was partly decrypted, hand-edited or badly merged is caught too.
+Stdlib only, so it runs anywhere Python runs (pre-commit and CI).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+SECRETS_DIR = Path(__file__).resolve().parent.parent / "secrets"
+# Paths relative to SECRETS_DIR that may stay plaintext (top level only).
+ALLOWED_PLAINTEXT = {"README.md", ".gitkeep"}
+# SOPS leaves keys with this suffix unencrypted on purpose.
+UNENCRYPTED_SUFFIX = "_unencrypted"
+
+_ENC = re.compile(r"^ENC\\[.*\\]$")
+_YAML_KEY = re.compile(r"^(?P<indent> *)(?:- +)?(?P<key>[^:#][^:]*?):(?: +(?P<value>.*))?$")
+_YAML_ITEM = re.compile(r"^(?P<indent> *)- +(?P<value>.+)$")
+_KV = re.compile(r"^(?P<key>[^=#;\\s][^=]*?)\\s*=\\s*(?P<value>.*)$")
+
+
+def _is_enc(value: str) -> bool:
+    return bool(_ENC.match(value.strip().strip("'\\"")))
+
+
+def _json_problems(data: object, path: str = "") -> list[str]:
+    if isinstance(data, dict):
+        out: list[str] = []
+        for key, value in data.items():
+            if not path and key == "sops":
+                continue
+            if str(key).endswith(UNENCRYPTED_SUFFIX):
+                continue
+            out += _json_problems(value, f"{path}.{key}" if path else str(key))
+        return out
+    if isinstance(data, list):
+        out = []
+        for i, value in enumerate(data):
+            out += _json_problems(value, f"{path}[{i}]")
+        return out
+    if isinstance(data, str) and _is_enc(data):
+        return []
+    return [path or "<root>"]
+
+
+def _yaml_problems(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    skip_indent: int | None = None
+    for raw in lines:
+        line = raw.rstrip()
+        if not line.strip() or line.lstrip().startswith("#") or line.strip() == "---":
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if skip_indent is not None:
+            if indent > skip_indent:
+                continue
+            skip_indent = None
+        key_match = _YAML_KEY.match(line)
+        if key_match:
+            key = key_match.group("key").strip().strip("'\\"")
+            value = (key_match.group("value") or "").split(" #")[0].strip()
+            if (indent == 0 and key == "sops") or key.endswith(UNENCRYPTED_SUFFIX):
+                skip_indent = indent
+                continue
+            if value and not _is_enc(value):
+                out.append(key)
+            continue
+        item_match = _YAML_ITEM.match(line)
+        if item_match and not _is_enc(item_match.group("value").split(" #")[0]):
+            out.append(f"line: {line.strip()[:20]}")
+            continue
+        if not item_match:
+            out.append(f"line: {line.strip()[:20]}")
+    return out
+
+
+def _kv_problems(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    in_sops_section = False
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            in_sops_section = line == "[sops]"
+            continue
+        if in_sops_section:
+            continue
+        match = _KV.match(line)
+        if not match:
+            out.append(f"line: {line[:20]}")
+            continue
+        key = match.group("key").strip()
+        if key.startswith("sops_") or key.endswith(UNENCRYPTED_SUFFIX):
+            continue
+        if not _is_enc(match.group("value")):
+            out.append(key)
+    return out
+
+
+def plaintext_keys(text: str) -> list[str] | None:
+    """Return keys holding plaintext, or None if the file has no SOPS metadata."""
+    lines = text.splitlines()
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        return _json_problems(data) if "sops" in data else None
+    if any(line.startswith("sops_") for line in lines) or "[sops]" in lines:
+        return _kv_problems(lines)
+    if any(line.rstrip() == "sops:" for line in lines):
+        return _yaml_problems(lines)
+    return None
+
+
+def find_plaintext(secrets_dir: Path = SECRETS_DIR) -> dict[Path, str]:
+    if not secrets_dir.is_dir():
+        return {}
+    bad: dict[Path, str] = {}
+    for path in sorted(p for p in secrets_dir.rglob("*") if p.is_file()):
+        if path.relative_to(secrets_dir).as_posix() in ALLOWED_PLAINTEXT:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            bad[path] = "not a SOPS file"
+            continue
+        keys = plaintext_keys(text)
+        if keys is None:
+            bad[path] = "no SOPS metadata"
+        elif keys:
+            bad[path] = "plaintext values: " + ", ".join(keys)
+    return bad
+
+
+def main() -> int:
+    bad = find_plaintext()
+    for path, why in bad.items():
+        rel = path.relative_to(SECRETS_DIR.parent).as_posix()
+        print(f"NOT ENCRYPTED: {rel} ({why})")
+    if bad:
+        print("Encrypt with: sops encrypt --in-place <file>")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+def _render_check_sops_script() -> str:
+    return _CHECK_SOPS_SCRIPT
+
+
+def _render_infra_gitignore() -> str:
+    extra = [
+        "",
+        "# Secrets: only SOPS-encrypted files are committed",
+        "*.key",
+        "keys.txt",
+        "*.dec",
+        "*.dec.*",
+        ".secrets/",
+        "",
+    ]
+    return _render_gitignore(()).rstrip() + "\n" + "\n".join(extra)
+
+
+def _render_infra_readme(config: ScaffoldConfig) -> str:
+    return f"""# {config.name}
+
+Infrastructure and configuration repo. No application code.
+
+## Layout
+
+- `secrets/`: SOPS + age encrypted files only (see `secrets/README.md`)
+- `.sops.yaml`: which age public keys can decrypt `secrets/`
+- `scripts/`: setup and check scripts
+
+## Guards
+
+- `pre-commit install` once per clone. Hooks: gitleaks secret scan, private key detection,
+  and `scripts/check_sops_encrypted.py` (blocks plaintext in `secrets/`).
+- CI runs the same secret scan over full history and the same encryption check.
+
+## Setup
+
+1. Install [sops](https://github.com/getsops/sops) and [age](https://github.com/FiloSottile/age).
+2. Generate this machine's key: `age-keygen -o ~/.config/sops/age/keys.txt`.
+3. Add its public key to `.sops.yaml` and run `sops updatekeys` on existing files.
+"""
+
+
+def _render_infra_agents_md(config: ScaffoldConfig) -> str:
+    return _render_agents_md(config).rstrip() + """
+
+---
+
+## Infra repo rules
+
+- This repo holds configuration and secrets, not application code.
+- Never commit plaintext secrets. Everything in `secrets/` is SOPS-encrypted; the
+  pre-commit hook and CI both enforce it.
+- Never commit private age keys or decrypted files (`*.key`, `keys.txt`, `*.dec.*`).
+- Read secrets at runtime with `sops exec-env`, never by writing them to disk.
+- Do not enable third-party apps that read repo contents on this repo.
+"""
+
+
+def _build_infra_files(config: ScaffoldConfig) -> list[ScaffoldFile]:
+    out = config.out_dir
+    github = out / ".github"
+    return [
+        ScaffoldFile(
+            out / ".pre-commit-config.yaml", _render_infra_pre_commit_config()
+        ),
+        ScaffoldFile(github / "pull_request_template.md", _render_pr_template()),
+        ScaffoldFile(github / "CODEOWNERS", _render_codeowners(config.owner)),
+        ScaffoldFile(
+            github / "ISSUE_TEMPLATE" / "epic.md", _render_issue_epic_template()
+        ),
+        ScaffoldFile(
+            github / "ISSUE_TEMPLATE" / "ticket.md", _render_issue_ticket_template()
+        ),
+        ScaffoldFile(
+            github / "ISSUE_TEMPLATE" / "config.yml",
+            _render_issue_config(config.owner, config.name),
+        ),
+        ScaffoldFile(github / "workflows" / "ci.yml", _render_infra_ci_yaml()),
+        ScaffoldFile(
+            github / "workflows" / "validate-issue.yml",
+            _render_validate_issue_workflow(),
+        ),
+        ScaffoldFile(
+            github / "workflows" / "validate-pr.yml", _render_validate_pr_workflow()
+        ),
+        ScaffoldFile(
+            github / "workflows" / "validate-pr-sop.yml",
+            _render_validate_pr_sop_workflow(),
+        ),
+        ScaffoldFile(github / "dependabot.yml", _render_dependabot_yaml(())),
+        ScaffoldFile(out / ".sops.yaml", _render_sops_yaml()),
+        ScaffoldFile(out / INFRA_SECRETS_DIR / "README.md", _render_secrets_readme()),
+        ScaffoldFile(
+            out / "scripts" / "check_sops_encrypted.py", _render_check_sops_script()
+        ),
+        ScaffoldFile(out / "AGENTS.md", _render_infra_agents_md(config)),
+        ScaffoldFile(out / "README.md", _render_infra_readme(config)),
+        ScaffoldFile(out / ".gitignore", _render_infra_gitignore()),
+        ScaffoldFile(out / ".gitattributes", _render_gitattributes()),
+        ScaffoldFile(out / ".editorconfig", _render_editorconfig()),
+    ]
 
 
 TEMPLATE_FILE_PATHS = (

@@ -100,6 +100,7 @@ poetry run repo-scaffold import backlog --repo OWNER/REPO
 
 # Scaffold generation
 poetry run repo-scaffold init --name NAME --languages go,gin,python,react --owner OWNER --out /path --yes
+poetry run repo-scaffold init --kind infra --name NAME --owner OWNER --out /path --yes   # infra/config repo
 poetry run repo-scaffold apply ci --path . --languages go,gin,python,react
 poetry run repo-scaffold apply templates --path . --name NAME --owner OWNER
 
