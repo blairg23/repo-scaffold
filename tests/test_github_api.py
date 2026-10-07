@@ -316,6 +316,52 @@ def test_repo_create_user() -> None:
 
 
 # ---------------------------------------------------------------------------
+# repo_create with description
+# ---------------------------------------------------------------------------
+
+
+def test_repo_create_with_description() -> None:
+    user_data = json.dumps({"type": "User", "login": "bob"})
+    repo_data = json.dumps(
+        {"full_name": "bob/todd", "html_url": "https://github.com/bob/todd"}
+    )
+
+    responses = [_mock_resp(200, user_data), _mock_resp(201, repo_data)]
+    call_count = 0
+
+    class _CM:
+        def __init__(self, resp: MagicMock) -> None:
+            self._resp = resp
+
+        def __enter__(self) -> MagicMock:
+            return self._resp
+
+        def __exit__(self, *_: object) -> bool:
+            return False
+
+    captured: dict[str, object] = {}
+
+    def _fake_urlopen(req: object) -> object:
+        captured["body"] = json.loads(req.data.decode()) if req.data else {}
+        nonlocal call_count
+        r = _CM(responses[call_count])
+        call_count += 1
+        return r
+
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+        cp = github_api.repo_create(
+            "bob",
+            "todd",
+            "token",
+            visibility="public",
+            description="Tablet of Destinies",
+        )
+
+    assert cp.returncode == 0
+    assert captured["body"].get("description") == "Tablet of Destinies"
+
+
+# ---------------------------------------------------------------------------
 # repo_archive
 # ---------------------------------------------------------------------------
 

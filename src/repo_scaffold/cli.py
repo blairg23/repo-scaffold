@@ -556,6 +556,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip applying repository settings/protections after creation/push",
     )
     create_cmd.add_argument(
+        "--description",
+        help="Repository description (About field)",
+    )
+    create_cmd.add_argument(
         "--dry-run",
         action="store_true",
         help="Print planned actions without changing state",
@@ -1985,6 +1989,7 @@ def main(argv: list[str] | None = None) -> int:
                 owner=ns.owner,
                 name=ns.name,
                 visibility=ns.visibility,
+                description=ns.description,
                 apply_settings=not ns.skip_settings,
                 dry_run=ns.dry_run,
                 stage_files=needs_init,
