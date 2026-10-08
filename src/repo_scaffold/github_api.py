@@ -890,6 +890,24 @@ def repo_archive(repo: str, token: str) -> subprocess.CompletedProcess[str]:
     return rest("PATCH", f"/repos/{repo}", token, {"archived": True})
 
 
+def repo_list(owner: str, token: str) -> subprocess.CompletedProcess[str]:
+    """List every repo owned by `owner` via REST API. Returns a JSON array."""
+    if _is_org(owner, token):
+        return rest_paginated(f"/orgs/{owner}/repos?per_page=100", token)
+
+    login = get_authenticated_login(token)
+    if login and login.lower() == owner.lower():
+        # /user/repos includes the caller's private repos; /users/{owner}/repos
+        # would only ever return the public ones.
+        return rest_paginated("/user/repos?affiliation=owner&per_page=100", token)
+    return rest_paginated(f"/users/{owner}/repos?per_page=100", token)
+
+
+def repo_delete(repo: str, token: str) -> subprocess.CompletedProcess[str]:
+    """Delete a GitHub repo via REST API. Needs the `delete_repo` token scope."""
+    return rest("DELETE", f"/repos/{repo}", token)
+
+
 def _is_org(owner: str, token: str) -> bool:
     cp = rest("GET", f"/users/{owner}", token)
     if cp.returncode != 0:

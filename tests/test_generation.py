@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -60,7 +61,6 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
         ".gitattributes",
         ".editorconfig",
         "Makefile",
-        "scripts/first_time_setup.sh",
         "SPEC.md",
         "go.mod",
         "cmd/demo/main.go",
@@ -128,12 +128,12 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "## Repo-scaffold GitHub workflow" in generated_readme
     assert ".repo-scaffold/project.json" in generated_readme
     assert "AGENTS.md" in generated_readme
-    assert "./scripts/first_time_setup.sh" in generated_readme
+    assert "There are no setup scripts to run" in generated_readme
     assert "repo-scaffold project list" in generated_readme
     assert ".claude/settings.local.json" in generated_readme
     assert "## Backlog bootstrap" not in generated_readme
     assert "## GitHub token permissions" not in generated_readme
-    assert "./scripts/create-issues.sh" not in generated_readme
+    assert "scripts/" not in generated_readme
     env_example = (out_dir / ".env.example").read_text(encoding="utf-8")
     assert "GH_TOKEN=" in env_example
     assert "GITHUB_ORG=" in env_example
@@ -214,25 +214,83 @@ def test_generate_full_scaffold(tmp_path: Path) -> None:
     assert "htmlcov/" in gitignore
     assert ".pre-commit-cache/" in gitignore
     assert not (out_dir / "backlog").exists()
-    first_time_setup = out_dir / "scripts" / "first_time_setup.sh"
-    assert first_time_setup.exists()
-    if sys.platform != "win32":
-        assert first_time_setup.stat().st_mode & 0o111
-    script_text = first_time_setup.read_text(encoding="utf-8")
-    assert "ghp" not in script_text
-    assert "gh project" not in script_text
-    assert (
-        'GH_TOKEN="$GH_PROJECT_TOKEN" poetry run repo-scaffold project list'
-        in script_text
+    assert not (out_dir / "scripts").exists()
+
+
+_GH_INVOCATION = re.compile(r"\bgh (api|auth|repo|project|issue|pr)\b")
+
+
+def test_generated_scaffold_has_no_scripts_dir_or_gh_invocations(
+    tmp_path: Path,
+) -> None:
+    """A fresh scaffold must be runnable with no `gh` binary and no helper scripts.
+
+    repo-scaffold is the whole workflow (#334), so nothing it writes may shell out
+    to the GitHub CLI or re-implement an rs command as a script.
+    """
+    out_dir = tmp_path / "demo"
+    cfg = ScaffoldConfig(
+        name="demo",
+        languages=("go", "python", "react"),
+        owner="acme",
+        license_id="apache-2.0",
+        out_dir=out_dir,
     )
-    assert (
-        "Repo-scaffold GH_TOKEN (leave blank to reuse the project token): "
-        in script_text
+    generate_scaffold(cfg)
+
+    assert not (out_dir / "scripts").exists()
+
+    offenders: list[str] = []
+    for path in sorted(p for p in out_dir.rglob("*") if p.is_file()):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        rel = path.relative_to(out_dir).as_posix()
+        for match in _GH_INVOCATION.finditer(text):
+            offenders.append(f"{rel}: {match.group(0)}")
+        if "command -v gh" in text:
+            offenders.append(f"{rel}: command -v gh")
+
+    assert offenders == []
+
+
+def test_generated_readme_maps_old_script_steps_to_rs_commands(tmp_path: Path) -> None:
+    """Each step the removed scripts used to do names its rs replacement."""
+    out_dir = tmp_path / "demo"
+    cfg = ScaffoldConfig(
+        name="demo",
+        languages=("python",),
+        owner="acme",
+        license_id="apache-2.0",
+        out_dir=out_dir,
     )
-    assert (
-        'upsert_env_line "$ENV_FILE" \'^GH_TOKEN=\' "GH_TOKEN=$REPO_TOKEN"'
-        in script_text
-    )
+    generate_scaffold(cfg)
+
+    readme = (out_dir / "README.md").read_text(encoding="utf-8")
+    assert "## First-time setup" in readme
+    assert "There are no setup scripts to run" in readme
+    # first_time_setup.sh -> copy .env.example and set GH_TOKEN
+    assert "cp .env.example .env" in readme
+    assert "GH_TOKEN" in readme
+    # gh-create-project.sh -> repo-scaffold create
+    assert "repo-scaffold create --repo OWNER/REPO" in readme
+    # gh-apply-settings.sh -> repo-scaffold apply rules / sync templates
+    assert "repo-scaffold apply rules --repo OWNER/REPO --apply" in readme
+    assert "repo-scaffold sync templates --repo OWNER/REPO" in readme
+    # create-issues.sh -> repo-scaffold import backlog + apply backlog
+    assert "repo-scaffold import backlog --repo OWNER/REPO" in readme
+    assert "repo-scaffold apply backlog --repo OWNER/REPO --path ." in readme
+
+
+@pytest.mark.parametrize(
+    "renderer",
+    [
+        "_render_first_time_setup_script",
+        "_render_gh_apply_settings_script",
+        "_render_gh_create_project_script",
+        "_render_create_issues_script",
+    ],
+)
+def test_dead_script_renderers_are_gone(renderer: str) -> None:
+    assert not hasattr(generator_module, renderer)
 
 
 def test_generation_is_deterministic(tmp_path: Path) -> None:
