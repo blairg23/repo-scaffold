@@ -259,7 +259,7 @@ Subcommands:
 Behavior:
 
 - owner resolution defaults in this order: `--project-owner`, then repo/env owner, then the authenticated GitHub login
-- GitHub Projects operations require `project` scope (`gh auth refresh -h github.com -s project`)
+- GitHub Projects operations require `project` scope on `GH_TOKEN` (set in `.env`)
 - `list`, `view`, and `items` are read-only
 - `create` and `edit` are standard write operations and support `--dry-run`
 - destructive commands (`delete`, `item-delete`) require `--danger`
@@ -377,14 +377,14 @@ Per-file output labels:
 
 ## Backlog apply notes
 
-`apply backlog` uses GitHub CLI and Python stdlib only (no `jq`/`yq`/`node`/`pip` dependencies).
+`apply backlog` uses Python stdlib and repo-scaffold's GitHub API (no `gh` CLI, `jq`/`yq`/`node`/`pip` dependencies).
 
 - idempotent by exact issue title and milestone title
 - supports `.env` loading (`GH_TOKEN`, `GITHUB_ORG`, `GITHUB_REPO`, `GH_REPO`; legacy lowercase aliases still work)
 - if `--repo` is omitted, resolves from `GH_REPO` or `GITHUB_ORG` + `GITHUB_REPO` from env/`.env`
 - includes `.env.example` so you can run `cp .env.example .env` and fill credentials safely
-- falls back to `gh auth status` / `gh auth login`
-- supports `--auth-check` to validate token/session (`gh api /user`) before writing anything
+- loads `GH_TOKEN` from `.env` for all GitHub API calls
+- supports `--auth-check` to validate the token (GitHub `/user` API) before writing anything
 - ticket bodies prepend an `Epic: #<number>` link to the created/found epic issue
 - summary output splits epic issue counts and ticket issue counts (plus total issue counts)
 - `--with-project` enables project integration with zero extra args
@@ -565,7 +565,7 @@ Classic PAT scopes:
 - `workflow` (required if pushing `.github/workflows/*`): GitHub rejects workflow file pushes without this
 - `read:org` (recommended/required in many org setups): org repo access checks and org-scoped operations
 - `delete_repo` (optional): only required for automated cleanup/delete flows (for example E2E repo teardown)
-- `project` (optional): only if you later automate GitHub Projects
+- `project` (required): needed for GitHub Projects v2 operations (project board items, backlog sync)
 
 Fine-grained PAT guidance:
 
