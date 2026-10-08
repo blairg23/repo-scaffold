@@ -1430,6 +1430,25 @@ def test_tool_auth_remote_and_push_helpers_cover_common_error_paths(
     )
 
 
+def test_create_or_push_repo_dry_run_prints_description(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    monkeypatch.setattr(create_ops, "_repo_exists", lambda **_: False)
+    lines: list[str] = []
+    create_ops._create_or_push_repo(
+        repo_dir=repo_dir,
+        env={},
+        repo="enkithoth/todd",
+        visibility="private",
+        description="Tablet of Destinies (ToD) aka ToDd",
+        dry_run=True,
+        out=lines.append,
+    )
+    assert "[dry-run]   description: Tablet of Destinies (ToD) aka ToDd" in lines
+
+
 def test_create_or_push_repo_covers_existing_and_create_failures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1446,6 +1465,7 @@ def test_create_or_push_repo_covers_existing_and_create_failures(
         env={},
         repo="acme/repo",
         visibility="public",
+        description=None,
         dry_run=False,
         out=lambda _line: None,
     )
@@ -1456,7 +1476,7 @@ def test_create_or_push_repo_covers_existing_and_create_failures(
     monkeypatch.setattr(
         create_ops,
         "_github_repo_create",
-        lambda owner, name, token, visibility="private": subprocess.CompletedProcess(
+        lambda owner, name, token, visibility="private", description=None: subprocess.CompletedProcess(
             args=[], returncode=1, stdout="", stderr="create failed"
         ),
     )
@@ -1465,6 +1485,7 @@ def test_create_or_push_repo_covers_existing_and_create_failures(
         env={},
         repo="acme/repo",
         visibility="public",
+        description=None,
         dry_run=False,
         out=lambda _line: None,
     )
@@ -1756,7 +1777,11 @@ def test_create_or_push_repo_uses_absolute_source_path(
         return False
 
     def _fake_repo_create(
-        owner: str, name: str, token: str, visibility: str = "private"
+        owner: str,
+        name: str,
+        token: str,
+        visibility: str = "private",
+        description: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         create_calls.append((owner, name, token, visibility))
         return subprocess.CompletedProcess(
@@ -1778,6 +1803,7 @@ def test_create_or_push_repo_uses_absolute_source_path(
         env={},
         repo="acme/example",
         visibility="public",
+        description=None,
         dry_run=False,
         out=lambda _: None,
     )

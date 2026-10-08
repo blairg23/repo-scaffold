@@ -1805,6 +1805,7 @@ def _create_or_push_repo(
     env: dict[str, str],
     repo: str,
     visibility: str,
+    description: str | None,
     dry_run: bool,
     out: Callable[[str], None],
 ) -> tuple[bool, bool, str | None]:
@@ -1824,6 +1825,8 @@ def _create_or_push_repo(
         return False, True, None
 
     out(f"{'[dry-run] ' if dry_run else ''}create repository: {repo} ({visibility})")
+    if description:
+        out(f"{'[dry-run] ' if dry_run else ''}  description: {description}")
     if not dry_run:
         token = (
             _token_from_repo(repo_dir)
@@ -1832,7 +1835,9 @@ def _create_or_push_repo(
             or ""
         )
         owner, name = repo.split("/", 1)
-        cp = _github_repo_create(owner, name, token, visibility=visibility)
+        cp = _github_repo_create(
+            owner, name, token, visibility=visibility, description=description
+        )
         if cp.returncode not in (0, 201):
             return (
                 False,
@@ -2131,6 +2136,7 @@ def create_repository(
     owner: str | None,
     name: str | None,
     visibility: str,
+    description: str | None = None,
     apply_settings: bool,
     dry_run: bool,
     stage_files: bool = False,
@@ -2169,6 +2175,7 @@ def create_repository(
             env=env,
             repo=target_repo,
             visibility=visibility,
+            description=description,
             dry_run=dry_run,
             out=out,
         )

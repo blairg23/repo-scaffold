@@ -867,6 +867,7 @@ def repo_create(
     name: str,
     token: str,
     visibility: str = "private",
+    description: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Create a GitHub repo via REST API. Returns the created repo JSON."""
     is_org = _is_org(owner, token)
@@ -875,10 +876,11 @@ def repo_create(
     else:
         endpoint = "/user/repos"
 
-    payload = {
+    payload: dict[str, object] = {
         "name": name,
         "private": visibility.lower() != "public",
         "auto_init": False,
+        **({"description": description} if description is not None else {}),
     }
     return rest("POST", endpoint, token, payload)
 
