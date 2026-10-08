@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import subprocess
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-import repo_scaffold.cli as cli_module
 
+import repo_scaffold.cli as cli_module
 from repo_scaffold.backlog_ops import BacklogApplySummary, IssueDetail
-from repo_scaffold.create_ops import CreateSummary, SettingsCheckSummary
 from repo_scaffold.cli import main
+from repo_scaffold.create_ops import CreateSummary, SettingsCheckSummary
 from repo_scaffold.delete_ops import DeleteSummary
 from repo_scaffold.project_ops import (
     ProjectInfo,
@@ -3369,7 +3369,7 @@ def test_apply_rules_with_repos_flag_uses_registry_paths(
 def test_apply_rules_with_repos_flag_rejects_unregistered_repo(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr("repo_scaffold.cli.list_registry", lambda: [])
+    monkeypatch.setattr("repo_scaffold.cli.list_registry", list)
 
     rc = main(["apply", "rules", "--repos", "acme/unknown", "--apply"])
     assert rc == 2
@@ -4207,8 +4207,8 @@ def test_docker_list_failure(
 def test_check_templates_with_all_flag_iterates_registry(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from repo_scaffold.registry_ops import RegistryEntry
     from repo_scaffold.create_ops import TemplatesCheckSummary
+    from repo_scaffold.registry_ops import RegistryEntry
 
     monkeypatch.setattr(
         "repo_scaffold.cli.list_registry",
@@ -4236,8 +4236,8 @@ def test_check_templates_with_all_flag_iterates_registry(
 def test_check_templates_returns_zero_when_no_drift(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from repo_scaffold.registry_ops import RegistryEntry
     from repo_scaffold.create_ops import TemplatesCheckSummary
+    from repo_scaffold.registry_ops import RegistryEntry
 
     monkeypatch.setattr(
         "repo_scaffold.cli.list_registry",
@@ -4257,8 +4257,8 @@ def test_check_templates_returns_zero_when_no_drift(
 def test_sync_templates_opens_pr_only_for_confirmed_drifted_repos(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from repo_scaffold.registry_ops import RegistryEntry
     from repo_scaffold.create_ops import TemplatesCheckSummary, TemplatesSyncResult
+    from repo_scaffold.registry_ops import RegistryEntry
 
     monkeypatch.setattr(
         "repo_scaffold.cli.list_registry",
@@ -4299,8 +4299,8 @@ def test_sync_templates_opens_pr_only_for_confirmed_drifted_repos(
 def test_sync_templates_no_drift_skips_pr(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from repo_scaffold.registry_ops import RegistryEntry
     from repo_scaffold.create_ops import TemplatesCheckSummary
+    from repo_scaffold.registry_ops import RegistryEntry
 
     monkeypatch.setattr(
         "repo_scaffold.cli.list_registry",
@@ -4334,8 +4334,8 @@ def test_sync_templates_counts_failed_pr_open_as_error(
     """A drifted repo whose branch/write/PR-open failed is a failed sync, not
     a no-op -- it must not report success while leaving that repo's drift
     unaddressed."""
-    from repo_scaffold.registry_ops import RegistryEntry
     from repo_scaffold.create_ops import TemplatesCheckSummary, TemplatesSyncResult
+    from repo_scaffold.registry_ops import RegistryEntry
 
     monkeypatch.setattr(
         "repo_scaffold.cli.list_registry",
@@ -4367,8 +4367,8 @@ def test_sync_templates_counts_failed_pr_open_as_error(
 def test_check_templates_continues_after_repo_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from repo_scaffold.registry_ops import RegistryEntry
     from repo_scaffold.create_ops import TemplatesCheckSummary
+    from repo_scaffold.registry_ops import RegistryEntry
 
     monkeypatch.setattr(
         "repo_scaffold.cli.list_registry",
@@ -4398,8 +4398,8 @@ def test_check_templates_continues_after_repo_error(
 def test_sync_templates_continues_after_repo_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from repo_scaffold.registry_ops import RegistryEntry
     from repo_scaffold.create_ops import TemplatesCheckSummary, TemplatesSyncResult
+    from repo_scaffold.registry_ops import RegistryEntry
 
     monkeypatch.setattr(
         "repo_scaffold.cli.list_registry",
@@ -4441,8 +4441,8 @@ def test_sync_templates_continues_after_repo_error(
 def test_check_configs_with_all_flag_iterates_registry(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from repo_scaffold.registry_ops import RegistryEntry
     from repo_scaffold.create_ops import ConfigsCheckSummary
+    from repo_scaffold.registry_ops import RegistryEntry
 
     monkeypatch.setattr(
         "repo_scaffold.cli.list_registry",
@@ -4498,8 +4498,8 @@ def test_check_configs_languages_override_bypasses_local_resolution(
 def test_sync_configs_counts_failed_pr_open_as_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from repo_scaffold.registry_ops import RegistryEntry
     from repo_scaffold.create_ops import ConfigsCheckSummary, ConfigsSyncResult
+    from repo_scaffold.registry_ops import RegistryEntry
 
     monkeypatch.setattr(
         "repo_scaffold.cli.list_registry",
@@ -4533,8 +4533,8 @@ def test_sync_configs_counts_failed_pr_open_as_error(
 def test_sync_configs_opens_pr_for_drifted_repo(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from repo_scaffold.registry_ops import RegistryEntry
     from repo_scaffold.create_ops import ConfigsCheckSummary, ConfigsSyncResult
+    from repo_scaffold.registry_ops import RegistryEntry
 
     monkeypatch.setattr(
         "repo_scaffold.cli.list_registry",
@@ -4643,3 +4643,40 @@ def test_layout_warning_silent_with_mixed_registry(
 
     stderr = capsys.readouterr().err
     assert stderr == ""
+
+
+def test_init_kind_infra_writes_infra_scaffold(tmp_path: Path) -> None:
+    out_dir = tmp_path / "todd"
+    rc = main(
+        [
+            "init",
+            "--kind",
+            "infra",
+            "--name",
+            "todd",
+            "--owner",
+            "EnkiThoth",
+            "--out",
+            str(out_dir),
+            "--yes",
+        ]
+    )
+    assert rc == 0
+    assert (out_dir / ".sops.yaml").exists()
+    assert (out_dir / "scripts" / "check_sops_encrypted.py").exists()
+    assert not (out_dir / "pyproject.toml").exists()
+    assert not (out_dir / "LICENSE").exists()
+
+
+def test_init_kind_infra_rejects_languages() -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["init", "--kind", "infra", "--name", "todd", "--languages", "python"])
+    assert exc.value.code == 2
+
+
+def test_init_kind_app_is_default(tmp_path: Path) -> None:
+    out_dir = tmp_path / "app"
+    rc = main(["init", "--name", "app", "--out", str(out_dir), "--yes"])
+    assert rc == 0
+    assert (out_dir / "pyproject.toml").exists()
+    assert not (out_dir / ".sops.yaml").exists()

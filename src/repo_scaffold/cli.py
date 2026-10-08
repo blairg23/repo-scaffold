@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .auth_tokens import is_placeholder_token, resolve_gh_token
+from .backlog_import import build_backlog_import_file
 from .backlog_ops import (
     BacklogApplySummary,
     IssueDetail,
@@ -16,46 +17,6 @@ from .backlog_ops import (
     resolve_authenticated_login,
     resolve_project_target_for_auth_check,
 )
-from .github_api import (
-    branch_create,
-    branch_delete,
-    branch_rename,
-    issue_add_sub_issue,
-    issue_node_id,
-    issue_remove_sub_issue,
-    issue_assign,
-    issue_close,
-    issue_comment,
-    issue_create,
-    issue_delete,
-    issue_label,
-    issue_list,
-    issue_sync_hierarchy,
-    issue_update,
-    label_apply_preset,
-    label_create,
-    label_delete,
-    label_list,
-    pr_annotations,
-    pr_checks,
-    pr_comment,
-    pr_create,
-    pr_list,
-    pr_list_comments,
-    pr_merge,
-    react,
-    pr_rerun,
-    pr_resolve_thread,
-    pr_review_threads,
-    pr_check_sop,
-    pr_request_reviewer,
-    pr_reviews,
-    pr_update,
-    pr_view,
-    repo_archive,
-    token_from_repo,
-)
-from .backlog_import import build_backlog_import_file
 from .create_ops import (
     ConfigsCheckSummary,
     ConfigsSyncResult,
@@ -73,6 +34,12 @@ from .create_ops import (
     sync_repository_templates,
 )
 from .delete_ops import DeleteSummary, delete_repositories
+from .discover_ops import (
+    discover_repos,
+    parse_repo_selection,
+    prompt_for_token,
+    upsert_env_var,
+)
 from .generator import (
     SUPPORTED_LICENSE,
     ScaffoldConfig,
@@ -83,22 +50,47 @@ from .generator import (
     detect_languages_from_repo,
     parse_language_csv,
 )
+from .github_api import (
+    branch_create,
+    branch_delete,
+    branch_rename,
+    issue_add_sub_issue,
+    issue_assign,
+    issue_close,
+    issue_comment,
+    issue_create,
+    issue_delete,
+    issue_label,
+    issue_list,
+    issue_node_id,
+    issue_remove_sub_issue,
+    issue_sync_hierarchy,
+    issue_update,
+    label_apply_preset,
+    label_create,
+    label_delete,
+    label_list,
+    pr_annotations,
+    pr_check_sop,
+    pr_checks,
+    pr_comment,
+    pr_create,
+    pr_list,
+    pr_list_comments,
+    pr_merge,
+    pr_request_reviewer,
+    pr_rerun,
+    pr_resolve_thread,
+    pr_review_threads,
+    pr_reviews,
+    pr_update,
+    pr_view,
+    react,
+    repo_archive,
+    token_from_repo,
+)
 from .overwrite_policy import ApplySummary, OverwritePolicy, apply_files
 from .project_config import resolve_languages_for_repo
-from .discover_ops import (
-    discover_repos,
-    parse_repo_selection,
-    prompt_for_token,
-    upsert_env_var,
-)
-from .registry_ops import (
-    RegistryEntry,
-    forget_repo,
-    list_registry,
-    load_registry,
-    register_repo,
-    save_registry,
-)
 from .project_ops import (
     ProjectItemsSummary,
     ProjectListSummary,
@@ -118,6 +110,14 @@ from .project_ops import (
     undo_project_backup,
     update_project_item_status,
     view_project,
+)
+from .registry_ops import (
+    RegistryEntry,
+    forget_repo,
+    list_registry,
+    load_registry,
+    register_repo,
+    save_registry,
 )
 
 DEFAULT_INIT_NAME_PREFIX = "repo-scaffold-e2e"
@@ -430,8 +430,18 @@ def _add_scaffold_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--languages",
-        default=DEFAULT_INIT_LANGUAGES,
+        default=None,
         help=f"Comma-separated language list (default: {DEFAULT_INIT_LANGUAGES})",
+    )
+    parser.add_argument(
+        "--kind",
+        choices=["app", "infra"],
+        default="app",
+        help=(
+            "Repo kind (default: app). 'infra' scaffolds a language-free config/secrets "
+            "repo with SOPS + age, gitleaks and an encrypted-secrets check; it cannot be "
+            "combined with --languages."
+        ),
     )
     parser.add_argument("--owner", help="GitHub owner (user or org)")
     parser.add_argument(
@@ -1895,7 +1905,7 @@ def _parse_languages_or_die(
 
 
 def _print_file_summary(summary: ApplySummary, *, dry_run: bool) -> None:
-    print("")
+    print()
     print("Summary:")
     if dry_run:
         print("  mode: dry-run")
@@ -2021,7 +2031,7 @@ def main(argv: list[str] | None = None) -> int:
         if temp_create_dir is not None:
             temp_create_dir.cleanup()
 
-        print("")
+        print()
         print("Summary:")
         if ns.dry_run:
             print("  mode: dry-run")
@@ -2053,7 +2063,7 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
             return 1
 
-        print("")
+        print()
         print("Summary:")
         if not bool(getattr(ns, "do_apply", False)):
             print("  mode: dry-run")
@@ -2072,7 +2082,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if ns.mode == "init":
         init_name = (ns.name or "").strip() or _default_init_name()
-        languages = _parse_languages_or_die(parser, ns.languages)
+        if ns.kind == "infra":
+            if ns.languages is not None:
+                parser.error("--kind infra cannot be combined with --languages")
+            init_languages: tuple[str, ...] = ()
+        else:
+            init_languages = _parse_languages_or_die(
+                parser, ns.languages or DEFAULT_INIT_LANGUAGES
+            )
         out_dir = Path(ns.out) if ns.out else _resolve_output_path(init_name)
         if out_dir.exists() and not out_dir.is_dir():
             print(
@@ -2085,10 +2102,11 @@ def main(argv: list[str] | None = None) -> int:
 
         cfg = ScaffoldConfig(
             name=init_name,
-            languages=languages,
+            languages=init_languages,
             owner=ns.owner,
             license_id=ns.license_id,
             out_dir=out_dir,
+            kind=ns.kind,
         )
         rc = _run_file_apply(build_scaffold_files(cfg), _policy_from_ns(ns))
         if rc == 0:
@@ -2308,7 +2326,7 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
             return 1
 
-        print("")
+        print()
         print("Summary:")
         if ns.dry_run:
             print("  mode: dry-run")
@@ -2344,7 +2362,7 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
             return 1
 
-        print("")
+        print()
         print("Summary:")
         if getattr(ns, "dry_run", False):
             print("  mode: dry-run")
@@ -2380,7 +2398,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(str(exc), file=sys.stderr)
                 failures += 1
 
-        print("")
+        print()
         print("Summary:")
         if len(targets) > 1:
             print(f"  repos: {len(targets)}")
@@ -2415,7 +2433,7 @@ def main(argv: list[str] | None = None) -> int:
                 total_failed += 1
                 continue
 
-            print("")
+            print()
             print("Summary:")
             print(f"  repo: {check_summary.repo}")
             print(f"  checks passed: {check_summary.passed}")
@@ -2471,7 +2489,7 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
             return 1
 
-        print("")
+        print()
         print("Summary:")
         print(f"  repo: {settings_summary.repo}")
         if langs:
@@ -2648,11 +2666,11 @@ def main(argv: list[str] | None = None) -> int:
                 drifted.append((target_repo, repo_dir))
 
         if not drifted:
-            print("")
+            print()
             print("No drift found. Nothing to apply.")
             return 1 if errors else 0
 
-        print("")
+        print()
         applied = 0
         for target_repo, repo_dir in drifted:
             if not ns.yes:
@@ -2678,7 +2696,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(str(exc), file=sys.stderr)
                 errors += 1
 
-        print("")
+        print()
         print("Summary:")
         print(f"  repos checked: {len(targets)}")
         print(f"  repos drifted: {len(drifted)}")
@@ -2707,11 +2725,11 @@ def main(argv: list[str] | None = None) -> int:
                 drifted_targets.append((target_repo, repo_dir))
 
         if not drifted_targets:
-            print("")
+            print()
             print("No drift found. Nothing to sync.")
             return 1 if errors else 0
 
-        print("")
+        print()
         opened = 0
         for target_repo, repo_dir in drifted_targets:
             if not ns.yes:
@@ -2740,7 +2758,7 @@ def main(argv: list[str] | None = None) -> int:
                 # silently leaving that repo's drift unaddressed.
                 errors += 1
 
-        print("")
+        print()
         print("Summary:")
         print(f"  repos checked: {len(targets)}")
         print(f"  repos drifted: {len(drifted_targets)}")
@@ -2784,11 +2802,11 @@ def main(argv: list[str] | None = None) -> int:
                 drifted_configs_targets.append((target_repo, repo_dir))
 
         if not drifted_configs_targets:
-            print("")
+            print()
             print("No drift found. Nothing to sync.")
             return 1 if errors else 0
 
-        print("")
+        print()
         opened = 0
         for target_repo, repo_dir in drifted_configs_targets:
             if not ns.yes:
@@ -2822,7 +2840,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 errors += 1
 
-        print("")
+        print()
         print("Summary:")
         print(f"  repos checked: {len(targets)}")
         print(f"  repos drifted: {len(drifted_configs_targets)}")
@@ -2853,7 +2871,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(
                         f"  - {project.owner}/#{project.number} {project.title}{closed_suffix}"
                     )
-                print("")
+                print()
                 print("Summary:")
                 print(f"  owner: {list_summary.owner}")
                 print(f"  projects: {len(list_summary.projects)}")
@@ -2909,7 +2927,7 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"    repo: {item.repository}")
                     if item.content_url:
                         print(f"    url: {item.content_url}")
-                print("")
+                print()
                 print("Summary:")
                 print(f"  items: {len(items_summary.items)}")
                 return 0
@@ -3067,7 +3085,7 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
             return 1
 
-        print("")
+        print()
         print("Summary:")
         if getattr(ns, "dry_run", False):
             print("  mode: dry-run")
@@ -3140,7 +3158,7 @@ def main(argv: list[str] | None = None) -> int:
             prompt=input,
             is_tty=sys.stdin.isatty(),
         )
-        print("")
+        print()
         print("Summary:")
         if ns.dry_run:
             print("  mode: dry-run")
@@ -3207,7 +3225,7 @@ def main(argv: list[str] | None = None) -> int:
             if issue.assignees:
                 print(f"Assignees: {', '.join(issue.assignees)}")
             if issue.body:
-                print("")
+                print()
                 print(issue.body)
         return 0
 
@@ -3468,7 +3486,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Branch: {pr['head']['ref']} -> {pr['base']['ref']}")
                 print(f"Author: {pr['user']['login']}")
                 if pr.get("body"):
-                    print("")
+                    print()
                     print(pr["body"])
             return 0
 

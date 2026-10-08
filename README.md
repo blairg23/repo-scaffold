@@ -130,6 +130,17 @@ poetry run repo-scaffold init
 
 Legacy compatibility: running without an explicit mode maps to `init`.
 
+Infra/config repos (machine setup, agent config, encrypted secrets):
+
+```bash
+poetry run repo-scaffold init --kind infra --name todd --owner EnkiThoth
+```
+
+- `--kind` is `app` (default, unchanged behavior) or `infra`; `infra` cannot be combined with `--languages`
+- generates `.sops.yaml`, `secrets/README.md`, `scripts/check_sops_encrypted.py`, a CI workflow (gitleaks + SOPS check), pre-commit hooks, and an infra-flavored `README.md`/`AGENTS.md`
+- no language files, LICENSE, SPEC.md, docs/, Makefile or `.env.example`
+- workflow: add each machine's age public key to `.sops.yaml`, then `sops encrypt --in-place secrets/<file>`; the check fails CI and pre-commit if any value in `secrets/` is plaintext
+
 ### `create`
 
 Create/push a remote repository from a local folder.
