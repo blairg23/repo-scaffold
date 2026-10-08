@@ -40,6 +40,8 @@ Repo-local GitHub convention:
 poetry install
 ```
 
+Requires Python 3.11+ (the `NotRequired` import from `typing` requires 3.11+).
+
 ## Docker dev environment
 
 There are two distinct Docker mechanisms in this repo -- don't confuse them:

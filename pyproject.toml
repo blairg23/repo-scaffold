@@ -15,7 +15,7 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.10,<4.0"
+python = ">=3.11,<4.0"
 # Docker SDK: communicates with the Docker daemon via socket/named pipe.
 # Preferred over raw urllib here because Docker's transport layer differs per OS
 # (Unix socket on Linux/Mac, named pipe on Windows) -- the SDK abstracts this cleanly.
