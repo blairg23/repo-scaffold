@@ -719,7 +719,7 @@ def _repo_readme_first_time_setup_lines() -> list[str]:
         "",
         "```bash",
         "repo-scaffold import backlog --repo OWNER/REPO",
-        "repo-scaffold apply backlog --repo OWNER/REPO --path .",
+        "repo-scaffold apply backlog --repo OWNER/REPO --path . --with-project",
         "```",
         "",
         "Projects v2 operations run through `repo-scaffold project ...`; see",

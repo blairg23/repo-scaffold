@@ -277,7 +277,11 @@ def test_generated_readme_maps_old_script_steps_to_rs_commands(tmp_path: Path) -
     assert "repo-scaffold sync templates --repo OWNER/REPO" in readme
     # create-issues.sh -> repo-scaffold import backlog + apply backlog
     assert "repo-scaffold import backlog --repo OWNER/REPO" in readme
-    assert "repo-scaffold apply backlog --repo OWNER/REPO --path ." in readme
+    # --with-project is required for the promised Projects v2 board (not just issues)
+    assert (
+        "repo-scaffold apply backlog --repo OWNER/REPO --path . --with-project"
+        in readme
+    )
 
 
 @pytest.mark.parametrize(

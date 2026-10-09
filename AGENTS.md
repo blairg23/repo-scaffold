@@ -20,12 +20,30 @@ Requires Python 3.11+ (`pyproject.toml` sets `python = ">=3.11,<4.0"`; the code 
 
 `GH_TOKEN` lives in `.env`. Commands load it automatically via `_seed_env_from_dotenv`.
 Copy `.env.example` to `.env` and fill in the token. It must be a classic PAT with
-`repo`, `workflow`, and `project` scopes.
+`repo`, `workflow`, and `project` scopes -- plus `delete_repo` if you run `delete`
+(see below).
 
 ```bash
 cp .env.example .env
 # Edit .env and set GH_TOKEN=<your-token>
 ```
+
+### A token is the only credential
+
+Every GitHub operation authenticates with `GH_TOKEN`/`GITHUB_TOKEN` against the REST and
+GraphQL APIs. There is no `gh` binary anywhere in repo-scaffold and no `gh` credential
+store to fall back on, so an environment where `gh auth login` would have worked is not
+sufficient on its own -- the token must be set.
+
+This changed for `delete`, which previously shelled out to `gh repo delete` and so could
+run on `gh`'s stored credentials. Remote deletion now requires:
+
+- `GH_TOKEN`/`GITHUB_TOKEN` to be present, and
+- the `delete_repo` scope on a classic PAT (or `Administration: Read and write` on a
+  fine-grained PAT) -- `repo` alone is not enough.
+
+`delete` resolves and validates the token up front and fails before deleting anything if
+it is missing or rejected. `delete --local-only` touches no remote and needs no token.
 
 ---
 
@@ -335,6 +353,14 @@ poetry run repo-scaffold sync configs --repo OWNER/REPO [--repos a,b | --all] [-
 # Archive a repo (read-only; reversible via the GitHub UI)
 # Prompts for confirmation unless --yes is passed; refuses in a non-interactive shell without --yes.
 poetry run repo-scaffold repo archive --repo OWNER/REPO [--yes]
+
+# Delete matching repos -- IRREVERSIBLE, and not the same thing as archiving.
+# Preview-only by default; --apply performs the deletion. Remote deletion needs a token
+# with `delete_repo` (see Auth) -- there is no `gh` credential fallback.
+poetry run repo-scaffold delete --owner OWNER --prefix PREFIX [--exact NAME] [--apply] [--yes]
+
+# Local directories only -- no remote deletion, no token required
+poetry run repo-scaffold delete --local-only --local-root PATH [--apply]
 ```
 
 **Supported languages:** `go`, `gin`, `python`, `react`
