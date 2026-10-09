@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
+
+from . import github_api
 
 
 @dataclass(frozen=True)
@@ -38,16 +39,6 @@ class DeleteSummary:
         return self.remote_failures + self.local_failures
 
 
-def _run_gh(cwd: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["gh", *args],
-        cwd=cwd,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
-
 def _parse_owner_from_repo_ref(raw: str) -> str | None:
     parts = [part.strip() for part in raw.strip().split("/") if part.strip()]
     if len(parts) == 2:
@@ -77,19 +68,22 @@ def _resolve_owner(owner: str | None) -> str:
     )
 
 
-def _ensure_gh_ready(cwd: Path) -> None:
-    if shutil.which("gh") is None:
-        raise RuntimeError("GitHub CLI (gh) is required.")
-
-    cp = _run_gh(cwd, ["auth", "status"])
-    if cp.returncode != 0:
+def _resolve_api_token(cwd: Path) -> str:
+    """Resolve and verify the GitHub token used for remote deletes."""
+    token = github_api.token_from_repo(cwd)
+    if not token:
         raise RuntimeError(
-            "Authenticate first: gh auth login (or set GH_TOKEN/GITHUB_TOKEN in .env/environment)."
+            "No GitHub token found. Set GH_TOKEN (or GITHUB_TOKEN) in .env/environment."
         )
+    if not github_api.validate_token(token):
+        raise RuntimeError(
+            "GitHub token was rejected. Check GH_TOKEN/GITHUB_TOKEN in .env/environment."
+        )
+    return token
 
 
-def _list_repo_names(*, cwd: Path, owner: str) -> list[str]:
-    cp = _run_gh(cwd, ["repo", "list", owner, "--limit", "1000", "--json", "name"])
+def _list_repo_names(*, owner: str, token: str) -> list[str]:
+    cp = github_api.repo_list(owner, token)
     if cp.returncode != 0:
         raise RuntimeError(
             cp.stderr.strip() or f"Failed listing repositories for owner '{owner}'."
@@ -207,11 +201,12 @@ def delete_repositories(
         local_enabled = True
 
     resolved_owner: str | None = None
+    token: str | None = None
     remote_matches: list[str] = []
     if remote_enabled:
         resolved_owner = _resolve_owner(owner)
-        _ensure_gh_ready(cwd)
-        repo_names = _list_repo_names(cwd=cwd, owner=resolved_owner)
+        token = _resolve_api_token(cwd)
+        repo_names = _list_repo_names(owner=resolved_owner, token=token)
         remote_matches = _select_matches(
             repo_names=repo_names, prefix=prefix, exact_names=exact_names
         )
@@ -299,11 +294,11 @@ def delete_repositories(
 
     remote_deleted = 0
     remote_failures = 0
-    if remote_enabled and resolved_owner is not None:
+    if remote_enabled and resolved_owner is not None and token is not None:
         for name in remote_matches:
             full_repo = f"{resolved_owner}/{name}"
             out(f"DELETE  {full_repo}")
-            cp = _run_gh(cwd, ["repo", "delete", full_repo, "--yes"])
+            cp = github_api.repo_delete(full_repo, token)
             if cp.returncode == 0:
                 remote_deleted += 1
             else:
