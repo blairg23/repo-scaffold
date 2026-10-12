@@ -32,7 +32,7 @@ Repo-local GitHub convention:
 - `apply backlog --with-project` writes or refreshes that file automatically
 - older repos can create or refresh it with `project sync-metadata`
 - generated repos include `AGENTS.md` so local agents know to use `GH_REPO` and `.repo-scaffold/project.json` as their GitHub context
-- generated repos include `.claude/settings.local.json` and `scripts/first_time_setup.sh` for the local GitHub Projects v2 token workflow
+- generated repos include `.claude/settings.local.json` for the local GitHub Projects v2 token workflow, and a README "First-time setup" section listing the `repo-scaffold` command for each setup step -- no generated scripts, no `gh` binary
 
 ## Install
 
@@ -122,7 +122,7 @@ Defaults:
 - output defaults to `./<name>` relative to CWD, or `$SCAFFOLD_OUTPUT_DIR/<name>` when that env var is set in `.env`
 - scaffolds include `.pre-commit-config.yaml`
 - Python scaffolds include `tox.ini`; generated CI runs `tox` (`lint`, `type`, `coverage`)
-- scaffolds include `.env.example`, `.claude/settings.local.json`, and `scripts/first_time_setup.sh` for local GitHub Projects v2 setup
+- scaffolds include `.env.example` and `.claude/settings.local.json` for local GitHub Projects v2 setup; the generated README's "First-time setup" section walks through it with `repo-scaffold` commands only
 
 Fast path (no required flags):
 
@@ -559,7 +559,7 @@ Validation/behavior:
 
 ## GitHub token permissions
 
-If you use `GH_TOKEN`/`GITHUB_TOKEN` instead of `gh auth login`, the token must include permissions for the features you run.
+All GitHub access goes through `GH_TOKEN`/`GITHUB_TOKEN` and the REST/GraphQL APIs -- there is no `gh` CLI anywhere in repo-scaffold. The token must include permissions for the features you run.
 
 Classic PAT scopes:
 
@@ -577,7 +577,7 @@ Fine-grained PAT guidance:
 - `Administration`: Read and write (settings + rulesets + legacy branch-protection cleanup endpoints)
 - `Workflows`: Read and write (workflow file pushes)
 
-Note: if your org policy blocks some operations for fine-grained PATs (especially repo creation), use a classic PAT or `gh auth login`.
+Note: if your org policy blocks some operations for fine-grained PATs (especially repo creation), use a classic PAT.
 
 ## Custom markdown templates
 
@@ -722,7 +722,7 @@ Optional env toggles:
 - `GITHUB_E2E_KEEP_REPO=1` to keep the remote repo after test
 - `GITHUB_E2E_SKIP_SETTINGS_ASSERTS=1` to skip repository settings assertions
 
-Note: automatic cleanup (`gh repo delete`) needs `delete_repo` scope; without it, the test warns and leaves the repo.
+Note: automatic cleanup deletes the repo via the GitHub REST API, which needs `delete_repo` scope; without it, the test warns and leaves the repo.
 
 ## E2E Repo Cleanup
 

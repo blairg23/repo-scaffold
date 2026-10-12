@@ -398,6 +398,121 @@ def test_repo_archive_returns_error_on_failure() -> None:
 
 
 # ---------------------------------------------------------------------------
+# repo_list / repo_delete (replace the old `gh repo list` / `gh repo delete`)
+# ---------------------------------------------------------------------------
+
+
+def _urlopen_sequence(responses: list[MagicMock], captured: list[str]) -> "object":
+    """Return a urlopen side_effect that records URLs and replays `responses`."""
+    call_count = 0
+
+    def _fake_urlopen(req: urllib.request.Request) -> MagicMock:
+        nonlocal call_count
+        captured.append(req.full_url)
+        resp = responses[call_count]
+        call_count += 1
+        return resp
+
+    return _fake_urlopen
+
+
+def test_repo_list_uses_org_endpoint_for_orgs() -> None:
+    urls: list[str] = []
+    responses = [
+        _mock_resp(200, json.dumps({"type": "Organization", "login": "acme"})),
+        _mock_resp(200, json.dumps([{"name": "one"}, {"name": "two"}])),
+    ]
+
+    with patch(
+        "urllib.request.urlopen", side_effect=_urlopen_sequence(responses, urls)
+    ):
+        cp = github_api.repo_list("acme", "token")
+
+    assert cp.returncode == 0
+    assert [item["name"] for item in json.loads(cp.stdout)] == ["one", "two"]
+    assert urls[-1] == "https://api.github.com/orgs/acme/repos?per_page=100"
+
+
+def test_repo_list_uses_user_repos_for_the_authenticated_owner() -> None:
+    """/user/repos is the only listing that includes the caller's private repos."""
+    urls: list[str] = []
+    responses = [
+        _mock_resp(200, json.dumps({"type": "User", "login": "alice"})),
+        _mock_resp(200, json.dumps({"login": "Alice"})),
+        _mock_resp(200, json.dumps([{"name": "secret"}])),
+    ]
+
+    with patch(
+        "urllib.request.urlopen", side_effect=_urlopen_sequence(responses, urls)
+    ):
+        cp = github_api.repo_list("alice", "token")
+
+    assert cp.returncode == 0
+    assert [item["name"] for item in json.loads(cp.stdout)] == ["secret"]
+    assert (
+        urls[-1] == "https://api.github.com/user/repos?affiliation=owner&per_page=100"
+    )
+
+
+def test_repo_list_uses_public_user_endpoint_for_another_user() -> None:
+    urls: list[str] = []
+    responses = [
+        _mock_resp(200, json.dumps({"type": "User", "login": "bob"})),
+        _mock_resp(200, json.dumps({"login": "alice"})),
+        _mock_resp(200, json.dumps([{"name": "bobs-repo"}])),
+    ]
+
+    with patch(
+        "urllib.request.urlopen", side_effect=_urlopen_sequence(responses, urls)
+    ):
+        cp = github_api.repo_list("bob", "token")
+
+    assert cp.returncode == 0
+    assert urls[-1] == "https://api.github.com/users/bob/repos?per_page=100"
+
+
+def test_repo_list_propagates_api_errors() -> None:
+    def _always_fails(_req: urllib.request.Request) -> MagicMock:
+        # A fresh HTTPError per call: the owner-type and login probes consume one each.
+        raise _http_error(401, '{"message":"Bad credentials"}')
+
+    with patch("urllib.request.urlopen", side_effect=_always_fails):
+        cp = github_api.repo_list("acme", "token")
+
+    assert cp.returncode == 401
+    assert "Bad credentials" in cp.stderr
+
+
+def test_repo_delete_sends_delete_to_repo_endpoint() -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_urlopen(req: urllib.request.Request) -> MagicMock:
+        captured["method"] = req.get_method()
+        captured["url"] = req.full_url
+        captured["body"] = req.data
+        return _mock_resp(204, "")
+
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+        cp = github_api.repo_delete("alice/myrepo", "token")
+
+    assert cp.returncode == 0
+    assert captured["method"] == "DELETE"
+    assert captured["url"] == "https://api.github.com/repos/alice/myrepo"
+    assert captured["body"] is None
+
+
+def test_repo_delete_reports_missing_delete_repo_scope() -> None:
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=_http_error(403, '{"message":"Must have admin rights"}'),
+    ):
+        cp = github_api.repo_delete("alice/myrepo", "token")
+
+    assert cp.returncode == 403
+    assert "Must have admin rights" in cp.stderr
+
+
+# ---------------------------------------------------------------------------
 # validate_token / get_authenticated_login
 # ---------------------------------------------------------------------------
 

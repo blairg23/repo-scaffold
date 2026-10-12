@@ -14,6 +14,7 @@ import pytest
 from repo_scaffold.backlog_ops import apply_backlog
 from repo_scaffold.cli import main
 from repo_scaffold.create_ops import create_repository
+from repo_scaffold.github_api import repo_delete, resolve_token
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -353,9 +354,8 @@ def test_real_world_github_e2e(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         assert body.startswith("Epic: #")
     finally:
         if created_remote and not keep_repo:
-            delete_cp = _run_gh(
-                ["repo", "delete", target_repo, "--yes"], cwd=project_root
-            )
+            # Cleanup goes through the REST API, like `repo-scaffold delete` does.
+            delete_cp = repo_delete(target_repo, resolve_token() or "")
             if delete_cp.returncode != 0:
                 print(
                     "WARNING: cleanup could not delete E2E repo. "

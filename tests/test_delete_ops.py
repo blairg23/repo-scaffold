@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -7,6 +9,8 @@ import pytest
 
 import repo_scaffold.delete_ops as delete_ops
 from repo_scaffold.delete_ops import delete_repositories
+
+TOKEN = "ghp_test_token"
 
 
 def _cp(
@@ -17,31 +21,60 @@ def _cp(
     )
 
 
+def _no_gh_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`repo-scaffold delete` must work with no gh binary installed (#334).
+
+    Emptying PATH is stronger than stubbing `shutil.which`: anything that tried to
+    exec `gh` would fail outright rather than find a developer's local install.
+    """
+    monkeypatch.setenv("PATH", "")
+    assert shutil.which("gh") is None
+
+
+def _stub_token(monkeypatch: pytest.MonkeyPatch, token: str | None = TOKEN) -> None:
+    monkeypatch.setattr(delete_ops.github_api, "token_from_repo", lambda _cwd: token)
+    monkeypatch.setattr(delete_ops.github_api, "validate_token", lambda _token: True)
+
+
+def _stub_repo_list(
+    monkeypatch: pytest.MonkeyPatch,
+    names: list[str],
+    *,
+    calls: list[tuple[str, str]] | None = None,
+) -> None:
+    payload = json.dumps([{"name": name} for name in names])
+
+    def _fake_repo_list(owner: str, token: str) -> subprocess.CompletedProcess[str]:
+        if calls is not None:
+            calls.append((owner, token))
+        return _cp(["repo_list"], code=0, stdout=payload)
+
+    monkeypatch.setattr(delete_ops.github_api, "repo_list", _fake_repo_list)
+
+
+def _forbid_repo_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _unexpected(repo: str, _token: str) -> subprocess.CompletedProcess[str]:
+        raise AssertionError(f"repo_delete should not be called: {repo}")
+
+    monkeypatch.setattr(delete_ops.github_api, "repo_delete", _unexpected)
+
+
 def test_delete_repositories_dry_run_prefix(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GITHUB_ORG", "acme")
     monkeypatch.delenv("GH_REPO", raising=False)
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
-    monkeypatch.setattr(
-        "repo_scaffold.delete_ops.shutil.which", lambda _name: "/usr/bin/gh"
+    _no_gh_on_path(monkeypatch)
+    _stub_token(monkeypatch)
+    _forbid_repo_delete(monkeypatch)
+
+    list_calls: list[tuple[str, str]] = []
+    _stub_repo_list(
+        monkeypatch,
+        ["repo-scaffold-e2e", "repo-scaffold-e2e-20260311", "other"],
+        calls=list_calls,
     )
-
-    calls: list[list[str]] = []
-
-    def _fake_run_gh(_cwd: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-        calls.append(args)
-        if args == ["auth", "status"]:
-            return _cp(args, code=0)
-        if args == ["repo", "list", "acme", "--limit", "1000", "--json", "name"]:
-            return _cp(
-                args,
-                code=0,
-                stdout='[{"name":"repo-scaffold-e2e"},{"name":"repo-scaffold-e2e-20260311"},{"name":"other"}]',
-            )
-        raise AssertionError(f"unexpected gh args: {args}")
-
-    monkeypatch.setattr("repo_scaffold.delete_ops._run_gh", _fake_run_gh)
 
     out_lines: list[str] = []
     err_lines: list[str] = []
@@ -71,7 +104,7 @@ def test_delete_repositories_dry_run_prefix(
     assert summary.local_skipped == 0
     assert summary.local_failures == 0
     assert any("Dry-run only" in line for line in out_lines)
-    assert not any(args[:2] == ["repo", "delete"] for args in calls)
+    assert list_calls == [("acme", TOKEN)]
     assert err_lines == []
 
 
@@ -81,34 +114,28 @@ def test_delete_repositories_apply_exact_only(
     monkeypatch.setenv("GH_REPO", "github.com/acme/some-repo")
     monkeypatch.delenv("GITHUB_ORG", raising=False)
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
-    monkeypatch.setattr(
-        "repo_scaffold.delete_ops.shutil.which", lambda _name: "/usr/bin/gh"
+    _no_gh_on_path(monkeypatch)
+    _stub_token(monkeypatch)
+    _stub_repo_list(
+        monkeypatch,
+        [
+            "repo-scaffold-e2e",
+            "repo-scaffold-e2e-20260311001924",
+            "repo-scaffold-e2e-unwanted",
+            "keep-me",
+        ],
     )
 
     deleted_calls: list[str] = []
 
-    def _fake_run_gh(_cwd: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-        if args == ["auth", "status"]:
-            return _cp(args, code=0)
-        if args == ["repo", "list", "acme", "--limit", "1000", "--json", "name"]:
-            return _cp(
-                args,
-                code=0,
-                stdout=(
-                    '[{"name":"repo-scaffold-e2e"},'
-                    '{"name":"repo-scaffold-e2e-20260311001924"},'
-                    '{"name":"repo-scaffold-e2e-unwanted"},'
-                    '{"name":"keep-me"}]'
-                ),
-            )
-        if len(args) == 4 and args[:2] == ["repo", "delete"]:
-            deleted_calls.append(args[2])
-            if args[2].endswith("20260311001924"):
-                return _cp(args, code=1, stderr="forbidden")
-            return _cp(args, code=0)
-        raise AssertionError(f"unexpected gh args: {args}")
+    def _fake_repo_delete(repo: str, token: str) -> subprocess.CompletedProcess[str]:
+        assert token == TOKEN
+        deleted_calls.append(repo)
+        if repo.endswith("20260311001924"):
+            return _cp(["repo_delete"], code=1, stderr="forbidden")
+        return _cp(["repo_delete"], code=0)
 
-    monkeypatch.setattr("repo_scaffold.delete_ops._run_gh", _fake_run_gh)
+    monkeypatch.setattr(delete_ops.github_api, "repo_delete", _fake_repo_delete)
 
     out_lines: list[str] = []
     err_lines: list[str] = []
@@ -158,12 +185,15 @@ def test_delete_repositories_delete_local_only(
         path.mkdir(parents=True)
         (path / "marker.txt").write_text("x", encoding="utf-8")
 
-    def _unexpected_gh(
-        _cwd: Path, _args: list[str]
-    ) -> subprocess.CompletedProcess[str]:
-        raise AssertionError("gh should not be called in --delete-local mode")
+    _no_gh_on_path(monkeypatch)
+    _forbid_repo_delete(monkeypatch)
 
-    monkeypatch.setattr("repo_scaffold.delete_ops._run_gh", _unexpected_gh)
+    def _unexpected_repo_list(
+        _owner: str, _token: str
+    ) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("GitHub API should not be hit in --delete-local mode")
+
+    monkeypatch.setattr(delete_ops.github_api, "repo_list", _unexpected_repo_list)
 
     out_lines: list[str] = []
     err_lines: list[str] = []
@@ -202,23 +232,15 @@ def test_delete_repositories_cleanup_remote_and_local_dry_run(
     monkeypatch.setenv("GITHUB_ORG", "acme")
     monkeypatch.delenv("GH_REPO", raising=False)
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
-    monkeypatch.setattr(
-        "repo_scaffold.delete_ops.shutil.which", lambda _name: "/usr/bin/gh"
-    )
+    _no_gh_on_path(monkeypatch)
+    _stub_token(monkeypatch)
+    _stub_repo_list(monkeypatch, ["repo-scaffold-e2e-abc"])
+    _forbid_repo_delete(monkeypatch)
 
     local_root = tmp_path / "local-root"
     local_root.mkdir(parents=True)
     (local_root / "repo-scaffold-e2e-abc").mkdir(parents=True)
     (local_root / "other").mkdir(parents=True)
-
-    def _fake_run_gh(_cwd: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-        if args == ["auth", "status"]:
-            return _cp(args, code=0)
-        if args == ["repo", "list", "acme", "--limit", "1000", "--json", "name"]:
-            return _cp(args, code=0, stdout='[{"name":"repo-scaffold-e2e-abc"}]')
-        raise AssertionError(f"unexpected gh args: {args}")
-
-    monkeypatch.setattr("repo_scaffold.delete_ops._run_gh", _fake_run_gh)
 
     out_lines: list[str] = []
     err_lines: list[str] = []
@@ -287,63 +309,66 @@ def test_delete_helpers_cover_owner_repo_and_root_validation(
         delete_ops._resolve_local_roots(cwd=tmp_path, local_roots=("/",))
 
 
-def test_delete_helpers_cover_gh_and_repo_list_errors(
+def test_delete_helpers_cover_token_and_repo_list_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(delete_ops.shutil, "which", lambda _name: None)
-    with pytest.raises(RuntimeError, match="GitHub CLI"):
-        delete_ops._ensure_gh_ready(tmp_path)
+    _no_gh_on_path(monkeypatch)
 
-    monkeypatch.setattr(delete_ops.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(
-        delete_ops,
-        "_run_gh",
-        lambda _cwd, _args: _cp(["gh"], code=1, stderr="auth failed"),
-    )
-    with pytest.raises(RuntimeError, match="Authenticate first"):
-        delete_ops._ensure_gh_ready(tmp_path)
+    monkeypatch.setattr(delete_ops.github_api, "token_from_repo", lambda _cwd: None)
+    with pytest.raises(RuntimeError, match="No GitHub token found"):
+        delete_ops._resolve_api_token(tmp_path)
+
+    monkeypatch.setattr(delete_ops.github_api, "token_from_repo", lambda _cwd: TOKEN)
+    monkeypatch.setattr(delete_ops.github_api, "validate_token", lambda _token: False)
+    with pytest.raises(RuntimeError, match="GitHub token was rejected"):
+        delete_ops._resolve_api_token(tmp_path)
+
+    monkeypatch.setattr(delete_ops.github_api, "validate_token", lambda _token: True)
+    assert delete_ops._resolve_api_token(tmp_path) == TOKEN
 
     monkeypatch.setattr(
-        delete_ops,
-        "_run_gh",
-        lambda _cwd, _args: _cp(["gh"], code=1, stderr="boom"),
+        delete_ops.github_api,
+        "repo_list",
+        lambda _owner, _token: _cp(["repo_list"], code=1, stderr="boom"),
     )
     with pytest.raises(RuntimeError, match="boom"):
-        delete_ops._list_repo_names(cwd=tmp_path, owner="acme")
+        delete_ops._list_repo_names(owner="acme", token=TOKEN)
 
     monkeypatch.setattr(
-        delete_ops,
-        "_run_gh",
-        lambda _cwd, _args: _cp(["gh"], code=0, stdout="{"),
+        delete_ops.github_api,
+        "repo_list",
+        lambda _owner, _token: _cp(["repo_list"], code=1, stderr=""),
+    )
+    with pytest.raises(RuntimeError, match="Failed listing repositories for owner"):
+        delete_ops._list_repo_names(owner="acme", token=TOKEN)
+
+    monkeypatch.setattr(
+        delete_ops.github_api,
+        "repo_list",
+        lambda _owner, _token: _cp(["repo_list"], code=0, stdout="{"),
     )
     with pytest.raises(
         RuntimeError, match="Unexpected response while listing repositories"
     ):
-        delete_ops._list_repo_names(cwd=tmp_path, owner="acme")
+        delete_ops._list_repo_names(owner="acme", token=TOKEN)
 
     monkeypatch.setattr(
-        delete_ops,
-        "_run_gh",
-        lambda _cwd, _args: _cp(["gh"], code=0, stdout='{"name":"demo"}'),
+        delete_ops.github_api,
+        "repo_list",
+        lambda _owner, _token: _cp(["repo_list"], code=0, stdout='{"name":"demo"}'),
     )
     with pytest.raises(RuntimeError, match="Unexpected repository list response"):
-        delete_ops._list_repo_names(cwd=tmp_path, owner="acme")
+        delete_ops._list_repo_names(owner="acme", token=TOKEN)
 
 
 def test_delete_repositories_covers_no_matches_and_noninteractive_skip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GITHUB_ORG", "acme")
-    monkeypatch.setattr(delete_ops.shutil, "which", lambda _name: "/usr/bin/gh")
-
-    def _fake_run_gh(_cwd: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-        if args == ["auth", "status"]:
-            return _cp(args, code=0)
-        if args == ["repo", "list", "acme", "--limit", "1000", "--json", "name"]:
-            return _cp(args, code=0, stdout='[{"name":"other"}]')
-        raise AssertionError(f"unexpected gh args: {args}")
-
-    monkeypatch.setattr(delete_ops, "_run_gh", _fake_run_gh)
+    _no_gh_on_path(monkeypatch)
+    _stub_token(monkeypatch)
+    _stub_repo_list(monkeypatch, ["other"])
+    _forbid_repo_delete(monkeypatch)
 
     out_lines: list[str] = []
     summary = delete_repositories(
@@ -453,3 +478,54 @@ def test_delete_repositories_covers_abort_and_local_failure_paths(
         "refusing to delete current working directory" in line for line in err_lines
     )
     assert any("permission denied" in line for line in err_lines)
+
+
+def test_delete_ops_module_never_shells_out() -> None:
+    """delete_ops talks to the GitHub API directly -- no subprocess, no gh (#334)."""
+    source = Path(delete_ops.__file__).read_text(encoding="utf-8")
+    assert "subprocess" not in source
+    assert '"gh"' not in source
+    assert "'gh'" not in source
+    assert not hasattr(delete_ops, "_run_gh")
+    assert not hasattr(delete_ops, "_ensure_gh_ready")
+
+
+def test_delete_repositories_applies_remote_delete_with_no_gh_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real remote delete must succeed with no binaries resolvable at all."""
+    monkeypatch.setenv("GITHUB_ORG", "acme")
+    monkeypatch.delenv("GH_REPO", raising=False)
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    _no_gh_on_path(monkeypatch)
+
+    _stub_token(monkeypatch)
+    _stub_repo_list(monkeypatch, ["repo-scaffold-e2e-abc", "keep-me"])
+
+    deleted: list[str] = []
+
+    def _fake_repo_delete(repo: str, _token: str) -> subprocess.CompletedProcess[str]:
+        deleted.append(repo)
+        return _cp(["repo_delete"], code=0)
+
+    monkeypatch.setattr(delete_ops.github_api, "repo_delete", _fake_repo_delete)
+
+    summary = delete_repositories(
+        owner=None,
+        prefix="repo-scaffold-e2e",
+        exact_names=(),
+        include_local=False,
+        delete_local_only=False,
+        local_roots=(),
+        apply=True,
+        assume_yes=True,
+        prompt=lambda _msg: "y",
+        is_tty=False,
+        cwd=tmp_path,
+        out=lambda _line: None,
+        err=lambda _line: None,
+    )
+
+    assert deleted == ["acme/repo-scaffold-e2e-abc"]
+    assert summary.remote_deleted == 1
+    assert summary.remote_failures == 0

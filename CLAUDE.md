@@ -140,6 +140,12 @@ poetry run repo-scaffold sync configs --repo OWNER/REPO [--repos a,b | --all] [-
 # Archive a repo (read-only; reversible via the GitHub UI). Prompts for confirmation
 # unless --yes is passed; refuses in a non-interactive shell without --yes.
 poetry run repo-scaffold repo archive --repo OWNER/REPO [--yes]
+
+# Delete matching repos (IRREVERSIBLE). Preview-only by default; --apply actually deletes.
+# Remote deletion goes through the GitHub REST API and needs GH_TOKEN/GITHUB_TOKEN with
+# the `delete_repo` scope -- there is no `gh` credential-store fallback (see GitHub auth).
+poetry run repo-scaffold delete --owner OWNER --prefix PREFIX [--exact NAME] [--apply] [--yes]
+poetry run repo-scaffold delete --local-only --local-root PATH   # no token needed
 ```
 
 ## PR Conventions
@@ -206,6 +212,13 @@ poetry run repo-scaffold pr rerun --repo OWNER/REPO --pr-number N --failed-only
 
 ## GitHub auth
 Token lives in `.env` as `GH_TOKEN`. Commands pick it up automatically via `_seed_env_from_dotenv`.
+
+A token is now the *only* accepted credential, including for `delete`. `delete` used to
+shell out to `gh repo delete` and so could ride on an authenticated `gh` credential store;
+it now calls the REST API directly, so remote deletion requires `GH_TOKEN`/`GITHUB_TOKEN`
+to be set and to carry the `delete_repo` scope (classic PAT) or `Administration: Read and
+write` (fine-grained). There is no credential fallback: with no token, or a token the API
+rejects, `delete` fails fast before deleting anything. `--local-only` needs no token.
 
 ## Coverage
 All GitHub operations (repos, issues, PRs, projects, backlog) are implemented via GH_TOKEN + urllib. No `gh` CLI required.
