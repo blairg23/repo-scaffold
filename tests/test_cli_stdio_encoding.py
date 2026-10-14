@@ -115,16 +115,30 @@ def test_tty_keeps_console_encoding_and_replaces(
     assert _written(stdout) == "? café".encode("cp1252")
 
 
+@pytest.mark.parametrize("errors", ["strict", "surrogateescape", "surrogatepass"])
 def test_explicit_pythonioencoding_keeps_encoding_and_replaces(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, errors: str
 ) -> None:
-    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
-    stdout = _stream("cp1252")
+    monkeypatch.setenv("PYTHONIOENCODING", f"cp1252:{errors}")
+    stdout = _stream("cp1252", errors=errors)
     monkeypatch.setattr("sys.stdout", stdout)
 
     _make_stdio_unicode_safe()
 
     assert stdout.encoding == "cp1252"
+    assert stdout.errors == "replace"
+    stdout.write("\U0001f9fe café")
+    assert _written(stdout) == "? café".encode("cp1252")
+
+
+def test_tty_with_raising_non_strict_handler_is_normalized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stdout = _stream("cp1252", errors="surrogateescape", tty=True)
+    monkeypatch.setattr("sys.stdout", stdout)
+
+    _make_stdio_unicode_safe()
+
     assert stdout.errors == "replace"
 
 

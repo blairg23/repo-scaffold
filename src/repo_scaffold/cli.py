@@ -1932,6 +1932,14 @@ def _run_file_apply(files: list, policy: OverwritePolicy) -> int:
     return 1 if summary.failures > 0 else 0
 
 
+# Error handlers that can encode any str without raising. Anything else (strict,
+# surrogateescape, surrogatepass, a custom handler) can still fail on text the
+# encoding cannot represent.
+_NON_RAISING_ERROR_HANDLERS = frozenset(
+    {"replace", "backslashreplace", "xmlcharrefreplace", "namereplace", "ignore"}
+)
+
+
 def _is_utf8(encoding: str | None) -> bool:
     try:
         return codecs.lookup(encoding or "").name == "utf-8"
@@ -1956,9 +1964,11 @@ def _make_stdio_unicode_safe() -> None:
     - Pipe or file: switched to UTF-8 with ``errors="replace"``, so the text
       arrives intact for UTF-8 readers and can never raise.
     - Interactive terminal, or an explicit ``PYTHONIOENCODING`` encoding: the
-      encoding is kept (it has to match what renders or reads the bytes) and a
-      ``strict`` handler becomes ``replace``, so unencodable characters print as
-      ``?`` instead of crashing.
+      encoding is kept (it has to match what renders or reads the bytes) and any
+      error handler that can still raise (``strict``, ``surrogateescape``,
+      ``surrogatepass``, custom) becomes ``replace``, so unencodable characters
+      print as ``?`` instead of crashing. Non-raising handlers such as
+      ``backslashreplace`` are kept.
     - Not an ``io.TextIOWrapper`` (``None`` under pythonw, ``StringIO``, test
       capture objects) or no longer usable: left alone.
     """
@@ -1972,7 +1982,7 @@ def _make_stdio_unicode_safe() -> None:
             if _is_utf8(stream.encoding):
                 continue
             if encoding_pinned or stream.isatty():
-                if stream.errors == "strict":
+                if stream.errors not in _NON_RAISING_ERROR_HANDLERS:
                     stream.reconfigure(errors="replace")
             else:
                 stream.reconfigure(encoding="utf-8", errors="replace")
