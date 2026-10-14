@@ -1341,6 +1341,34 @@ def test_pr_rerun_failed_only_posts_only_to_newest_failed_run() -> None:
     assert len(result["skipped"]) == 4
 
 
+def test_pr_rerun_reads_every_page_before_selecting() -> None:
+    # 100 newer check-sop runs fill page 1; CI's only (failed) run is on page 2.
+    page_1 = [_run(1000 + n, 1, 200 - n, "failure") for n in range(100)]
+    page_2 = [_run(42, 2, 9, "failure")]
+    pr_payload = json.dumps({"head": {"sha": "abc123"}})
+    pages = [
+        _mock_resp(200, json.dumps({"total_count": 101, "workflow_runs": page_1})),
+        _mock_resp(200, json.dumps({"total_count": 101, "workflow_runs": page_2})),
+    ]
+    requested: list[str] = []
+    responses_iter = iter([_mock_resp(200, pr_payload), *pages])
+
+    def _side_effect(req: urllib.request.Request) -> MagicMock:
+        requested.append(req.full_url)
+        try:
+            return next(responses_iter)
+        except StopIteration:
+            return _mock_resp(201, "")
+
+    with patch("urllib.request.urlopen", side_effect=_side_effect):
+        cp = github_api.pr_rerun("acme/repo", 42, "tok", failed_only=True)
+
+    assert cp.returncode == 0
+    run_pages = [u for u in requested if "/actions/runs?" in u]
+    assert [u.endswith(f"page={n}") for n, u in enumerate(run_pages, 1)] == [True, True]
+    assert sorted(json.loads(cp.stdout)["triggered"]) == [42, 1000]
+
+
 def test_pr_rerun_no_runs_returns_error() -> None:
     pr_payload = json.dumps({"head": {"sha": "abc123"}})
     runs_payload = json.dumps({"workflow_runs": []})

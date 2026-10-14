@@ -2076,6 +2076,10 @@ def pr_annotations(
     return _ok(json.dumps(results))
 
 
+# Paging for the workflow-runs list of one head SHA (10 pages = 1000 runs).
+_RUNS_PER_PAGE = 100
+_MAX_RUN_PAGES = 10
+
 # Workflow-run conclusions that `rerun-failed-jobs` can act on.
 _RERUNNABLE_FAILED_CONCLUSIONS = frozenset(
     {"failure", "timed_out", "cancelled", "startup_failure"}
@@ -2142,13 +2146,29 @@ def pr_rerun(
         sha = json.loads(cp.stdout)["head"]["sha"]
     except (json.JSONDecodeError, KeyError):
         return _err("Could not extract head SHA from PR.")
-    cp2 = rest("GET", f"/repos/{repo}/actions/runs?head_sha={sha}&per_page=50", token)
-    if cp2.returncode != 0:
-        return cp2
-    try:
-        runs = json.loads(cp2.stdout).get("workflow_runs", [])
-    except (json.JSONDecodeError, AttributeError):
-        return _err("Unexpected response from actions/runs API.")
+    # The runs list is paginated and newest-first. Every page is needed: after many
+    # check-sop re-runs, another workflow's newest run can sit past the first page.
+    runs: list[dict[str, Any]] = []
+    for page in range(1, _MAX_RUN_PAGES + 1):
+        cp2 = rest(
+            "GET",
+            f"/repos/{repo}/actions/runs?head_sha={sha}"
+            f"&per_page={_RUNS_PER_PAGE}&page={page}",
+            token,
+        )
+        if cp2.returncode != 0:
+            return cp2
+        try:
+            payload = json.loads(cp2.stdout)
+            batch = payload.get("workflow_runs", [])
+        except (json.JSONDecodeError, AttributeError):
+            return _err("Unexpected response from actions/runs API.")
+        runs.extend(batch)
+        total = payload.get("total_count")
+        if len(batch) < _RUNS_PER_PAGE or (
+            isinstance(total, int) and len(runs) >= total
+        ):
+            break
     if not runs:
         return _err(f"No workflow runs found for PR #{pr_number}.")
     selected, skipped = _select_runs_to_rerun(runs, failed_only)
