@@ -3635,15 +3635,27 @@ def main(argv: list[str] | None = None) -> int:
             result = _json.loads(cp.stdout)
             triggered = result.get("triggered", [])
             errors = result.get("errors", [])
+            skipped = result.get("skipped", [])
             if triggered:
                 print(
                     f"Re-triggered {len(triggered)} run(s): {', '.join(str(r) for r in triggered)}"
                 )
+            if skipped:
+                reasons: dict[str, int] = {}
+                for run in skipped:
+                    reason = str(run.get("reason", "skipped"))
+                    reasons[reason] = reasons.get(reason, 0) + 1
+                summary = ", ".join(f"{n} {r}" for r, n in sorted(reasons.items()))
+                print(f"Skipped {len(skipped)} run(s): {summary}.")
             if errors:
                 for e in errors:
                     print(f"  error: {e}", file=sys.stderr)
             if not triggered and not errors:
-                print("No runs found to re-trigger.")
+                print(
+                    "No failed runs to re-trigger."
+                    if ns.failed_only
+                    else "No runs found to re-trigger."
+                )
             return 0 if not errors else 1
 
         if ns.pr_command == "review-threads":

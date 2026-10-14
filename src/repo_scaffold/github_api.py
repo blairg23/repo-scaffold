@@ -2076,13 +2076,65 @@ def pr_annotations(
     return _ok(json.dumps(results))
 
 
+# Workflow-run conclusions that `rerun-failed-jobs` can act on.
+_RERUNNABLE_FAILED_CONCLUSIONS = frozenset(
+    {"failure", "timed_out", "cancelled", "startup_failure"}
+)
+
+
+def _select_runs_to_rerun(
+    runs: list[dict[str, Any]], failed_only: bool
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Pick which workflow runs on one commit to re-run.
+
+    Every review reply, push or manual trigger starts another run of the same
+    workflow on the same head SHA, so the list usually holds superseded runs.
+    Only the newest run per workflow counts (highest run_number, then id). A run
+    that has not completed cannot be re-run yet. With ``failed_only`` the newest
+    run must also have failed. Returns ``(selected, skipped)``; each skipped run
+    carries a ``reason``.
+    """
+
+    def rank(run: dict[str, Any]) -> tuple[int, int]:
+        return (run.get("run_number") or 0, run.get("id") or 0)
+
+    newest: dict[object, int] = {}
+    for index, run in enumerate(runs):
+        key = run.get("workflow_id") or run.get("name") or run.get("id")
+        best = newest.get(key)
+        if best is None or rank(run) > rank(runs[best]):
+            newest[key] = index
+    newest_indexes = set(newest.values())
+
+    selected: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for index, run in enumerate(runs):
+        if index not in newest_indexes:
+            reason = "superseded"
+        elif run.get("status", "completed") != "completed":
+            reason = "in progress"
+        elif (
+            failed_only and run.get("conclusion") not in _RERUNNABLE_FAILED_CONCLUSIONS
+        ):
+            reason = "not failed"
+        else:
+            selected.append(run)
+            continue
+        skipped.append({"id": run.get("id"), "name": run.get("name"), "reason": reason})
+    return selected, skipped
+
+
 def pr_rerun(
     repo: str,
     pr_number: int,
     token: str,
     failed_only: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    """Re-run workflow jobs for a PR's head commit."""
+    """Re-run the newest run of each workflow on a PR's head commit.
+
+    With ``failed_only``, only workflows whose newest run failed are re-run, and
+    only their failed jobs. Superseded and still-running runs are never re-run.
+    """
     cp = rest("GET", f"/repos/{repo}/pulls/{pr_number}", token)
     if cp.returncode != 0:
         return cp
@@ -2099,17 +2151,20 @@ def pr_rerun(
         return _err("Unexpected response from actions/runs API.")
     if not runs:
         return _err(f"No workflow runs found for PR #{pr_number}.")
+    selected, skipped = _select_runs_to_rerun(runs, failed_only)
     suffix = "rerun-failed-jobs" if failed_only else "rerun"
     triggered: list[int] = []
     errors: list[str] = []
-    for run in runs:
-        run_id = run.get("id")
+    for run in selected:
+        run_id = run["id"]
         cp3 = rest("POST", f"/repos/{repo}/actions/runs/{run_id}/{suffix}", token, {})
         if cp3.returncode in (0, 201):
             triggered.append(run_id)
         else:
             errors.append(f"run {run_id}: {cp3.stderr.strip()}")
-    return _ok(json.dumps({"triggered": triggered, "errors": errors}))
+    return _ok(
+        json.dumps({"triggered": triggered, "errors": errors, "skipped": skipped})
+    )
 
 
 def pr_reviews(

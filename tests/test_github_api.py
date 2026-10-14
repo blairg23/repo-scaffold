@@ -1234,7 +1234,9 @@ def test_pr_rerun_triggers_all_runs() -> None:
 
 def test_pr_rerun_failed_only_uses_correct_endpoint() -> None:
     pr_payload = json.dumps({"head": {"sha": "abc123"}})
-    runs_payload = json.dumps({"workflow_runs": [{"id": 555}]})
+    runs_payload = json.dumps(
+        {"workflow_runs": [{"id": 555, "status": "completed", "conclusion": "failure"}]}
+    )
     captured_urls: list[str] = []
 
     def _fake_urlopen(req: urllib.request.Request) -> MagicMock:
@@ -1253,6 +1255,90 @@ def test_pr_rerun_failed_only_uses_correct_endpoint() -> None:
         cp = github_api.pr_rerun("acme/repo", 42, "tok", failed_only=True)
     assert cp.returncode == 0
     assert any("rerun-failed-jobs" in u for u in captured_urls)
+
+
+def _run(
+    run_id: int,
+    workflow_id: int,
+    run_number: int,
+    conclusion: str | None,
+    status: str = "completed",
+) -> dict[str, object]:
+    return {
+        "id": run_id,
+        "workflow_id": workflow_id,
+        "name": f"wf{workflow_id}",
+        "run_number": run_number,
+        "status": status,
+        "conclusion": conclusion,
+    }
+
+
+# One head SHA as it looks after a few review replies: check-sop (wf 1) ran three
+# times, CI (wf 2) passed, CodeQL (wf 3) is still running.
+_RUNS_ON_ONE_SHA = [
+    _run(101, 1, 1, "failure"),
+    _run(103, 1, 3, "failure"),
+    _run(102, 1, 2, "failure"),
+    _run(201, 2, 7, "success"),
+    _run(301, 3, 4, None, status="in_progress"),
+]
+
+
+def test_select_runs_failed_only_keeps_newest_failed_run_per_workflow() -> None:
+    selected, skipped = github_api._select_runs_to_rerun(_RUNS_ON_ONE_SHA, True)
+
+    assert [r["id"] for r in selected] == [103]
+    assert {s["id"]: s["reason"] for s in skipped} == {
+        101: "superseded",
+        102: "superseded",
+        201: "not failed",
+        301: "in progress",
+    }
+
+
+def test_select_runs_without_failed_only_reruns_newest_completed_runs() -> None:
+    selected, skipped = github_api._select_runs_to_rerun(_RUNS_ON_ONE_SHA, False)
+
+    assert sorted(r["id"] for r in selected) == [103, 201]
+    assert {s["id"]: s["reason"] for s in skipped}[301] == "in progress"
+
+
+@pytest.mark.parametrize(
+    "conclusion", ["failure", "timed_out", "cancelled", "startup_failure"]
+)
+def test_select_runs_failed_only_accepts_every_failed_conclusion(
+    conclusion: str,
+) -> None:
+    selected, _ = github_api._select_runs_to_rerun([_run(1, 1, 1, conclusion)], True)
+
+    assert [r["id"] for r in selected] == [1]
+
+
+def test_pr_rerun_failed_only_posts_only_to_newest_failed_run() -> None:
+    pr_payload = json.dumps({"head": {"sha": "abc123"}})
+    runs_payload = json.dumps({"workflow_runs": _RUNS_ON_ONE_SHA})
+    posted: list[str] = []
+    responses_iter = iter([_mock_resp(200, pr_payload), _mock_resp(200, runs_payload)])
+
+    def _side_effect(req: urllib.request.Request) -> MagicMock:
+        try:
+            return next(responses_iter)
+        except StopIteration:
+            posted.append(req.full_url)
+            return _mock_resp(201, "")
+
+    with patch("urllib.request.urlopen", side_effect=_side_effect):
+        cp = github_api.pr_rerun("acme/repo", 42, "tok", failed_only=True)
+
+    assert cp.returncode == 0
+    assert posted == [
+        "https://api.github.com/repos/acme/repo/actions/runs/103/rerun-failed-jobs"
+    ]
+    result = json.loads(cp.stdout)
+    assert result["triggered"] == [103]
+    assert result["errors"] == []
+    assert len(result["skipped"]) == 4
 
 
 def test_pr_rerun_no_runs_returns_error() -> None:

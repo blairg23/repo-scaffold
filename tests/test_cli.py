@@ -2828,6 +2828,38 @@ def test_pr_rerun(tmp_path, monkeypatch, capsys) -> None:
     assert "12345" in capsys.readouterr().out
 
 
+def test_pr_rerun_summarizes_skipped_runs(tmp_path, monkeypatch, capsys) -> None:
+    import json
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    skipped = [
+        {"id": 1, "name": "check-sop", "reason": "superseded"},
+        {"id": 2, "name": "check-sop", "reason": "superseded"},
+        {"id": 3, "name": "CI", "reason": "not failed"},
+    ]
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_rerun",
+        lambda repo, pr_number, token, failed_only=False: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({"triggered": [], "errors": [], "skipped": skipped}),
+            stderr="",
+        ),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(
+        ["pr", "rerun", "--repo", "acme/repo", "--pr-number", "42", "--failed-only"]
+    )
+
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "Skipped 3 run(s): 1 not failed, 2 superseded." in captured.out
+    assert "No failed runs to re-trigger." in captured.out
+    assert captured.err == ""
+
+
 def test_pr_reviews_human_readable(tmp_path, monkeypatch, capsys) -> None:
     import json
     import subprocess
