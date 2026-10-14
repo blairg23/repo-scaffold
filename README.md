@@ -107,6 +107,13 @@ there, not an app).
 
 ## Commands
 
+**Output encoding.** When stdout/stderr is a pipe or a file, output is written as
+UTF-8, so issue and PR bodies (which open with emoji headings) print intact on Windows
+too, where Python would otherwise use the cp1252 code page and crash. On an interactive
+terminal whose encoding is not UTF-8, or when `PYTHONIOENCODING` names an encoding, that
+encoding is kept and characters it cannot represent print as `?`. `--json` output escapes
+non-ASCII and is unaffected.
+
 ### `init`
 
 Generate a new repository skeleton.
