@@ -210,6 +210,14 @@ poetry run repo-scaffold pr rerun --repo OWNER/REPO --pr-number N --failed-only
 - `gin` = Go web server with Gin framework (router, health handler, CI, CodeQL)
 - `gin` and `go` are mutually exclusive (both use go.mod)
 
+## Output encoding
+Piped or redirected stdout/stderr is UTF-8 on every platform, set once at CLI entry
+(`_make_stdio_unicode_safe` in `cli.py`), so issue and PR bodies with emoji never crash
+a cp1252 Windows pipe. Decode captured repo-scaffold output as UTF-8. A non-UTF-8
+interactive terminal, or an encoding named in `PYTHONIOENCODING`, is kept as is, and any
+error handler that could still raise becomes `replace` (unrepresentable characters print
+as `?`). `--json` output escapes non-ASCII and is unaffected. See README "Output encoding".
+
 ## GitHub auth
 Token lives in `.env` as `GH_TOKEN`. Commands pick it up automatically via `_seed_env_from_dotenv`.
 

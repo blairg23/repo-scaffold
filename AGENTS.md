@@ -226,6 +226,11 @@ readable and writable (required for `repo discover` to save `GH_TOKEN`).
 
 ## Commands
 
+Piped or redirected output is UTF-8 on every platform (set once at CLI entry in
+`cli.py`), so reading `issue view` / `pr view` output from a subprocess should decode it
+as UTF-8. A non-UTF-8 interactive terminal, or an explicit `PYTHONIOENCODING`, keeps its
+encoding and prints unrepresentable characters as `?`. See README "Output encoding".
+
 ### Issues
 
 ```bash

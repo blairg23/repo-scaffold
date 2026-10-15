@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import codecs
+import io
 import os
 import sys
 import tempfile
@@ -1930,7 +1932,66 @@ def _run_file_apply(files: list, policy: OverwritePolicy) -> int:
     return 1 if summary.failures > 0 else 0
 
 
+# Error handlers that can encode any str without raising. Anything else (strict,
+# surrogateescape, surrogatepass, a custom handler) can still fail on text the
+# encoding cannot represent.
+_NON_RAISING_ERROR_HANDLERS = frozenset(
+    {"replace", "backslashreplace", "xmlcharrefreplace", "namereplace", "ignore"}
+)
+
+
+def _is_utf8(encoding: str | None) -> bool:
+    try:
+        return codecs.lookup(encoding or "").name == "utf-8"
+    except LookupError:
+        return False
+
+
+def _make_stdio_unicode_safe() -> None:
+    """Stop non-ASCII GitHub text from crashing output on a non-UTF-8 stream.
+
+    Issue and PR bodies routinely carry characters outside the locale code page
+    (repo-scaffold's own templates open with emoji headings). When stdout or
+    stderr is a pipe or a file, Python encodes with the locale encoding, which is
+    cp1252 on most Windows machines, and stdout's default ``strict`` handler then
+    raises ``UnicodeEncodeError`` halfway through a command. A real Windows
+    console already uses UTF-8 (PEP 528), so this mostly bites redirected, piped
+    and agent-driven runs.
+
+    Handled once here, at CLI entry, instead of at every print site:
+
+    - Already UTF-8: left alone.
+    - Pipe or file: switched to UTF-8 with ``errors="replace"``, so the text
+      arrives intact for UTF-8 readers and can never raise.
+    - Interactive terminal, or an explicit ``PYTHONIOENCODING`` encoding: the
+      encoding is kept (it has to match what renders or reads the bytes) and any
+      error handler that can still raise (``strict``, ``surrogateescape``,
+      ``surrogatepass``, custom) becomes ``replace``, so unencodable characters
+      print as ``?`` instead of crashing. Non-raising handlers such as
+      ``backslashreplace`` are kept.
+    - Not an ``io.TextIOWrapper`` (``None`` under pythonw, ``StringIO``, test
+      capture objects) or no longer usable: left alone.
+    """
+    encoding_pinned = bool(
+        os.environ.get("PYTHONIOENCODING", "").partition(":")[0].strip()
+    )
+    for stream in (sys.stdout, sys.stderr):
+        if not isinstance(stream, io.TextIOWrapper):
+            continue
+        try:
+            if _is_utf8(stream.encoding):
+                continue
+            if encoding_pinned or stream.isatty():
+                if stream.errors not in _NON_RAISING_ERROR_HANDLERS:
+                    stream.reconfigure(errors="replace")
+            else:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            continue
+
+
 def main(argv: list[str] | None = None) -> int:
+    _make_stdio_unicode_safe()
     _seed_env_from_dotenv(Path.cwd() / ".env")
     parser = build_parser()
     ns = parser.parse_args(_normalize_argv(argv))
