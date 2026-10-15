@@ -334,7 +334,9 @@ a check-sop run that failed on `pull_request` stays red on GitHub even after a
 check-sop run on `pull_request_review` passed. It exits 0 when everything
 passes, 1 when anything is failing (or the merge state is `dirty`, or
 `unstable` with nothing listed to explain it), and 2 when nothing is failing
-but something is still pending. `--json` prints one object: `head_sha`,
+but something is still pending (including a merge state GitHub has not computed
+yet). Commit statuses are read across every page. `--json` prints one object:
+`head_sha`,
 `mergeable`, `mergeable_state`, `check_runs`, `statuses`, `combined_state`,
 `workflow_runs` and `summary` (`verdict`, `failing`, `pending`,
 `merge_problem`).

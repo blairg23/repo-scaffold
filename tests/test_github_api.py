@@ -1122,6 +1122,45 @@ def test_summarize_checks_pending_workflow_run() -> None:
     assert summary["pending"] == ["workflow: Validate PR review thread SOP (push)"]
 
 
+def test_pr_checks_unknown_mergeability_is_pending() -> None:
+    side = _checks_side_effect([_GREEN_RUN], [], None)
+    with patch("urllib.request.urlopen", side_effect=side):
+        cp = github_api.pr_checks("owner/repo", 42, "tok")
+    result = json.loads(cp.stdout)
+    assert result["mergeable_state"] is None
+    assert result["summary"]["verdict"] == "pending"
+    assert result["summary"]["pending"] == [
+        "merge state: unknown (GitHub is still computing it)"
+    ]
+
+
+def test_pr_checks_reads_every_status_page() -> None:
+    page1 = [{"context": f"ctx{i}", "state": "success"} for i in range(100)]
+    page2 = [{"context": "late", "state": "failure"}]
+    pr_data = {"head": {"sha": "abc123"}, "mergeable_state": "unstable"}
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[
+            _mock_resp(200, json.dumps(pr_data)),
+            _mock_resp(200, json.dumps({"check_runs": [_GREEN_RUN]})),
+            _mock_resp(
+                200,
+                json.dumps({"state": "failure", "total_count": 101, "statuses": page1}),
+            ),
+            _mock_resp(
+                200,
+                json.dumps({"state": "failure", "total_count": 101, "statuses": page2}),
+            ),
+            _mock_resp(200, json.dumps({"total_count": 0, "workflow_runs": []})),
+        ],
+    ):
+        cp = github_api.pr_checks("owner/repo", 42, "tok")
+    result = json.loads(cp.stdout)
+    assert len(result["statuses"]) == 101
+    assert result["combined_state"] == "failure"
+    assert result["summary"]["failing"] == ["late"]
+
+
 def test_summarize_checks_unstable_with_nothing_visible() -> None:
     summary = github_api.summarize_checks([_GREEN_RUN], [], "unstable")
     assert summary["verdict"] == "failing"

@@ -2019,8 +2019,9 @@ def summarize_checks(
     of the same workflow triggered by another event; the workflow-run entries
     are what catch it. ``merge_problem`` is set when the PR's mergeable_state
     means the PR is red even though nothing listed explains it (``dirty``,
-    or ``unstable`` with no failing or pending item). ``verdict`` is
-    ``failing``, ``pending`` or ``passing``.
+    or ``unstable`` with no failing or pending item). A mergeable_state of
+    ``unknown`` (GitHub still computing it) counts as pending. ``verdict``
+    is ``failing``, ``pending`` or ``passing``.
     """
     failing: list[str] = []
     pending: list[str] = []
@@ -2043,6 +2044,10 @@ def summarize_checks(
             pending.append(label)
         elif wr.get("conclusion") not in _PASSING_CONCLUSIONS:
             failing.append(label)
+
+    if mergeable_state == "unknown":
+        # Conflicts cannot be ruled out until GitHub finishes computing.
+        pending.append("merge state: unknown (GitHub is still computing it)")
 
     merge_problem: str | None = None
     if mergeable_state == "dirty":
@@ -2107,22 +2112,10 @@ def pr_checks(
         runs = _latest_check_runs(items)
     except (json.JSONDecodeError, AttributeError):
         return _err("Unexpected response from check-runs API.")
-    cp3 = rest("GET", f"/repos/{repo}/commits/{sha}/status?per_page=100", token)
-    if cp3.returncode != 0:
-        return cp3
-    try:
-        combined = json.loads(cp3.stdout)
-        statuses = [
-            {
-                "context": s.get("context"),
-                "state": s.get("state"),
-                "description": s.get("description"),
-                "target_url": s.get("target_url"),
-            }
-            for s in combined.get("statuses", [])
-        ]
-    except (json.JSONDecodeError, AttributeError):
-        return _err("Unexpected response from combined status API.")
+    combined_or_err = _combined_status_for_sha(repo, sha, token)
+    if isinstance(combined_or_err, subprocess.CompletedProcess):
+        return combined_or_err
+    combined_state, statuses = combined_or_err
     all_wf = _workflow_runs_for_sha(repo, sha, token)
     if isinstance(all_wf, subprocess.CompletedProcess):
         return all_wf
@@ -2150,14 +2143,63 @@ def pr_checks(
                 "check_runs": runs,
                 "statuses": statuses,
                 # GitHub reports "pending" for a commit with no statuses at all.
-                "combined_state": combined.get("state") if statuses else None,
+                "combined_state": combined_state if statuses else None,
                 "workflow_runs": workflow_runs,
+                # GitHub returns null while it is still computing mergeability.
                 "summary": summarize_checks(
-                    runs, statuses, mergeable_state, workflow_runs=workflow_runs
+                    runs,
+                    statuses,
+                    mergeable_state or "unknown",
+                    workflow_runs=workflow_runs,
                 ),
             }
         )
     )
+
+
+def _combined_status_for_sha(
+    repo: str, sha: str, token: str
+) -> tuple[str | None, list[dict[str, Any]]] | subprocess.CompletedProcess[str]:
+    """Return ``(combined_state, statuses)`` for a commit, reading every page.
+
+    The combined status endpoint caps ``per_page`` at 100 and paginates the
+    ``statuses`` list; a failing context on page two must not be missed.
+    Each status is reduced to ``context``, ``state``, ``description`` and
+    ``target_url``. Returns a CompletedProcess on an API error.
+    """
+    combined_state: str | None = None
+    statuses: list[dict[str, Any]] = []
+    for page in range(1, _MAX_RUN_PAGES + 1):
+        cp = rest(
+            "GET",
+            f"/repos/{repo}/commits/{sha}/status"
+            f"?per_page={_RUNS_PER_PAGE}&page={page}",
+            token,
+        )
+        if cp.returncode != 0:
+            return cp
+        try:
+            payload = json.loads(cp.stdout)
+            batch = payload.get("statuses", [])
+            if page == 1:
+                combined_state = payload.get("state")
+            statuses.extend(
+                {
+                    "context": st.get("context"),
+                    "state": st.get("state"),
+                    "description": st.get("description"),
+                    "target_url": st.get("target_url"),
+                }
+                for st in batch
+            )
+        except (json.JSONDecodeError, AttributeError):
+            return _err("Unexpected response from combined status API.")
+        total = payload.get("total_count")
+        if len(batch) < _RUNS_PER_PAGE or (
+            isinstance(total, int) and len(statuses) >= total
+        ):
+            break
+    return combined_state, statuses
 
 
 def pr_wait(
