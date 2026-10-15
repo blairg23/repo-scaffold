@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,37 @@ def test_env_disables_every_prompt() -> None:
 
     assert env["GIT_TERMINAL_PROMPT"] == "0"
     assert env["GCM_INTERACTIVE"] == "never"
+
+
+def test_env_blanks_inherited_askpass() -> None:
+    env = git_env(TOKEN, base={"GIT_ASKPASS": "/ide/askpass", "SSH_ASKPASS": "/x"})
+
+    assert env["GIT_ASKPASS"] == ""
+    assert env["SSH_ASKPASS"] == ""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shebang askpass stub")
+def test_inherited_askpass_program_is_never_run(tmp_path: Path) -> None:
+    """Missing credentials must fail fast, not run an IDE's askpass GUI."""
+    marker = tmp_path / "askpass-ran"
+    askpass = tmp_path / "askpass.sh"
+    askpass.write_text(f"#!/bin/sh\ntouch '{marker}'\necho x\n", encoding="utf-8")
+    askpass.chmod(0o755)
+    _git("init", "-q", ".", cwd=tmp_path)
+    _git("config", "core.askPass", str(askpass), cwd=tmp_path)
+    base = dict(os.environ, GIT_ASKPASS=str(askpass), SSH_ASKPASS=str(askpass))
+
+    cp = subprocess.run(
+        ["git", "credential", "fill"],
+        cwd=tmp_path,
+        env=git_env(None, base=base),
+        input="protocol=https\nhost=example.invalid\n\n",
+        capture_output=True,
+        text=True,
+    )
+
+    assert cp.returncode != 0
+    assert not marker.exists()
 
 
 def test_env_resets_helpers_and_scopes_header_to_github() -> None:
@@ -237,6 +269,29 @@ def test_pull_refuses_to_merge_diverged_history(remote: Path, tmp_path: Path) ->
 
     assert cp.returncode != 0
     assert cp.stderr.startswith("git pull failed:")
+
+
+@pytest.mark.parametrize("kind", ["missing", "file"])
+def test_pull_rejects_bad_path_without_traceback(tmp_path: Path, kind: str) -> None:
+    target = tmp_path / "nope"
+    if kind == "file":
+        target.write_text("x", encoding="utf-8")
+
+    cp = repo_pull(target, TOKEN)
+
+    assert cp.returncode != 0
+    assert "Not a git working tree" in cp.stderr
+
+
+def test_cli_pull_missing_path_exits_one(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("repo_scaffold.cli._token_for_auth_path", lambda _p: TOKEN)
+
+    assert main(["repo", "pull", "--path", str(tmp_path / "missing")]) == 1
+    assert "Not a git working tree" in capsys.readouterr().err
 
 
 def test_pull_refuses_non_checkout(tmp_path: Path) -> None:

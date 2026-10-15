@@ -8,7 +8,8 @@ inside a synced folder (Dropbox), so the token syncs too.
 
 These helpers never write a credential anywhere. Each git call gets:
 
-- `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`, so nothing can prompt;
+- `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` and an empty `GIT_ASKPASS`
+  (which also shadows `core.askPass` and `SSH_ASKPASS`), so nothing can prompt;
 - an empty `credential.helper`, which resets the helper list for that one call
   so GCM (or any other configured helper) is never consulted;
 - the token as an `http.https://github.com/.extraheader`, scoped to github.com.
@@ -54,6 +55,13 @@ def git_env(token: str | None, base: Mapping[str, str] | None = None) -> dict[st
     env = dict(os.environ if base is None else base)
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GCM_INTERACTIVE"] = "never"
+    # An inherited askpass program (IDE and desktop git sessions set one) would
+    # still run when credentials are missing or rejected. Git reads GIT_ASKPASS
+    # first and stops there even when it is empty, so "" also shadows
+    # core.askPass and SSH_ASKPASS; with the terminal prompt off, git then fails
+    # fast. SSH_ASKPASS is cleared too, for ssh itself on an SSH remote.
+    env["GIT_ASKPASS"] = ""
+    env["SSH_ASKPASS"] = ""
 
     entries: list[tuple[str, str]] = [("credential.helper", "")]
     if token:
@@ -127,6 +135,9 @@ def repo_pull(path: Path, token: str | None) -> subprocess.CompletedProcess[str]
     an editor; a diverged branch fails loudly instead.
     """
     worktree = path.resolve()
+    # subprocess raises before git runs if cwd is missing or a file.
+    if not worktree.is_dir():
+        return _err(f"Not a git working tree: {worktree}")
     probe = _git(["rev-parse", "--is-inside-work-tree"], token=None, cwd=worktree)
     if probe.returncode != 0 or probe.stdout.strip() != "true":
         return _err(f"Not a git working tree: {worktree}")

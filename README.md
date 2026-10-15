@@ -356,6 +356,8 @@ store the token:
 
 - every git call runs with `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` and an empty
   `credential.helper`, so no configured helper (GCM included) is consulted
+- `GIT_ASKPASS` and `SSH_ASKPASS` are blanked, so an askpass program inherited from an IDE
+  or desktop git session (or set as `core.askPass`) never runs either
 - the token travels as an `http.https://github.com/.extraheader` set through
   `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` environment variables: not in
   the process arguments, not in `.git/config`, not in the remote URL, not in a credentials file
