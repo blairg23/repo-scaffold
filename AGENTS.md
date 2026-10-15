@@ -537,6 +537,9 @@ four steps, refresh it manually:
 ```bash
 poetry run repo-scaffold pr rerun --repo OWNER/REPO --pr-number N --failed-only
 ```
+It re-runs only the newest run of each workflow on the PR's head commit, and with
+`--failed-only` only when that newest run failed; superseded and still-running runs
+are skipped and counted in one summary line.
 
 ---
 
