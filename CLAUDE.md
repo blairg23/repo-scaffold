@@ -143,6 +143,14 @@ poetry run repo-scaffold sync configs --repo OWNER/REPO [--repos a,b | --all] [-
 # token in a remote URL -- see `check credentials`.
 poetry run repo-scaffold auth configure [--path PATH]
 
+# Clone or fast-forward a checkout without any credential prompt (no GCM popup) and
+# without writing the token anywhere: it is passed per git call as an in-memory
+# github.com auth header, so .git/config, the remote URL and disk stay clean. Uses
+# repo-scaffold's token (pull prefers the target checkout's own .env). Clone needs an
+# absent or empty --path; pull is --ff-only and never creates a merge commit.
+poetry run repo-scaffold repo clone --repo OWNER/REPO --path DIR [--branch BRANCH]
+poetry run repo-scaffold repo pull --path DIR
+
 # Archive a repo (read-only; reversible via the GitHub UI). Prompts for confirmation
 # unless --yes is passed; refuses in a non-interactive shell without --yes.
 poetry run repo-scaffold repo archive --repo OWNER/REPO [--yes]

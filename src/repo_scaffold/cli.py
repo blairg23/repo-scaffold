@@ -279,6 +279,34 @@ def _dispatch_configure_auth(auth_path_arg: str | None) -> int:
     return 0
 
 
+def _dispatch_repo_sync(ns: argparse.Namespace) -> int:
+    """`repo clone` / `repo pull`: git over HTTPS with the token in memory only."""
+    from .clone_ops import repo_clone, repo_pull
+
+    if ns.repo_command == "clone":
+        repo = _normalize_owner_repo(ns.repo, allow_host_prefix=False)
+        if repo is None:
+            print("Error: --repo must be in owner/repo format.", file=sys.stderr)
+            return 2
+        token = _token_for_auth_path(None) or None
+        cp = repo_clone(repo, Path(ns.path), token, branch=ns.branch)
+    else:
+        target = Path(ns.path).resolve()
+        token = _token_for_auth_path(target) or None
+        cp = repo_pull(target, token)
+
+    if token is None:
+        print(
+            "Warning: no GH_TOKEN found; running unauthenticated (public repos only).",
+            file=sys.stderr,
+        )
+    if cp.returncode != 0:
+        print(f"Error: {cp.stderr.strip()}", file=sys.stderr)
+        return 1
+    print(cp.stdout.strip())
+    return 0
+
+
 def _resolve_repo_targets(
     ns: argparse.Namespace,
 ) -> tuple[list[tuple[str, Path]], str | None]:
@@ -884,7 +912,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     repo_sub = repo_cmd.add_subparsers(
         dest="repo_command",
-        metavar="{register,list,forget,discover}",
+        metavar="{register,list,forget,discover,archive,clone,pull}",
         required=True,
     )
     repo_register_cmd = repo_sub.add_parser(
@@ -936,6 +964,32 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the confirmation prompt",
     )
+    repo_clone_cmd = repo_sub.add_parser(
+        "clone",
+        help=(
+            "Clone a GitHub repo non-interactively with repo-scaffold's token "
+            "(no credential prompt, nothing written to disk)"
+        ),
+    )
+    repo_clone_cmd.add_argument(
+        "--repo", required=True, help="GitHub repo (owner/repo)"
+    )
+    repo_clone_cmd.add_argument(
+        "--path",
+        required=True,
+        help="Directory to clone into (must not exist or be empty)",
+    )
+    repo_clone_cmd.add_argument(
+        "--branch", default=None, help="Branch to check out (default: repo default)"
+    )
+    repo_pull_cmd = repo_sub.add_parser(
+        "pull",
+        help=(
+            "Fast-forward a local checkout non-interactively with repo-scaffold's "
+            "token (no credential prompt, nothing written to disk)"
+        ),
+    )
+    repo_pull_cmd.add_argument("--path", required=True, help="Local checkout to pull")
 
     sync_cmd = subparsers.add_parser(
         "sync",
@@ -2708,6 +2762,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"Archived {ns.repo}.")
         return 0
+
+    if ns.mode == "repo" and ns.repo_command in {"clone", "pull"}:
+        return _dispatch_repo_sync(ns)
 
     if ns.mode == "repo" and ns.repo_command == "discover":
         token = token_from_repo(Path.cwd())
