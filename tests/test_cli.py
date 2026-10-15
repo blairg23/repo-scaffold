@@ -2610,23 +2610,165 @@ def test_pr_merge(tmp_path, monkeypatch, capsys) -> None:
     assert "merged" in capsys.readouterr().out
 
 
-def test_pr_checks(tmp_path, monkeypatch, capsys) -> None:
+def _pr_checks_payload(
+    runs: list[dict[str, object]],
+    statuses: list[dict[str, object]],
+    mergeable_state: str | None = "clean",
+    workflow_runs: list[dict[str, object]] | None = None,
+) -> str:
     import json
+
+    from repo_scaffold.github_api import summarize_checks
+
+    return json.dumps(
+        {
+            "head_sha": "abc123",
+            "mergeable": True,
+            "mergeable_state": mergeable_state,
+            "check_runs": runs,
+            "statuses": statuses,
+            "combined_state": None,
+            "workflow_runs": workflow_runs or [],
+            "summary": summarize_checks(
+                runs, statuses, mergeable_state, workflow_runs=workflow_runs
+            ),
+        }
+    )
+
+
+def _patch_pr_checks(monkeypatch, stdout: str) -> None:
     import subprocess
 
-    monkeypatch.chdir(tmp_path)
-    runs = [{"id": 1, "name": "CI", "status": "completed", "conclusion": "success"}]
     monkeypatch.setattr(
         "repo_scaffold.cli.pr_checks",
         lambda repo, pr_number, token: subprocess.CompletedProcess(
-            args=[], returncode=0, stdout=json.dumps(runs), stderr=""
+            args=[], returncode=0, stdout=stdout, stderr=""
+        ),
+    )
+
+
+_CLI_GREEN_RUN = {"id": 1, "name": "CI", "status": "completed", "conclusion": "success"}
+
+
+def test_pr_checks(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_pr_checks(monkeypatch, _pr_checks_payload([_CLI_GREEN_RUN], []))
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "checks", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "CI: success" in out
+    assert "Commit statuses:\n  (none)" in out
+    assert "Merge state: clean" in out
+    assert "Result: PASSING" in out
+
+
+def test_pr_checks_failing_status_exits_1(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    status = {
+        "context": "netlify/deploy",
+        "state": "failure",
+        "description": "Deploy failed",
+        "target_url": "https://example.test/d/1",
+    }
+    _patch_pr_checks(
+        monkeypatch, _pr_checks_payload([_CLI_GREEN_RUN], [status], "unstable")
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "checks", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "netlify/deploy: failure -- Deploy failed (https://example.test/d/1)" in out
+    assert "Merge state: unstable" in out
+    assert "Result: FAILING" in out
+    assert "failing: netlify/deploy" in out
+
+
+def test_pr_checks_pending_exits_2(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    run = {"id": 1, "name": "CI", "status": "in_progress", "conclusion": None}
+    _patch_pr_checks(monkeypatch, _pr_checks_payload([run], [], None))
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "checks", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc == 2
+    out = capsys.readouterr().out
+    assert "CI: in_progress" in out
+    assert "Merge state: unknown" in out
+    assert "pending: CI" in out
+
+
+def test_pr_checks_unstable_with_nothing_visible(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_pr_checks(monkeypatch, _pr_checks_payload([_CLI_GREEN_RUN], [], "unstable"))
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "checks", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc == 1
+    assert "merge state: unstable" in capsys.readouterr().out
+
+
+def test_pr_checks_failing_workflow_run(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    wf = {
+        "id": 5,
+        "name": "Validate PR review thread SOP",
+        "event": "pull_request",
+        "status": "completed",
+        "conclusion": "failure",
+        "html_url": "https://example.test/runs/5",
+    }
+    _patch_pr_checks(
+        monkeypatch,
+        _pr_checks_payload([_CLI_GREEN_RUN], [], "unstable", [wf]),
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "checks", "--repo", "acme/repo", "--pr-number", "42"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "Validate PR review thread SOP (pull_request): failure "
+        "(https://example.test/runs/5)" in out
+    )
+    assert "failing: workflow: Validate PR review thread SOP (pull_request)" in out
+
+
+def test_pr_checks_json(tmp_path, monkeypatch, capsys) -> None:
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    status = {"context": "ci/legacy", "state": "pending"}
+    _patch_pr_checks(
+        monkeypatch, _pr_checks_payload([_CLI_GREEN_RUN], [status], "unstable")
+    )
+    from repo_scaffold.cli import main
+
+    rc = main(["pr", "checks", "--repo", "acme/repo", "--pr-number", "42", "--json"])
+    assert rc == 2
+    data = json.loads(capsys.readouterr().out)
+    assert data["mergeable_state"] == "unstable"
+    assert data["statuses"][0]["context"] == "ci/legacy"
+    assert data["summary"]["pending"] == ["ci/legacy"]
+
+
+def test_pr_checks_fetch_error(tmp_path, monkeypatch, capsys) -> None:
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "repo_scaffold.cli.pr_checks",
+        lambda repo, pr_number, token: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="boom"
         ),
     )
     from repo_scaffold.cli import main
 
     rc = main(["pr", "checks", "--repo", "acme/repo", "--pr-number", "42"])
-    assert rc == 0
-    assert "CI" in capsys.readouterr().out
+    assert rc == 1
+    assert "boom" in capsys.readouterr().err
 
 
 def test_pr_annotations(tmp_path, monkeypatch, capsys) -> None:

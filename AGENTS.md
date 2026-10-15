@@ -257,8 +257,24 @@ poetry run repo-scaffold pr checks  --repo OWNER/REPO --pr-number N [--json]
 poetry run repo-scaffold pr wait    --repo OWNER/REPO --pr-number N [--interval 30] [--timeout 1800]
 ```
 
-`pr wait` polls until all checks pass (exit 0), any check fails (exit 1), or the timeout
-is reached (exit 2, default 30 min). Use it to block an agent loop on CI.
+`pr checks` lists the head commit's check runs, its commit statuses (the
+combined status API: context, state, description, target URL), any GitHub
+Actions workflow run that is not passing (newest run per workflow *and*
+triggering event, with its URL), and the PR's `mergeable_state` with a
+one-line hint (`unstable`, `dirty`, `blocked`, `behind`, `unknown`). The
+workflow-run view matters because the check-runs list keeps one run per name:
+a check-sop run that failed on `pull_request` stays red on GitHub even after a
+check-sop run on `pull_request_review` passed. It exits 0 when everything
+passes, 1 when anything is failing (or the merge state is `dirty`, or
+`unstable` with nothing listed to explain it), and 2 when nothing is failing
+but something is still pending. `--json` prints one object: `head_sha`,
+`mergeable`, `mergeable_state`, `check_runs`, `statuses`, `combined_state`,
+`workflow_runs` and `summary` (`verdict`, `failing`, `pending`,
+`merge_problem`).
+
+`pr wait` polls check runs and commit statuses until all pass (exit 0), any fails
+(exit 1), or the timeout is reached (exit 2, default 30 min). Use it to block an
+agent loop on CI.
 
 > Never call `pr merge` -- only CODEOWNERS may merge. See CLAUDE.md.
 
@@ -543,9 +559,11 @@ four steps, refresh it manually:
 ```bash
 poetry run repo-scaffold pr rerun --repo OWNER/REPO --pr-number N --failed-only
 ```
-It re-runs only the newest run of each workflow on the PR's head commit, and with
-`--failed-only` only when that newest run failed; superseded and still-running runs
-are skipped and counted in one summary line.
+It re-runs only the newest run of each workflow per triggering event on the PR's
+head commit (GitHub keeps a separate result for, say, check-sop on `pull_request`
+and on `pull_request_review`), and with `--failed-only` only when that newest run
+failed; superseded and still-running runs are skipped and counted in one summary
+line.
 
 ---
 

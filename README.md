@@ -324,6 +324,21 @@ poetry run repo-scaffold pr merge --repo OWNER/REPO --pr-number N [--method squa
 poetry run repo-scaffold pr checks --repo OWNER/REPO --pr-number N [--json]
 ```
 
+`pr checks` lists the head commit's check runs, its commit statuses (the
+combined status API: context, state, description, target URL), any GitHub
+Actions workflow run that is not passing (newest run per workflow *and*
+triggering event, with its URL), and the PR's `mergeable_state` with a
+one-line hint (`unstable`, `dirty`, `blocked`, `behind`, `unknown`). The
+workflow-run view matters because the check-runs list keeps one run per name:
+a check-sop run that failed on `pull_request` stays red on GitHub even after a
+check-sop run on `pull_request_review` passed. It exits 0 when everything
+passes, 1 when anything is failing (or the merge state is `dirty`, or
+`unstable` with nothing listed to explain it), and 2 when nothing is failing
+but something is still pending. `--json` prints one object: `head_sha`,
+`mergeable`, `mergeable_state`, `check_runs`, `statuses`, `combined_state`,
+`workflow_runs` and `summary` (`verdict`, `failing`, `pending`,
+`merge_problem`).
+
 ---
 
 ### `branch`
