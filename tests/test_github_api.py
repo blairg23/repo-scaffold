@@ -948,26 +948,337 @@ def test_pr_merge_success() -> None:
     assert json.loads(cp.stdout)["merged"] is True
 
 
-def test_pr_checks_success() -> None:
-    pr_data = {"head": {"sha": "abc123"}}
-    # Real API returns {total_count, check_runs: [...]} not a bare array
-    runs_payload = {
-        "total_count": 1,
-        "check_runs": [
-            {"id": 1, "name": "CI", "status": "completed", "conclusion": "success"}
-        ],
+def _checks_side_effect(
+    runs: list[dict[str, object]],
+    statuses: list[dict[str, object]],
+    mergeable_state: str | None = "clean",
+    workflow_runs: list[dict[str, object]] | None = None,
+) -> list[MagicMock]:
+    wf = workflow_runs or []
+    pr_data = {
+        "head": {"sha": "abc123"},
+        "mergeable": True,
+        "mergeable_state": mergeable_state,
     }
+    # Real API returns {total_count, check_runs: [...]} not a bare array
+    runs_payload = {"total_count": len(runs), "check_runs": runs}
+    status_payload = {
+        "state": "pending" if not statuses else "success",
+        "statuses": statuses,
+    }
+    return [
+        _mock_resp(200, json.dumps(pr_data)),
+        _mock_resp(200, json.dumps(runs_payload)),
+        _mock_resp(200, json.dumps(status_payload)),
+        _mock_resp(200, json.dumps({"total_count": len(wf), "workflow_runs": wf})),
+    ]
+
+
+_GREEN_RUN = {"id": 1, "name": "CI", "status": "completed", "conclusion": "success"}
+
+
+def test_pr_checks_success() -> None:
     with patch(
-        "urllib.request.urlopen",
-        side_effect=[
-            _mock_resp(200, json.dumps(pr_data)),
-            _mock_resp(200, json.dumps(runs_payload)),
-        ],
+        "urllib.request.urlopen", side_effect=_checks_side_effect([_GREEN_RUN], [])
     ):
         cp = github_api.pr_checks("owner/repo", 42, "tok")
     assert cp.returncode == 0
     result = json.loads(cp.stdout)
-    assert result[0]["name"] == "CI"
+    assert result["check_runs"][0]["name"] == "CI"
+    assert result["statuses"] == []
+    # No statuses: GitHub's "pending" combined state is not reported.
+    assert result["combined_state"] is None
+    assert result["mergeable_state"] == "clean"
+    assert result["summary"]["verdict"] == "passing"
+
+
+def test_pr_checks_dedupes_check_runs_by_name() -> None:
+    old = {"id": 1, "name": "CI", "status": "completed", "conclusion": "failure"}
+    new = {"id": 2, "name": "CI", "status": "completed", "conclusion": "success"}
+    with patch(
+        "urllib.request.urlopen", side_effect=_checks_side_effect([old, new], [])
+    ):
+        cp = github_api.pr_checks("owner/repo", 42, "tok")
+    result = json.loads(cp.stdout)
+    assert [r["id"] for r in result["check_runs"]] == [2]
+    assert result["summary"]["verdict"] == "passing"
+
+
+def test_pr_checks_includes_failing_commit_status() -> None:
+    status = {
+        "context": "netlify/deploy",
+        "state": "failure",
+        "description": "Deploy failed",
+        "target_url": "https://example.test/deploy/1",
+        "id": 99,
+    }
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=_checks_side_effect([_GREEN_RUN], [status], "unstable"),
+    ):
+        cp = github_api.pr_checks("owner/repo", 42, "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert result["statuses"] == [
+        {
+            "context": "netlify/deploy",
+            "state": "failure",
+            "description": "Deploy failed",
+            "target_url": "https://example.test/deploy/1",
+        }
+    ]
+    assert result["combined_state"] == "success"
+    assert result["summary"]["verdict"] == "failing"
+    assert result["summary"]["failing"] == ["netlify/deploy"]
+    # The failing status explains "unstable", so no separate merge problem.
+    assert result["summary"]["merge_problem"] is None
+
+
+def test_pr_checks_includes_pending_commit_status() -> None:
+    status = {"context": "ci/legacy", "state": "pending"}
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=_checks_side_effect([_GREEN_RUN], [status], "unstable"),
+    ):
+        cp = github_api.pr_checks("owner/repo", 42, "tok")
+    result = json.loads(cp.stdout)
+    assert result["summary"]["verdict"] == "pending"
+    assert result["summary"]["pending"] == ["ci/legacy"]
+
+
+def test_pr_checks_status_api_error() -> None:
+    pr_data = {"head": {"sha": "abc123"}, "mergeable_state": "clean"}
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[
+            _mock_resp(200, json.dumps(pr_data)),
+            _mock_resp(200, json.dumps({"check_runs": []})),
+            _http_error(500, "boom"),
+        ],
+    ):
+        cp = github_api.pr_checks("owner/repo", 42, "tok")
+    assert cp.returncode != 0
+
+
+def test_pr_checks_actions_runs_api_error() -> None:
+    side = _checks_side_effect([_GREEN_RUN], [])
+    side[3] = _http_error(500, "boom")
+    with patch("urllib.request.urlopen", side_effect=side):
+        cp = github_api.pr_checks("owner/repo", 42, "tok")
+    assert cp.returncode != 0
+
+
+def _wf(
+    run_id: int, run_number: int, event: str, conclusion: str | None
+) -> dict[str, object]:
+    return {
+        "id": run_id,
+        "workflow_id": 7,
+        "name": "Validate PR review thread SOP",
+        "run_number": run_number,
+        "event": event,
+        "status": "completed" if conclusion else "in_progress",
+        "conclusion": conclusion,
+        "run_attempt": 1,
+        "html_url": f"https://example.test/runs/{run_id}",
+    }
+
+
+def test_pr_checks_flags_failed_run_hidden_by_same_named_check() -> None:
+    # enkithoth/todd#22: the check-runs list showed check-sop green (newest
+    # run, review event) while the pull_request run of the same workflow had
+    # failed, keeping mergeable_state "unstable".
+    sop_green = {
+        "id": 9,
+        "name": "check-sop",
+        "status": "completed",
+        "conclusion": "success",
+    }
+    wf = [
+        _wf(1, 1, "pull_request", "failure"),
+        _wf(2, 2, "pull_request_review", "failure"),
+        _wf(3, 3, "pull_request_review", "success"),
+    ]
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=_checks_side_effect([sop_green], [], "unstable", wf),
+    ):
+        cp = github_api.pr_checks("owner/repo", 42, "tok")
+    assert cp.returncode == 0
+    result = json.loads(cp.stdout)
+    assert sorted(w["id"] for w in result["workflow_runs"]) == [1, 3]
+    assert result["summary"]["verdict"] == "failing"
+    assert result["summary"]["failing"] == [
+        "workflow: Validate PR review thread SOP (pull_request)"
+    ]
+    assert result["summary"]["merge_problem"] is None
+
+
+def test_summarize_checks_pending_workflow_run() -> None:
+    summary = github_api.summarize_checks(
+        [_GREEN_RUN], [], workflow_runs=[_wf(1, 1, "push", None)]
+    )
+    assert summary["verdict"] == "pending"
+    assert summary["pending"] == ["workflow: Validate PR review thread SOP (push)"]
+
+
+def test_pr_checks_unknown_mergeability_is_pending() -> None:
+    side = _checks_side_effect([_GREEN_RUN], [], None)
+    with patch("urllib.request.urlopen", side_effect=side):
+        cp = github_api.pr_checks("owner/repo", 42, "tok")
+    result = json.loads(cp.stdout)
+    assert result["mergeable_state"] is None
+    assert result["summary"]["verdict"] == "pending"
+    assert result["summary"]["pending"] == [
+        "merge state: unknown (GitHub is still computing it)"
+    ]
+
+
+def test_pr_checks_reads_every_status_page() -> None:
+    page1 = [{"context": f"ctx{i}", "state": "success"} for i in range(100)]
+    page2 = [{"context": "late", "state": "failure"}]
+    pr_data = {"head": {"sha": "abc123"}, "mergeable_state": "unstable"}
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[
+            _mock_resp(200, json.dumps(pr_data)),
+            _mock_resp(200, json.dumps({"check_runs": [_GREEN_RUN]})),
+            _mock_resp(
+                200,
+                json.dumps({"state": "failure", "total_count": 101, "statuses": page1}),
+            ),
+            _mock_resp(
+                200,
+                json.dumps({"state": "failure", "total_count": 101, "statuses": page2}),
+            ),
+            _mock_resp(200, json.dumps({"total_count": 0, "workflow_runs": []})),
+        ],
+    ):
+        cp = github_api.pr_checks("owner/repo", 42, "tok")
+    result = json.loads(cp.stdout)
+    assert len(result["statuses"]) == 101
+    assert result["combined_state"] == "failure"
+    assert result["summary"]["failing"] == ["late"]
+
+
+def test_summarize_checks_unstable_with_nothing_visible() -> None:
+    summary = github_api.summarize_checks([_GREEN_RUN], [], "unstable")
+    assert summary["verdict"] == "failing"
+    assert summary["failing"] == []
+    assert summary["merge_problem"].startswith("unstable")
+
+
+def test_summarize_checks_dirty_is_failing() -> None:
+    summary = github_api.summarize_checks([_GREEN_RUN], [], "dirty")
+    assert summary["verdict"] == "failing"
+    assert "merge conflict" in summary["merge_problem"]
+
+
+def test_summarize_checks_blocked_is_not_failing() -> None:
+    summary = github_api.summarize_checks([_GREEN_RUN], [], "blocked")
+    assert summary["verdict"] == "passing"
+    assert summary["merge_problem"] is None
+
+
+def test_summarize_checks_check_run_states() -> None:
+    runs = [
+        {"name": "a", "status": "completed", "conclusion": "skipped"},
+        {"name": "b", "status": "completed", "conclusion": "neutral"},
+        {"name": "c", "status": "in_progress", "conclusion": None},
+        {"name": "d", "status": "completed", "conclusion": "timed_out"},
+    ]
+    statuses = [{"context": "e", "state": "error"}]
+    summary = github_api.summarize_checks(runs, statuses)
+    assert summary["failing"] == ["d", "e"]
+    assert summary["pending"] == ["c"]
+    assert summary["verdict"] == "failing"
+
+
+def test_mergeable_state_hint() -> None:
+    assert "conflict" in github_api.mergeable_state_hint("dirty")
+    assert "not computed" in github_api.mergeable_state_hint(None)
+    assert github_api.mergeable_state_hint("clean") == ""
+
+
+def _checks_cp(
+    runs: list[dict[str, object]], statuses: list[dict[str, object]]
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout=json.dumps(
+            {
+                "head_sha": "abc123",
+                "mergeable": True,
+                "mergeable_state": "unstable",
+                "check_runs": runs,
+                "statuses": statuses,
+                "combined_state": None,
+                "summary": github_api.summarize_checks(runs, statuses),
+            }
+        ),
+        stderr="",
+    )
+
+
+def test_pr_wait_fails_on_failing_commit_status(monkeypatch) -> None:
+    monkeypatch.setattr(
+        github_api,
+        "pr_checks",
+        lambda *a, **k: _checks_cp(
+            [_GREEN_RUN], [{"context": "ci/legacy", "state": "failure"}]
+        ),
+    )
+    cp = github_api.pr_wait("owner/repo", 42, "tok", interval=0, timeout=5)
+    assert cp.returncode == 1
+    assert "ci/legacy" in cp.stderr
+
+
+def test_pr_wait_waits_on_pending_commit_status(monkeypatch) -> None:
+    results = iter(
+        [
+            _checks_cp([_GREEN_RUN], [{"context": "ci/legacy", "state": "pending"}]),
+            _checks_cp([_GREEN_RUN], [{"context": "ci/legacy", "state": "success"}]),
+        ]
+    )
+    monkeypatch.setattr(github_api, "pr_checks", lambda *a, **k: next(results))
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    cp = github_api.pr_wait("owner/repo", 42, "tok", interval=1, timeout=10)
+    assert cp.returncode == 0
+    assert "All checks passed" in cp.stdout
+
+
+def test_pr_wait_times_out_while_status_pending(monkeypatch) -> None:
+    monkeypatch.setattr(
+        github_api,
+        "pr_checks",
+        lambda *a, **k: _checks_cp(
+            [_GREEN_RUN], [{"context": "ci/legacy", "state": "pending"}]
+        ),
+    )
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    cp = github_api.pr_wait("owner/repo", 42, "tok", interval=1, timeout=2)
+    assert cp.returncode == 2
+
+
+def test_pr_wait_no_checks_yet_then_pass(monkeypatch) -> None:
+    results = iter([_checks_cp([], []), _checks_cp([_GREEN_RUN], [])])
+    monkeypatch.setattr(github_api, "pr_checks", lambda *a, **k: next(results))
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    cp = github_api.pr_wait("owner/repo", 42, "tok", interval=1, timeout=10)
+    assert cp.returncode == 0
+
+
+def test_pr_wait_bad_payload(monkeypatch) -> None:
+    monkeypatch.setattr(
+        github_api,
+        "pr_checks",
+        lambda *a, **k: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="[]", stderr=""
+        ),
+    )
+    cp = github_api.pr_wait("owner/repo", 42, "tok", interval=0, timeout=5)
+    assert cp.returncode != 0
 
 
 def test_issue_list_with_label() -> None:
@@ -1313,6 +1624,26 @@ def test_select_runs_failed_only_accepts_every_failed_conclusion(
     selected, _ = github_api._select_runs_to_rerun([_run(1, 1, 1, conclusion)], True)
 
     assert [r["id"] for r in selected] == [1]
+
+
+def test_select_runs_failed_only_groups_by_workflow_and_event() -> None:
+    # enkithoth/todd#22: check-sop failed on the push (pull_request) and later
+    # passed on review events. GitHub keeps the failed pull_request result, so
+    # a passing run for another event must not supersede it.
+    runs = [
+        {**_run(1, 1, 1, "failure"), "event": "pull_request"},
+        {**_run(2, 1, 2, "failure"), "event": "pull_request_review"},
+        {**_run(3, 1, 3, "success"), "event": "pull_request_review"},
+        {**_run(4, 1, 4, "success"), "event": "pull_request_review_comment"},
+    ]
+    selected, skipped = github_api._select_runs_to_rerun(runs, True)
+
+    assert [r["id"] for r in selected] == [1]
+    assert {s["id"]: s["reason"] for s in skipped} == {
+        2: "superseded",
+        3: "not failed",
+        4: "not failed",
+    }
 
 
 def test_pr_rerun_failed_only_posts_only_to_newest_failed_run() -> None:

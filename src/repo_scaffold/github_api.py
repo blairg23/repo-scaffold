@@ -1916,18 +1916,192 @@ def pr_merge(
     )
 
 
+# Check-run and workflow-run conclusions that do not block a PR.
+_PASSING_CONCLUSIONS = frozenset({"success", "skipped", "neutral"})
+
+# One-line explanations for PR mergeable_state values that need attention.
+_MERGEABLE_STATE_HINTS = {
+    "unstable": "mergeable, but a check run or commit status is not passing",
+    "dirty": "merge conflict with the base branch",
+    "blocked": "blocked by branch protection (required reviews or required checks)",
+    "behind": "head branch is behind the base branch",
+    "unknown": "GitHub has not computed it yet (re-run shortly)",
+    "draft": "PR is a draft",
+}
+
+
+def _latest_check_runs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate check runs by name, keeping the newest (highest id)."""
+    seen: dict[str, dict[str, Any]] = {}
+    for run in items:
+        n = str(run.get("name", ""))
+        run_id = run.get("id", 0)
+        seen_id = seen[n].get("id", 0) if n in seen else 0
+        if n not in seen or (
+            isinstance(run_id, int) and isinstance(seen_id, int) and run_id > seen_id
+        ):
+            seen[n] = run
+    return list(seen.values())
+
+
+def _workflow_run_key(run: dict[str, Any]) -> tuple[object, object]:
+    """Group key for workflow runs: one workflow triggered by one event.
+
+    GitHub keeps one result per workflow *and* triggering event on a commit:
+    a check-sop run triggered by ``pull_request_review`` does not replace one
+    triggered by ``pull_request``, so a failed run for one event keeps the PR
+    red even when a later run of the same workflow for another event passed.
+    """
+    workflow = run.get("workflow_id") or run.get("name") or run.get("id")
+    return (workflow, run.get("event"))
+
+
+def _newest_workflow_run_indexes(runs: list[dict[str, Any]]) -> set[int]:
+    """Indexes of the newest run per workflow and event (see _workflow_run_key)."""
+
+    def rank(run: dict[str, Any]) -> tuple[int, int]:
+        return (run.get("run_number") or 0, run.get("id") or 0)
+
+    newest: dict[tuple[object, object], int] = {}
+    for index, run in enumerate(runs):
+        key = _workflow_run_key(run)
+        best = newest.get(key)
+        if best is None or rank(run) > rank(runs[best]):
+            newest[key] = index
+    return set(newest.values())
+
+
+def _workflow_runs_for_sha(
+    repo: str, sha: str, token: str
+) -> list[dict[str, Any]] | subprocess.CompletedProcess[str]:
+    """Return every GitHub Actions workflow run on a commit (all pages).
+
+    The runs list is paginated and newest-first. Every page is needed: after
+    many check-sop re-runs, another workflow's newest run can sit past the
+    first page. Returns a CompletedProcess on an API error.
+    """
+    runs: list[dict[str, Any]] = []
+    for page in range(1, _MAX_RUN_PAGES + 1):
+        cp = rest(
+            "GET",
+            f"/repos/{repo}/actions/runs?head_sha={sha}"
+            f"&per_page={_RUNS_PER_PAGE}&page={page}",
+            token,
+        )
+        if cp.returncode != 0:
+            return cp
+        try:
+            payload = json.loads(cp.stdout)
+            batch = payload.get("workflow_runs", [])
+        except (json.JSONDecodeError, AttributeError):
+            return _err("Unexpected response from actions/runs API.")
+        runs.extend(batch)
+        total = payload.get("total_count")
+        if len(batch) < _RUNS_PER_PAGE or (
+            isinstance(total, int) and len(runs) >= total
+        ):
+            break
+    return runs
+
+
+def summarize_checks(
+    check_runs: list[dict[str, Any]],
+    statuses: list[dict[str, Any]],
+    mergeable_state: str | None = None,
+    workflow_runs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Classify check runs, commit statuses and workflow runs.
+
+    ``failing``/``pending`` list the check runs (by name) and commit statuses
+    (by context) that are not passing, plus the newest workflow run per
+    workflow and event that is not passing (``workflow: NAME (EVENT)``).
+    The check-runs list keeps one run per name, so it can hide a failed run
+    of the same workflow triggered by another event; the workflow-run entries
+    are what catch it. ``merge_problem`` is set when the PR's mergeable_state
+    means the PR is red even though nothing listed explains it (``dirty``,
+    or ``unstable`` with no failing or pending item). A mergeable_state of
+    ``unknown`` (GitHub still computing it) counts as pending. ``verdict``
+    is ``failing``, ``pending`` or ``passing``.
+    """
+    failing: list[str] = []
+    pending: list[str] = []
+    for run in check_runs:
+        name = str(run.get("name", "?"))
+        if run.get("status") != "completed":
+            pending.append(name)
+        elif run.get("conclusion") not in _PASSING_CONCLUSIONS:
+            failing.append(name)
+    for st in statuses:
+        context = str(st.get("context", "?"))
+        state = st.get("state")
+        if state == "pending":
+            pending.append(context)
+        elif state != "success":
+            failing.append(context)
+    for wr in workflow_runs or []:
+        label = f"workflow: {wr.get('name', '?')} ({wr.get('event', '?')})"
+        if wr.get("status") != "completed":
+            pending.append(label)
+        elif wr.get("conclusion") not in _PASSING_CONCLUSIONS:
+            failing.append(label)
+
+    if mergeable_state == "unknown":
+        # Conflicts cannot be ruled out until GitHub finishes computing.
+        pending.append("merge state: unknown (GitHub is still computing it)")
+
+    merge_problem: str | None = None
+    if mergeable_state == "dirty":
+        merge_problem = "dirty: " + _MERGEABLE_STATE_HINTS["dirty"]
+    elif mergeable_state == "unstable" and not failing and not pending:
+        merge_problem = (
+            "unstable: GitHub reports a non-passing check or status, but none of "
+            "the check runs, commit statuses or workflow runs on the head commit "
+            "are failing or pending"
+        )
+
+    if failing or merge_problem:
+        verdict = "failing"
+    elif pending:
+        verdict = "pending"
+    else:
+        verdict = "passing"
+    return {
+        "verdict": verdict,
+        "failing": failing,
+        "pending": pending,
+        "merge_problem": merge_problem,
+    }
+
+
+def mergeable_state_hint(mergeable_state: str | None) -> str:
+    """Return a one-line explanation for a mergeable_state, or ''."""
+    if mergeable_state is None:
+        return _MERGEABLE_STATE_HINTS["unknown"]
+    return _MERGEABLE_STATE_HINTS.get(mergeable_state, "")
+
+
 def pr_checks(
     repo: str,
     pr_number: int,
     token: str,
 ) -> subprocess.CompletedProcess[str]:
-    """Return check-run statuses for a PR's head commit."""
+    """Return check runs, commit statuses, workflow runs and merge state.
+
+    stdout is a JSON object: ``head_sha``, ``mergeable``, ``mergeable_state``,
+    ``check_runs`` (latest run per name), ``statuses`` (latest status per
+    context from the combined status API: ``context``, ``state``,
+    ``description``, ``target_url``), ``combined_state``, ``workflow_runs``
+    (newest GitHub Actions run per workflow and event: ``id``, ``name``,
+    ``event``, ``status``, ``conclusion``, ``run_attempt``, ``html_url``)
+    and ``summary`` (see :func:`summarize_checks`).
+    """
     cp = rest("GET", f"/repos/{repo}/pulls/{pr_number}", token)
     if cp.returncode != 0:
         return cp
     try:
-        sha = json.loads(cp.stdout)["head"]["sha"]
-    except (json.JSONDecodeError, KeyError):
+        pr = json.loads(cp.stdout)
+        sha = pr["head"]["sha"]
+    except (json.JSONDecodeError, KeyError, TypeError):
         return _err("Could not extract head SHA from PR.")
     cp2 = rest("GET", f"/repos/{repo}/commits/{sha}/check-runs?per_page=100", token)
     if cp2.returncode != 0:
@@ -1935,21 +2109,97 @@ def pr_checks(
     try:
         payload = json.loads(cp2.stdout)
         items = payload.get("check_runs", []) if isinstance(payload, dict) else payload
-        # Deduplicate by name, keeping latest by id
-        seen: dict[str, dict[str, object]] = {}
-        for run in items:
-            n = str(run.get("name", ""))
-            run_id = run.get("id", 0)
-            seen_id = seen[n].get("id", 0) if n in seen else 0
-            if n not in seen or (
-                isinstance(run_id, int)
-                and isinstance(seen_id, int)
-                and run_id > seen_id
-            ):
-                seen[n] = run
-        return _ok(json.dumps(list(seen.values())))
+        runs = _latest_check_runs(items)
     except (json.JSONDecodeError, AttributeError):
         return _err("Unexpected response from check-runs API.")
+    combined_or_err = _combined_status_for_sha(repo, sha, token)
+    if isinstance(combined_or_err, subprocess.CompletedProcess):
+        return combined_or_err
+    combined_state, statuses = combined_or_err
+    all_wf = _workflow_runs_for_sha(repo, sha, token)
+    if isinstance(all_wf, subprocess.CompletedProcess):
+        return all_wf
+    newest = _newest_workflow_run_indexes(all_wf)
+    workflow_runs = [
+        {
+            "id": wr.get("id"),
+            "name": wr.get("name"),
+            "event": wr.get("event"),
+            "status": wr.get("status"),
+            "conclusion": wr.get("conclusion"),
+            "run_attempt": wr.get("run_attempt"),
+            "html_url": wr.get("html_url"),
+        }
+        for i, wr in enumerate(all_wf)
+        if i in newest
+    ]
+    mergeable_state = pr.get("mergeable_state")
+    return _ok(
+        json.dumps(
+            {
+                "head_sha": sha,
+                "mergeable": pr.get("mergeable"),
+                "mergeable_state": mergeable_state,
+                "check_runs": runs,
+                "statuses": statuses,
+                # GitHub reports "pending" for a commit with no statuses at all.
+                "combined_state": combined_state if statuses else None,
+                "workflow_runs": workflow_runs,
+                # GitHub returns null while it is still computing mergeability.
+                "summary": summarize_checks(
+                    runs,
+                    statuses,
+                    mergeable_state or "unknown",
+                    workflow_runs=workflow_runs,
+                ),
+            }
+        )
+    )
+
+
+def _combined_status_for_sha(
+    repo: str, sha: str, token: str
+) -> tuple[str | None, list[dict[str, Any]]] | subprocess.CompletedProcess[str]:
+    """Return ``(combined_state, statuses)`` for a commit, reading every page.
+
+    The combined status endpoint caps ``per_page`` at 100 and paginates the
+    ``statuses`` list; a failing context on page two must not be missed.
+    Each status is reduced to ``context``, ``state``, ``description`` and
+    ``target_url``. Returns a CompletedProcess on an API error.
+    """
+    combined_state: str | None = None
+    statuses: list[dict[str, Any]] = []
+    for page in range(1, _MAX_RUN_PAGES + 1):
+        cp = rest(
+            "GET",
+            f"/repos/{repo}/commits/{sha}/status"
+            f"?per_page={_RUNS_PER_PAGE}&page={page}",
+            token,
+        )
+        if cp.returncode != 0:
+            return cp
+        try:
+            payload = json.loads(cp.stdout)
+            batch = payload.get("statuses", [])
+            if page == 1:
+                combined_state = payload.get("state")
+            statuses.extend(
+                {
+                    "context": st.get("context"),
+                    "state": st.get("state"),
+                    "description": st.get("description"),
+                    "target_url": st.get("target_url"),
+                }
+                for st in batch
+            )
+        except (json.JSONDecodeError, AttributeError):
+            return _err("Unexpected response from combined status API.")
+        total = payload.get("total_count")
+        if len(batch) < _RUNS_PER_PAGE or (
+            isinstance(total, int) and len(statuses) >= total
+        ):
+            break
+    return combined_state, statuses
 
 
 def pr_wait(
@@ -1959,11 +2209,11 @@ def pr_wait(
     interval: int = 30,
     timeout: int = 1800,
 ) -> subprocess.CompletedProcess[str]:
-    """Poll PR checks until all pass or any fail.
+    """Poll PR checks, commit statuses and workflow runs until pass or fail.
 
     Returns:
-        returncode 0  -- all checks green
-        returncode 1  -- one or more checks failed
+        returncode 0  -- everything green
+        returncode 1  -- a check run, commit status or workflow run failed
         returncode 2  -- timed out before a conclusion
     """
     import time
@@ -1975,36 +2225,36 @@ def pr_wait(
             return cp
 
         try:
-            runs = json.loads(cp.stdout)
-        except (json.JSONDecodeError, ValueError):
-            return _err("Unexpected response from check-runs API.")
+            data = json.loads(cp.stdout)
+            runs = data["check_runs"]
+            statuses = data["statuses"]
+            workflow_runs = data.get("workflow_runs", [])
+        except (json.JSONDecodeError, ValueError, KeyError, TypeError, AttributeError):
+            return _err("Unexpected response from pr_checks.")
 
-        if not runs:
+        if not runs and not statuses:
             print(f"  [{elapsed}s] No checks found yet, waiting...")
         else:
-            statuses = {r.get("status") for r in runs}
-            conclusions = {
-                r.get("conclusion") for r in runs if r.get("status") == "completed"
-            }
-
-            failed = {
-                c
-                for c in conclusions
-                if c not in (None, "success", "skipped", "neutral")
-            }
-            pending = statuses - {"completed"}
-
-            names = ", ".join(r.get("name", "?") for r in runs)
+            # GitHub computes mergeable_state lazily and it can lag a run that
+            # just finished, so wait decides on runs and statuses only.
+            summary = summarize_checks(runs, statuses, workflow_runs=workflow_runs)
+            failing = summary["failing"]
+            pending = summary["pending"]
+            names = ", ".join(
+                [str(r.get("name", "?")) for r in runs]
+                + [str(s.get("context", "?")) for s in statuses]
+            )
             print(
-                f"  [{elapsed}s] {len(runs)} check(s): pending={len(pending)} failed={len(failed)} -- {names}"
+                f"  [{elapsed}s] {len(runs) + len(statuses)} check(s): "
+                f"pending={len(pending)} failed={len(failing)} -- {names}"
             )
 
-            if failed:
+            if failing:
                 return subprocess.CompletedProcess(
                     args=[],
                     returncode=1,
                     stdout="",
-                    stderr=f"Checks failed: {', '.join(str(f) for f in failed)}",
+                    stderr=f"Checks failed: {', '.join(failing)}",
                 )
             if not pending:
                 return _ok("All checks passed.")
@@ -2093,22 +2343,15 @@ def _select_runs_to_rerun(
 
     Every review reply, push or manual trigger starts another run of the same
     workflow on the same head SHA, so the list usually holds superseded runs.
-    Only the newest run per workflow counts (highest run_number, then id). A run
-    that has not completed cannot be re-run yet. With ``failed_only`` the newest
-    run must also have failed. Returns ``(selected, skipped)``; each skipped run
+    Only the newest run per workflow and triggering event counts (highest
+    run_number, then id): GitHub keeps one result per workflow and event, so
+    a failed ``pull_request`` run is not superseded by a passing
+    ``pull_request_review`` run of the same workflow. A run that has not
+    completed cannot be re-run yet. With ``failed_only`` the newest run must
+    also have failed. Returns ``(selected, skipped)``; each skipped run
     carries a ``reason``.
     """
-
-    def rank(run: dict[str, Any]) -> tuple[int, int]:
-        return (run.get("run_number") or 0, run.get("id") or 0)
-
-    newest: dict[object, int] = {}
-    for index, run in enumerate(runs):
-        key = run.get("workflow_id") or run.get("name") or run.get("id")
-        best = newest.get(key)
-        if best is None or rank(run) > rank(runs[best]):
-            newest[key] = index
-    newest_indexes = set(newest.values())
+    newest_indexes = _newest_workflow_run_indexes(runs)
 
     selected: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -2134,7 +2377,7 @@ def pr_rerun(
     token: str,
     failed_only: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    """Re-run the newest run of each workflow on a PR's head commit.
+    """Re-run the newest run of each workflow and event on a PR's head commit.
 
     With ``failed_only``, only workflows whose newest run failed are re-run, and
     only their failed jobs. Superseded and still-running runs are never re-run.
@@ -2146,29 +2389,9 @@ def pr_rerun(
         sha = json.loads(cp.stdout)["head"]["sha"]
     except (json.JSONDecodeError, KeyError):
         return _err("Could not extract head SHA from PR.")
-    # The runs list is paginated and newest-first. Every page is needed: after many
-    # check-sop re-runs, another workflow's newest run can sit past the first page.
-    runs: list[dict[str, Any]] = []
-    for page in range(1, _MAX_RUN_PAGES + 1):
-        cp2 = rest(
-            "GET",
-            f"/repos/{repo}/actions/runs?head_sha={sha}"
-            f"&per_page={_RUNS_PER_PAGE}&page={page}",
-            token,
-        )
-        if cp2.returncode != 0:
-            return cp2
-        try:
-            payload = json.loads(cp2.stdout)
-            batch = payload.get("workflow_runs", [])
-        except (json.JSONDecodeError, AttributeError):
-            return _err("Unexpected response from actions/runs API.")
-        runs.extend(batch)
-        total = payload.get("total_count")
-        if len(batch) < _RUNS_PER_PAGE or (
-            isinstance(total, int) and len(runs) >= total
-        ):
-            break
+    runs = _workflow_runs_for_sha(repo, sha, token)
+    if isinstance(runs, subprocess.CompletedProcess):
+        return runs
     if not runs:
         return _err(f"No workflow runs found for PR #{pr_number}.")
     selected, skipped = _select_runs_to_rerun(runs, failed_only)

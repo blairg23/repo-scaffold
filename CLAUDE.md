@@ -66,6 +66,8 @@ poetry run repo-scaffold pr resolve-thread --repo OWNER/REPO --thread-id THREAD_
 poetry run repo-scaffold pr create --repo OWNER/REPO --title "TITLE" --head BRANCH [--base main] [--body "TEXT"] [--draft]
 poetry run repo-scaffold pr update --repo OWNER/REPO --pr-number N [--title "TITLE"] [--body "TEXT"]
 poetry run repo-scaffold pr merge --repo OWNER/REPO --pr-number N [--method squash|merge|rebase]  # ⚠ human-only -- agents never merge
+# Check runs + commit statuses + failing workflow runs + mergeable_state;
+# exit 0 green, 1 failing, 2 pending
 poetry run repo-scaffold pr checks --repo OWNER/REPO --pr-number N [--json]
 poetry run repo-scaffold pr annotations --repo OWNER/REPO --pr-number N [--json]
 poetry run repo-scaffold pr rerun --repo OWNER/REPO --pr-number N [--failed-only]
@@ -217,9 +219,11 @@ failed/stale after all four steps, refresh it manually:
 ```bash
 poetry run repo-scaffold pr rerun --repo OWNER/REPO --pr-number N --failed-only
 ```
-It re-runs only the newest run of each workflow on the PR's head commit, and with
-`--failed-only` only when that newest run failed; superseded and still-running runs
-are skipped and counted in one summary line.
+It re-runs only the newest run of each workflow per triggering event on the PR's
+head commit (GitHub keeps a separate result for, say, check-sop on `pull_request`
+and on `pull_request_review`), and with `--failed-only` only when that newest run
+failed; superseded and still-running runs are skipped and counted in one summary
+line.
 
 ## Supported languages for init/apply ci
 `go`, `gin`, `python`, `react`

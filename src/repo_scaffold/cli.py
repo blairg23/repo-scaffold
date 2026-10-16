@@ -8,6 +8,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from .auth_tokens import is_placeholder_token, resolve_gh_token
 from .backlog_import import build_backlog_import_file
@@ -72,6 +73,7 @@ from .github_api import (
     label_create,
     label_delete,
     label_list,
+    mergeable_state_hint,
     pr_annotations,
     pr_check_sop,
     pr_checks,
@@ -535,6 +537,63 @@ def _resolve_body(body: str | None, body_file: str | None) -> str | None:
                 f"error: --body-file {body_file!r} is not valid UTF-8: {exc}"
             ) from exc
     return body
+
+
+def _print_pr_checks(data: dict[str, Any]) -> None:
+    """Print `pr checks` output: check runs, commit statuses, merge state."""
+    runs = data.get("check_runs", [])
+    statuses = data.get("statuses", [])
+    summary = data["summary"]
+    print(f"Head: {data.get('head_sha', '?')}")
+    print("Check runs:")
+    if not runs:
+        print("  (none)")
+    for r in runs:
+        conclusion = r.get("conclusion") or r.get("status", "?")
+        print(f"  {r.get('name', '?')}: {conclusion}")
+    print("Commit statuses:")
+    if not statuses:
+        print("  (none)")
+    for s in statuses:
+        line = f"  {s.get('context', '?')}: {s.get('state', '?')}"
+        if s.get("description"):
+            line += f" -- {s['description']}"
+        if s.get("target_url"):
+            line += f" ({s['target_url']})"
+        print(line)
+    not_green = [
+        w
+        for w in data.get("workflow_runs", [])
+        if w.get("status") != "completed"
+        or w.get("conclusion") not in ("success", "skipped", "neutral")
+    ]
+    if not_green:
+        print("Workflow runs not passing (newest per workflow and event):")
+        for w in not_green:
+            line = (
+                f"  {w.get('name', '?')} ({w.get('event', '?')}): "
+                f"{w.get('conclusion') or w.get('status', '?')}"
+            )
+            if w.get("html_url"):
+                line += f" ({w['html_url']})"
+            print(line)
+    state = data.get("mergeable_state")
+    hint = mergeable_state_hint(state)
+    merge_line = (
+        f"Merge state: {state or 'unknown'} (mergeable={data.get('mergeable')})"
+    )
+    print(merge_line + (f" -- {hint}" if hint else ""))
+    verdict = summary["verdict"]
+    if verdict == "passing":
+        print("Result: PASSING")
+        return
+    print(f"Result: {verdict.upper()}")
+    if summary["failing"]:
+        print(f"  failing: {', '.join(summary['failing'])}")
+    if summary["pending"]:
+        print(f"  pending: {', '.join(summary['pending'])}")
+    if summary["merge_problem"]:
+        print(f"  merge state: {summary['merge_problem']}")
 
 
 def _add_apply_target_args(parser: argparse.ArgumentParser) -> None:
@@ -1686,7 +1745,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Merge method (default: squash)",
     )
 
-    pr_checks_cmd = pr_sub.add_parser("checks", help="Show CI check statuses for a PR")
+    pr_checks_cmd = pr_sub.add_parser(
+        "checks",
+        help=(
+            "Show check runs, commit statuses and merge state for a PR"
+            " (exit 1 failing, 2 pending)"
+        ),
+    )
     pr_checks_cmd.add_argument("--repo", required=True)
     pr_checks_cmd.add_argument("--pr-number", required=True, type=int, dest="pr_number")
     pr_checks_cmd.add_argument("--json", action="store_true", dest="json_output")
@@ -3767,16 +3832,18 @@ def main(argv: list[str] | None = None) -> int:
             if cp.returncode != 0:
                 print(cp.stderr.strip() or "Failed fetching checks.", file=sys.stderr)
                 return 1
-            runs = _json.loads(cp.stdout)
+            data = _json.loads(cp.stdout)
+            summary = data["summary"]
             if ns.json_output:
-                print(_json.dumps(runs, indent=2))
+                print(_json.dumps(data, indent=2))
             else:
-                if not runs:
-                    print("No check runs found.")
-                for r in runs:
-                    status = r.get("status", "?")
-                    conclusion = r.get("conclusion") or status
-                    print(f"  {r.get('name', '?')}: {conclusion}")
+                _print_pr_checks(data)
+            # 0 = all green, 1 = something failing (or a red merge state),
+            # 2 = nothing failing but something still pending.
+            if summary["verdict"] == "failing":
+                return 1
+            if summary["verdict"] == "pending":
+                return 2
             return 0
 
         if ns.pr_command == "annotations":
