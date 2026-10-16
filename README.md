@@ -341,6 +341,39 @@ poetry run repo-scaffold branch rename --repo OWNER/REPO --name BRANCH --new-nam
 
 ---
 
+### `repo clone` / `repo pull`
+
+Clone a GitHub repo, or fast-forward an existing checkout, without any credential prompt.
+
+```bash
+poetry run repo-scaffold repo clone --repo OWNER/REPO --path DIR [--branch BRANCH]
+poetry run repo-scaffold repo pull --path DIR
+```
+
+A plain `git clone`/`git pull` on Windows goes through Git Credential Manager, which opens
+a GUI login popup and hangs headless and agent runs. These commands never prompt and never
+store the token:
+
+- every git call runs with `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` and an empty
+  `credential.helper`, so no configured helper (GCM included) is consulted
+- `GIT_ASKPASS` and `SSH_ASKPASS` are blanked, so an askpass program inherited from an IDE
+  or desktop git session (or set as `core.askPass`) never runs either
+- the token travels as an `http.https://github.com/.extraheader` set through
+  `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` environment variables: not in
+  the process arguments, not in `.git/config`, not in the remote URL, not in a credentials file
+- the token is repo-scaffold's own (`GH_TOKEN` from `.env`); `pull` prefers the target
+  checkout's own `.env` when it has one, like `auth configure`
+- with no token they still run, unauthenticated (public repos only), and fail fast instead
+  of prompting on a private one
+- `clone` requires `--path` to be absent or an empty directory; `pull` is `--ff-only`, so a
+  diverged branch fails loudly instead of creating a merge commit
+
+Prefer these over `auth configure` for clone/fetch: `auth configure` writes the PAT in
+plaintext to `.git/.git-credentials`, which syncs along with any checkout kept in Dropbox
+or another synced folder.
+
+---
+
 ### `delete`
 
 Delete matching GitHub repositories (safe default: preview only).
