@@ -369,6 +369,13 @@ poetry run repo-scaffold auth configure [--path PATH]
 poetry run repo-scaffold repo clone --repo OWNER/REPO --path DIR [--branch BRANCH]
 poetry run repo-scaffold repo pull --path DIR
 
+# Check local git configs for credentials persisted to disk. A token embedded in a
+# remote URL never reaches GitHub (.git/config is not tracked) but sits in plaintext,
+# survives in synced or backed-up copies, and is printed verbatim by `git remote -v`.
+# Reports by default; --fix strips credentials from remote URLs and unsets any on-disk
+# http.extraHeader. Repos with no local checkout are skipped, not failed.
+poetry run repo-scaffold check credentials --repo OWNER/REPO [--repos a,b | --all] [--fix]
+
 # Archive a repo (read-only; reversible via the GitHub UI)
 # Prompts for confirmation unless --yes is passed; refuses in a non-interactive shell without --yes.
 poetry run repo-scaffold repo archive --repo OWNER/REPO [--yes]
